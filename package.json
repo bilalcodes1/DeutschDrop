@@ -1,0 +1,25 @@
+{
+  "name": "deutschdrop",
+  "version": "1.0.0",
+  "description": "DeutschDrop - German Vocabulary Learning Telegram Bot",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --experimental-specifier-resolution=node --test test/*.test.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create deutschdrop-db",
+    "db:migrate": "wrangler d1 migrations apply deutschdrop-db",
+    "db:migrate:local": "wrangler d1 migrations apply deutschdrop-db --local",
+    "db:execute": "wrangler d1 execute deutschdrop-db"
+  },
+  "dependencies": {
+    "grammy": "^1.20.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240601.0",
+    "typescript": "^5.4.0",
+    "wrangler": "^3.57.0"
+  }
+}

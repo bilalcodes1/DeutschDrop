@@ -1,0 +1,24 @@
+name = "deutschdrop"
+main = "src/index.ts"
+compatibility_date = "2024-06-01"
+
+[vars]
+ENVIRONMENT = "production"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "deutschdrop-db"
+# Run `npx wrangler d1 create deutschdrop-db`, then replace this placeholder with the returned database_id.
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "src/db/migrations"
+
+[[r2_buckets]]
+binding = "AUDIO_BUCKET"
+bucket_name = "deutschdrop-audio"
+
+# Cron triggers for scheduled jobs
+[[triggers]]
+crons = ["0 * * * *", "0 20 * * *", "0 0 * * *"]
+
+# Note: Set your Telegram bot token as a secret:
+# wrangler secret put TELEGRAM_BOT_TOKEN
