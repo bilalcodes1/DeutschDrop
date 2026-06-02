@@ -9,12 +9,8 @@ ENVIRONMENT = "production"
 binding = "DB"
 database_name = "deutschdrop-db"
 # Run `npx wrangler d1 create deutschdrop-db`, then replace this placeholder with the returned database_id.
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "d26385ff-94fe-45d3-a5a0-c63131019158"
 migrations_dir = "src/db/migrations"
-
-[[r2_buckets]]
-binding = "AUDIO_BUCKET"
-bucket_name = "deutschdrop-audio"
 
 # Cron triggers for scheduled jobs
 [triggers]
