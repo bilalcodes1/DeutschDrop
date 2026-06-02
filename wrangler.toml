@@ -17,7 +17,7 @@ binding = "AUDIO_BUCKET"
 bucket_name = "deutschdrop-audio"
 
 # Cron triggers for scheduled jobs
-[[triggers]]
+[triggers]
 crons = ["0 * * * *", "0 20 * * *", "0 0 * * *"]
 
 # Note: Set your Telegram bot token as a secret:
