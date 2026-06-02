@@ -18,7 +18,7 @@
 | `/learn` | مراجعة الكلمات المستحقة (SRS) |
 | `/train` | وضع التدريب بأنواع متعددة |
 | `/addword` | إضافة كلمة يدوياً |
-| `/upload` | رفع ملف CSV/TXT، وAPKG مع رابط تحويل خارجي |
+| `/upload` | رفع ملف CSV |
 | `/stats` | الإحصائيات والمستوى |
 | `/leaderboard` | لوحة الترتيب |
 | `/settings` | الإعدادات |
@@ -56,23 +56,6 @@ npm run db:migrate:local
 # تشغيل محلي
 npm run dev
 ```
-
-## Convert APKG to CSV
-
-لتحويل ملف Anki APKG إلى CSV محلياً فقط:
-
-```bash
-node scripts/apkg-to-csv.mjs input.apkg output.csv
-```
-
-السكربت يقرأ `collection.anki2` أو `collection.anki21` من داخل APKG، ويستخرج أول حقل كألماني وثاني حقل كعربي، ثم يكتب:
-
-```csv
-German,Arabic
-Haus,بيت
-```
-
-داخل البوت، الصيغ الأساسية للرفع هي CSV وTXT. إذا رفعت APKG سيعرض البوت رابط تحويل خارجي إلى TXT، ثم يمكنك رفع ملف TXT الناتج.
 
 ## النشر
 

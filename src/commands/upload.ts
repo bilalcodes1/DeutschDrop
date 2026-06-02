@@ -6,23 +6,23 @@ import { addXp } from '../services/xpLevels';
 import { parseWordCsv, type ParsedWordRow } from '../services/csvParser';
 import { mainMenuKeyboard } from './menu';
 
-const APKG_CONVERTER_URL = 'https://convert.guru/converter';
-const APKG_CONVERSION_MESSAGE =
-    '📦 ملف APKG غير مدعوم مباشرة حالياً.\n\n' +
-    'حوّله إلى TXT ثم ارجع ارفعه هنا.\n\n' +
-    'الخطوات:\n' +
-    '1. افتح رابط التحويل.\n' +
-    '2. ارفع ملف APKG.\n' +
-    '3. اختر txt.\n' +
-    '4. نزّل الملف.\n' +
-    '5. ارفعه هنا.\n\n' +
-    '✅ الصيغ المدعومة:\n' +
-    'CSV / TXT';
+const CSV_UPLOAD_INSTRUCTIONS =
+    'ارسل ملف CSV فقط بالصيغة التالية:\n' +
+    'German,Arabic\n' +
+    'Haus,بيت\n' +
+    'Auto,سيارة';
+
+const CSV_ONLY_ERROR =
+    '⚠️ يرجى إرسال ملف CSV فقط.\n\n' +
+    'الصيغة المطلوبة:\n' +
+    'German,Arabic\n' +
+    'Haus,بيت\n' +
+    'Auto,سيارة';
 
 export function registerUploadCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery('upload_csv', async (ctx) => {
         await ctx.editMessageText(
-            '📤 *رفع ملف كلمات*\n\nأرسل ملف CSV أو TXT بالصيغة التالية:\n\n```csv\nGerman,Arabic\nHaus,بيت\nAuto,سيارة\n```\n\nأو بالصيغة:\n```\nHaus=بيت\nAuto=سيارة\n```\n\nملفات APKG تحتاج تحويل خارجي إلى TXT حالياً.',
+            `📤 *رفع ملف CSV*\n\n${CSV_UPLOAD_INSTRUCTIONS}`,
             { parse_mode: 'Markdown' }
         );
         await ctx.answerCallbackQuery();
@@ -30,7 +30,7 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
 
     bot.command('upload', async (ctx) => {
         await ctx.reply(
-            '📤 *رفع ملف كلمات*\n\nأرسل ملف CSV أو TXT بالصيغة التالية:\n\n```csv\nGerman,Arabic\nHaus,بيت\nAuto,سيارة\n```\n\nملفات APKG تحتاج تحويل خارجي إلى TXT حالياً.',
+            `📤 *رفع ملف CSV*\n\n${CSV_UPLOAD_INSTRUCTIONS}`,
             { parse_mode: 'Markdown' }
         );
     });
@@ -48,18 +48,8 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
         const doc = ctx.message.document;
         const fileName = doc?.file_name ?? '';
         const extension = getFileExtension(fileName);
-        if (!['csv', 'txt', 'apkg'].includes(extension)) {
-            await ctx.reply('⚠️ يرجى إرسال ملف CSV أو TXT أو APKG.');
-            return;
-        }
-
-        if (extension === 'apkg') {
-            await ctx.reply(APKG_CONVERSION_MESSAGE, {
-                reply_markup: new InlineKeyboard()
-                    .url('🔄 تحويل APKG إلى TXT', APKG_CONVERTER_URL)
-                    .row()
-                    .text('🏠 القائمة', 'menu_main'),
-            });
+        if (extension !== 'csv') {
+            await ctx.reply(CSV_ONLY_ERROR);
             return;
         }
 
