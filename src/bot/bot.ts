@@ -1,5 +1,6 @@
 import { Bot } from 'grammy';
 import type { BotContext } from './context';
+import type { Env } from '../models';
 import { registerStartCommand } from '../commands/start';
 import { registerLearnCommand } from '../commands/learn';
 import { registerMenuCommand } from '../commands/menu';
@@ -10,8 +11,14 @@ import { registerStatsCommand } from '../commands/stats';
 import { registerLeaderboardCommand } from '../commands/leaderboard';
 import { registerSettingsCommand } from '../commands/settings';
 
-export function createBot(token: string): Bot<BotContext> {
+export function createBot(token: string, env: Env): Bot<BotContext> {
     const bot = new Bot<BotContext>(token);
+
+    bot.use(async (ctx, next) => {
+        ctx.env = env;
+        ctx.db = env.DB;
+        await next();
+    });
 
     // Register all command handlers
     registerStartCommand(bot);
