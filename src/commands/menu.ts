@@ -54,9 +54,11 @@ export function mainMenuKeyboard(): InlineKeyboard {
 
 function trainCountKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
-        .text('5 أسئلة', 'train_5')
+        .text('تدريب سريع 5 أسئلة', 'train_5').row()
         .text('10 أسئلة', 'train_10')
         .text('20 سؤال', 'train_20').row()
+        .text('🔥 الكلمات الصعبة', 'train_hard').row()
+        .text('🎯 مراجعة قبل الامتحان', 'train_exam').row()
         .text('⬅️ رجوع', 'menu_main');
 }
 

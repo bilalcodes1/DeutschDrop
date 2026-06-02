@@ -41,9 +41,29 @@ test('calculateNextReview advances correct answers and caps hard failures', () =
         'hard'
     );
     assert.equal(wrong.status, 'learning');
-    assert.equal(wrong.interval, 1);
+    assert.equal(wrong.interval, 0);
     assert.equal(wrong.repetitions, 0);
     assert.equal(wrong.easeFactor, 1.3);
+
+    const nextReviewMs = new Date(wrong.nextReview).getTime();
+    const oneHourFromNow = Date.now() + 60 * 60 * 1000;
+    assert.ok(Math.abs(nextReviewMs - oneHourFromNow) < 60_000);
+});
+
+test('calculateNextReview uses fixed review intervals', () => {
+    const second = calculateNextReview(
+        { easeFactor: 2.5, interval: 1, repetitions: 1, correctCount: 1, wrongCount: 0 },
+        true,
+        'medium'
+    );
+    assert.equal(second.interval, 3);
+
+    const fifth = calculateNextReview(
+        { easeFactor: 2.5, interval: 14, repetitions: 4, correctCount: 4, wrongCount: 0 },
+        true,
+        'medium'
+    );
+    assert.equal(fifth.interval, 30);
 });
 
 test('XP level helpers return current level and progress', () => {

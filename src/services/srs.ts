@@ -2,6 +2,8 @@
 // Spaced Repetition System (SM-2 Algorithm)
 // =====================================================
 
+const REVIEW_INTERVALS_DAYS = [1, 3, 7, 14, 30, 90, 180];
+
 export interface SrsInput {
     easeFactor: number;
     interval: number;
@@ -34,10 +36,10 @@ export function calculateNextReview(
     if (!isCorrect) {
         // Reset on wrong answer
         repetitions = 0;
-        interval = 1;
+        interval = 0;
         // Reduce ease factor
         easeFactor = Math.max(1.3, easeFactor - 0.2);
-        return buildOutput(easeFactor, interval, repetitions, 'learning');
+        return buildOutput(easeFactor, interval, repetitions, 'learning', 'hour');
     }
 
     // Adjust ease factor based on difficulty rating
@@ -50,16 +52,7 @@ export function calculateNextReview(
 
     repetitions += 1;
 
-    if (repetitions === 1) {
-        interval = 1;
-    } else if (repetitions === 2) {
-        interval = 3;
-    } else {
-        interval = Math.round(interval * easeFactor);
-    }
-
-    // Cap max interval at 180 days
-    interval = Math.min(interval, 180);
+    interval = REVIEW_INTERVALS_DAYS[Math.min(repetitions - 1, REVIEW_INTERVALS_DAYS.length - 1)];
 
     // Determine status based on repetitions and interval
     let status: 'new' | 'learning' | 'reviewing' | 'mastered';
@@ -78,11 +71,16 @@ function buildOutput(
     easeFactor: number,
     interval: number,
     repetitions: number,
-    status: 'new' | 'learning' | 'reviewing' | 'mastered'
+    status: 'new' | 'learning' | 'reviewing' | 'mastered',
+    delay: 'day' | 'hour' = 'day'
 ): SrsOutput {
     const now = new Date();
     const nextReview = new Date(now);
-    nextReview.setDate(now.getDate() + interval);
+    if (delay === 'hour') {
+        nextReview.setHours(now.getHours() + 1);
+    } else {
+        nextReview.setDate(now.getDate() + interval);
+    }
 
     return {
         easeFactor: Math.round(easeFactor * 100) / 100,
@@ -129,6 +127,10 @@ export function selectTrainingWords(
     }
 
     return shuffle(result).slice(0, count);
+}
+
+export function isHardWord(word: { wrongCount: number; correctCount: number; status: string }): boolean {
+    return word.wrongCount >= 2 || word.wrongCount > word.correctCount || word.status === 'learning';
 }
 
 function shuffle<T>(array: T[]): T[] {

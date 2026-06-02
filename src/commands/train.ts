@@ -4,7 +4,7 @@ import { getUserByTelegramId } from '../repositories/userRepository';
 import { getWordsForUserWithStatus } from '../repositories/wordRepository';
 import { recordReview } from '../repositories/srsRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
-import { selectTrainingWords } from '../services/srs';
+import { isHardWord, selectTrainingWords } from '../services/srs';
 import { addXp } from '../services/xpLevels';
 import { mainMenuKeyboard } from './menu';
 
@@ -32,7 +32,17 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery(/^train_(\d+)$/, async (ctx) => {
         const count = parseInt(ctx.match[1], 10);
         await ctx.answerCallbackQuery();
-        await startTraining(ctx, count);
+        await startTraining(ctx, count, 'standard');
+    });
+
+    bot.callbackQuery('train_hard', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startTraining(ctx, 10, 'hard');
+    });
+
+    bot.callbackQuery('train_exam', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startTraining(ctx, 20, 'exam');
     });
 
     // Handle answer callbacks
@@ -45,15 +55,17 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
 
 async function showTrainOptions(ctx: BotContext): Promise<void> {
     const keyboard = new InlineKeyboard()
-        .text('5 أسئلة', 'train_5')
+        .text('تدريب سريع 5 أسئلة', 'train_5').row()
         .text('10 أسئلة', 'train_10')
         .text('20 سؤال', 'train_20').row()
+        .text('🔥 الكلمات الصعبة', 'train_hard').row()
+        .text('🎯 مراجعة قبل الامتحان', 'train_exam').row()
         .text('⬅️ رجوع', 'menu_main');
 
     await ctx.reply('🏋️ *اختر عدد الأسئلة:*', { parse_mode: 'Markdown', reply_markup: keyboard });
 }
 
-async function startTraining(ctx: BotContext, count: number): Promise<void> {
+async function startTraining(ctx: BotContext, count: number, mode: 'standard' | 'hard' | 'exam'): Promise<void> {
     const telegramId = ctx.from?.id ?? 0;
     const user = await getUserByTelegramId(ctx.db, telegramId);
 
@@ -62,19 +74,26 @@ async function startTraining(ctx: BotContext, count: number): Promise<void> {
         return;
     }
 
-    const words = await getWordsForUserWithStatus(ctx.db, user.user_id);
+    const allWords = await getWordsForUserWithStatus(ctx.db, user.user_id);
+    const words = mode === 'hard'
+        ? allWords.filter(w => isHardWord({ wrongCount: w.wrong_count, correctCount: w.correct_count, status: w.status }))
+        : allWords;
+
     if (words.length < count) {
+        const label = mode === 'hard' ? 'كلمة صعبة' : 'كلمة';
         await ctx.reply(
-            `⚠️ لديك ${words.length} كلمة فقط.\nأضف المزيد عبر /addword.`,
+            `⚠️ لديك ${words.length} ${label} فقط.\nأضف المزيد عبر /addword أو راجع كلمات أكثر.`,
             { reply_markup: mainMenuKeyboard() }
         );
         return;
     }
 
-    const selected = selectTrainingWords(
-        words.map(w => ({ wordId: w.word_id, status: w.status, wrongCount: w.wrong_count, correctCount: w.correct_count })),
-        count
-    );
+    const selected = mode === 'exam'
+        ? selectExamWords(words, count)
+        : selectTrainingWords(
+            words.map(w => ({ wordId: w.word_id, status: w.status, wrongCount: w.wrong_count, correctCount: w.correct_count })),
+            count
+        );
 
     const questions = selected.map((s, i) => {
         const w = words.find(word => word.word_id === s.wordId)!;
@@ -189,6 +208,20 @@ function buildDistractors(
         if (options.length >= count) break;
     }
     return options;
+}
+
+function selectExamWords(
+    words: Array<{ word_id: number; status: string; wrong_count: number; correct_count: number }>,
+    count: number
+): Array<{ wordId: number; status: string }> {
+    return [...words]
+        .sort((a, b) => {
+            const aScore = a.wrong_count * 2 - a.correct_count;
+            const bScore = b.wrong_count * 2 - b.correct_count;
+            return bScore - aScore;
+        })
+        .slice(0, count)
+        .map(w => ({ wordId: w.word_id, status: w.status }));
 }
 
 function shuffle<T>(array: T[]): T[] {
