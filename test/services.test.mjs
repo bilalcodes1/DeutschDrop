@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import AdmZip from 'adm-zip';
+import { cleanApkgField, getApkgUnsupportedMessage, parseApkgPackage } from '../dist/services/apkgParser.js';
 import { parseWordCsv } from '../dist/services/csvParser.js';
 import { calculateNextReview } from '../dist/services/srs.js';
 import { getLevelFromXp, getProgressToNextLevel } from '../dist/services/xpMath.js';
@@ -54,4 +56,20 @@ test('XP level helpers return current level and progress', () => {
     assert.equal(progress.current, 2000);
     assert.equal(progress.target, 3000);
     assert.equal(progress.percent, 33);
+});
+
+test('APKG parser returns a clear unsupported message in Workers', () => {
+    const zip = new AdmZip();
+    zip.addFile('collection.anki2', Buffer.from('sqlite bytes'));
+    const buffer = zip.toBuffer();
+    const content = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    const result = parseApkgPackage(content);
+
+    assert.equal(result.supported, false);
+    assert.equal(result.hasCollection, true);
+    assert.equal(result.message, getApkgUnsupportedMessage());
+});
+
+test('APKG field cleaner strips basic HTML', () => {
+    assert.equal(cleanApkgField('<b>Haus</b><br>&nbsp;alt'), 'Haus alt');
 });

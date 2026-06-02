@@ -18,7 +18,7 @@
 | `/learn` | مراجعة الكلمات المستحقة (SRS) |
 | `/train` | وضع التدريب بأنواع متعددة |
 | `/addword` | إضافة كلمة يدوياً |
-| `/upload` | رفع ملف CSV |
+| `/upload` | رفع ملف CSV/TXT، أو APKG مع إرشاد التحويل المحلي |
 | `/stats` | الإحصائيات والمستوى |
 | `/leaderboard` | لوحة الترتيب |
 | `/settings` | الإعدادات |
@@ -71,6 +71,8 @@ node scripts/apkg-to-csv.mjs input.apkg output.csv
 German,Arabic
 Haus,بيت
 ```
+
+رفع APKG مباشرة داخل البوت مقبول، لكن قراءة SQLite داخل Cloudflare Workers غير مفعّلة حالياً. إذا رفعت APKG سيطلب منك البوت تحويله محلياً إلى CSV بهذه الأداة ثم رفع CSV.
 
 ## النشر
 
