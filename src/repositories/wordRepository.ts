@@ -2,6 +2,8 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { queryOne, queryAll, run, runBatch } from '../db/queries';
 import type { Word, UserUploadedList, ListWord } from '../models';
 
+export const DUPLICATE_WORD_ERROR = 'duplicate_word';
+
 export async function getWordById(
     db: D1Database,
     wordId: number
@@ -43,6 +45,11 @@ export async function createWordAndAssignToUser(
     userId: number,
     listId?: number
 ): Promise<number> {
+    const duplicate = await searchDuplicateWordForUser(db, userId, german);
+    if (duplicate) {
+        throw new Error(DUPLICATE_WORD_ERROR);
+    }
+
     const wordId = await createWord(db, german, arabic, example, userId);
 
     // Add to user's vocabulary
@@ -64,6 +71,22 @@ export async function createWordAndAssignToUser(
     return wordId;
 }
 
+export async function searchDuplicateWordForUser(
+    db: D1Database,
+    userId: number,
+    german: string,
+    excludeWordId?: number
+): Promise<Word | null> {
+    const params: unknown[] = [userId, german.trim()];
+    let sql = 'SELECT * FROM words WHERE added_by = ? AND LOWER(german) = LOWER(?)';
+    if (excludeWordId !== undefined) {
+        sql += ' AND word_id != ?';
+        params.push(excludeWordId);
+    }
+    sql += ' LIMIT 1';
+    return queryOne<Word>(db, sql, params);
+}
+
 export async function searchDuplicateWord(
     db: D1Database,
     german: string
@@ -72,6 +95,73 @@ export async function searchDuplicateWord(
         db,
         'SELECT * FROM words WHERE LOWER(german) = LOWER(?) LIMIT 1',
         [german.trim()]
+    );
+}
+
+export async function updateWordForUser(
+    db: D1Database,
+    userId: number,
+    wordId: number,
+    german: string,
+    arabic: string,
+    example: string | null
+): Promise<boolean> {
+    const duplicate = await searchDuplicateWordForUser(db, userId, german, wordId);
+    if (duplicate) {
+        throw new Error(DUPLICATE_WORD_ERROR);
+    }
+
+    const result = await run(
+        db,
+        'UPDATE words SET german = ?, arabic = ?, example = ? WHERE word_id = ? AND added_by = ?',
+        [german, arabic, example, wordId, userId]
+    );
+    return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
+}
+
+export async function deleteWordForUser(
+    db: D1Database,
+    userId: number,
+    wordId: number
+): Promise<boolean> {
+    const word = await queryOne<Word>(
+        db,
+        'SELECT * FROM words WHERE word_id = ? AND added_by = ?',
+        [wordId, userId]
+    );
+    if (!word) return false;
+
+    await runBatch(db, [
+        { sql: 'DELETE FROM list_words WHERE word_id = ?', params: [wordId] },
+        { sql: 'DELETE FROM word_audio WHERE word_id = ?', params: [wordId] },
+        { sql: 'DELETE FROM reviews WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
+        { sql: 'DELETE FROM user_words WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
+        { sql: 'DELETE FROM words WHERE word_id = ? AND added_by = ?', params: [wordId, userId] },
+    ]);
+
+    return true;
+}
+
+export async function getPeerWordSuggestions(
+    db: D1Database,
+    userId: number,
+    limit: number = 10
+): Promise<Array<Word & { owner_name: string }>> {
+    return queryAll(
+        db,
+        `SELECT w.*, u.name AS owner_name
+         FROM words w
+         INNER JOIN users u ON u.user_id = w.added_by
+         WHERE w.added_by != ?
+           AND u.identity IS NOT NULL
+           AND NOT EXISTS (
+                SELECT 1 FROM words own
+                WHERE own.added_by = ?
+                  AND LOWER(own.german) = LOWER(w.german)
+           )
+         ORDER BY w.created_at DESC
+         LIMIT ?`,
+        [userId, userId, limit]
     );
 }
 

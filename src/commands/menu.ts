@@ -64,6 +64,7 @@ function wordsMenuKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
         .text('➕ إضافة كلمة', 'add_word')
         .text('📤 رفع CSV', 'upload_csv').row()
-        .text('📋 عرض الكلمات', 'list_words').row()
+        .text('📋 عرض الكلمات', 'list_words')
+        .text('💡 اقتراحات', 'suggest_peer_words').row()
         .text('⬅️ رجوع', 'menu_main');
 }
