@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     telegram_id INTEGER NOT NULL UNIQUE,
     telegram_username TEXT,
+    identity TEXT CHECK (identity IN ('bilal', 'malak')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -40,6 +40,18 @@ export async function createUser(
     return lastId;
 }
 
+export async function updateUserIdentity(
+    db: D1Database,
+    userId: number,
+    identity: 'bilal' | 'malak'
+): Promise<void> {
+    await run(
+        db,
+        'UPDATE users SET identity = ? WHERE user_id = ?',
+        [identity, userId]
+    );
+}
+
 export async function getAllUsers(db: D1Database): Promise<User[]> {
     return queryAll<User>(db, 'SELECT * FROM users ORDER BY created_at DESC');
 }

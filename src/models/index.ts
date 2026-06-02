@@ -12,6 +12,7 @@ export interface User {
     name: string;
     telegram_id: number;
     telegram_username: string | null;
+    identity: 'bilal' | 'malak' | null;
     created_at: string;
 }
 
