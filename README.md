@@ -57,6 +57,21 @@ npm run db:migrate:local
 npm run dev
 ```
 
+## Convert APKG to CSV
+
+لتحويل ملف Anki APKG إلى CSV محلياً فقط:
+
+```bash
+node scripts/apkg-to-csv.mjs input.apkg output.csv
+```
+
+السكربت يقرأ `collection.anki2` أو `collection.anki21` من داخل APKG، ويستخرج أول حقل كألماني وثاني حقل كعربي، ثم يكتب:
+
+```csv
+German,Arabic
+Haus,بيت
+```
+
 ## النشر
 
 ### 1. إنشاء قاعدة بيانات D1
