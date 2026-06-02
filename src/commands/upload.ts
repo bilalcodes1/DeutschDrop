@@ -4,13 +4,25 @@ import { getUserByTelegramId } from '../repositories/userRepository';
 import { createWordAndAssignToUser, createUploadedList } from '../repositories/wordRepository';
 import { addXp } from '../services/xpLevels';
 import { parseWordCsv, type ParsedWordRow } from '../services/csvParser';
-import { parseApkgPackage } from '../services/apkgParser';
 import { mainMenuKeyboard } from './menu';
+
+const APKG_CONVERTER_URL = 'https://convert.guru/converter';
+const APKG_CONVERSION_MESSAGE =
+    '📦 ملف APKG غير مدعوم مباشرة حالياً.\n\n' +
+    'حوّله إلى TXT ثم ارجع ارفعه هنا.\n\n' +
+    'الخطوات:\n' +
+    '1. افتح رابط التحويل.\n' +
+    '2. ارفع ملف APKG.\n' +
+    '3. اختر txt.\n' +
+    '4. نزّل الملف.\n' +
+    '5. ارفعه هنا.\n\n' +
+    '✅ الصيغ المدعومة:\n' +
+    'CSV / TXT';
 
 export function registerUploadCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery('upload_csv', async (ctx) => {
         await ctx.editMessageText(
-            '📤 *رفع ملف كلمات*\n\nأرسل ملف CSV أو TXT بالصيغة التالية:\n\n```csv\nGerman,Arabic\nHaus,بيت\nAuto,سيارة\n```\n\nأو بالصيغة:\n```\nHaus=بيت\nAuto=سيارة\n```\n\nملفات APKG تحتاج تحويل محلي إلى CSV حالياً.',
+            '📤 *رفع ملف كلمات*\n\nأرسل ملف CSV أو TXT بالصيغة التالية:\n\n```csv\nGerman,Arabic\nHaus,بيت\nAuto,سيارة\n```\n\nأو بالصيغة:\n```\nHaus=بيت\nAuto=سيارة\n```\n\nملفات APKG تحتاج تحويل خارجي إلى TXT حالياً.',
             { parse_mode: 'Markdown' }
         );
         await ctx.answerCallbackQuery();
@@ -18,7 +30,7 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
 
     bot.command('upload', async (ctx) => {
         await ctx.reply(
-            '📤 *رفع ملف كلمات*\n\nأرسل ملف CSV أو TXT بالصيغة التالية:\n\n```csv\nGerman,Arabic\nHaus,بيت\nAuto,سيارة\n```\n\nملفات APKG تحتاج تحويل محلي إلى CSV حالياً.',
+            '📤 *رفع ملف كلمات*\n\nأرسل ملف CSV أو TXT بالصيغة التالية:\n\n```csv\nGerman,Arabic\nHaus,بيت\nAuto,سيارة\n```\n\nملفات APKG تحتاج تحويل خارجي إلى TXT حالياً.',
             { parse_mode: 'Markdown' }
         );
     });
@@ -41,6 +53,16 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
             return;
         }
 
+        if (extension === 'apkg') {
+            await ctx.reply(APKG_CONVERSION_MESSAGE, {
+                reply_markup: new InlineKeyboard()
+                    .url('🔄 تحويل APKG إلى TXT', APKG_CONVERTER_URL)
+                    .row()
+                    .text('🏠 القائمة', 'menu_main'),
+            });
+            return;
+        }
+
         // Get file content via Telegram API
         const file = await ctx.api.getFile(doc.file_id);
         if (!file.file_path) {
@@ -50,22 +72,6 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
 
         const fileUrl = `https://api.telegram.org/file/bot${ctx.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
         const response = await fetch(fileUrl);
-
-        if (extension === 'apkg') {
-            const apkg = parseApkgPackage(await response.arrayBuffer());
-            if (!apkg.supported) {
-                await ctx.reply(apkg.message, { reply_markup: mainMenuKeyboard() });
-                return;
-            }
-
-            const result = await importWords(ctx.db, apkg.words, apkg.errors, user.user_id);
-            await ctx.reply(
-                `تم استيراد ${result.imported} كلمة من APKG\n\n⚠️ ${result.duplicates} تكرار (تم تخطيهم)\n❌ ${result.errors} أخطاء`,
-                { reply_markup: mainMenuKeyboard() }
-            );
-            return;
-        }
-
         const content = await response.text();
 
         const result = await parseCsvAndImport(ctx.db, content, user.user_id);
