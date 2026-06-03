@@ -93,12 +93,13 @@ export async function updateSupportProofStatus(
     proofId: number,
     status: 'approved' | 'rejected',
     adminTelegramId: number
-): Promise<void> {
-    await run(
+): Promise<boolean> {
+    const result = await run(
         db,
-        'UPDATE support_proofs SET status = ?, reviewed_by_admin_id = ?, reviewed_at = datetime("now") WHERE id = ?',
+        'UPDATE support_proofs SET status = ?, reviewed_by_admin_id = ?, reviewed_at = datetime("now") WHERE id = ? AND status = "pending"',
         [status, adminTelegramId, proofId]
     );
+    return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
 }
 
 export async function activateSupporterFor24Hours(

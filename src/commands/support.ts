@@ -88,12 +88,16 @@ export function registerSupportCommand(bot: Bot<BotContext>): void {
             return;
         }
 
-        await updateSupportProofStatus(ctx.db, proofId, 'approved', ctx.from?.id ?? 0);
+        const updated = await updateSupportProofStatus(ctx.db, proofId, 'approved', ctx.from?.id ?? 0);
+        if (!updated) {
+            await replaceWithText(ctx, 'هذا الإثبات تمت مراجعته سابقاً.', adminBackKeyboard());
+            return;
+        }
         await activateSupporterFor24Hours(ctx.db, proof.user_id, ctx.from?.id ?? 0, proofId);
         await sendTelegramMessage(
             ctx.env,
             proof.telegram_user_id ?? proof.telegram_id,
-            'شكراً لدعمك DeutschDrop 💙\nتم تفعيل حسابك كداعِم لمدة 24 ساعة ✅'
+            'شكراً لدعمك DeutschDrop 💙\nتم تثبيت حسابك كداعِم لمدة 24 ساعة ✅\n\nسيظهر بجانب اسمك رمز 💙 في البوت والترتيب.'
         );
         await replaceWithText(ctx, 'تم تأكيد الدعم وتفعيل المستخدم لمدة 24 ساعة ✅', adminBackKeyboard());
     });
@@ -108,7 +112,11 @@ export function registerSupportCommand(bot: Bot<BotContext>): void {
             return;
         }
 
-        await updateSupportProofStatus(ctx.db, proofId, 'rejected', ctx.from?.id ?? 0);
+        const updated = await updateSupportProofStatus(ctx.db, proofId, 'rejected', ctx.from?.id ?? 0);
+        if (!updated) {
+            await replaceWithText(ctx, 'هذا الإثبات تمت مراجعته سابقاً.', adminBackKeyboard());
+            return;
+        }
         await sendTelegramMessage(
             ctx.env,
             proof.telegram_user_id ?? proof.telegram_id,
@@ -184,7 +192,15 @@ export function registerSupportCommand(bot: Bot<BotContext>): void {
 }
 
 async function showSupportHome(ctx: BotContext): Promise<void> {
-    await replaceWithText(ctx, '💙 *دعم DeutschDrop*\nاختر طريقة الدعم:', supportHomeKeyboard(), 'Markdown');
+    await replaceWithText(
+        ctx,
+        '💙 *دعم DeutschDrop*\n\n' +
+        'دعمك يساعدنا نستمر بتطوير البوت وتحسينه.\n' +
+        'بعد إرسال إثبات الدعم ومراجعته من الأدمن، يتم تثبيت حسابك كداعِم داخل البوت لمدة 24 ساعة، ويظهر بجانب اسمك 💙 في الملف الشخصي والترتيب.\n\n' +
+        'اختر طريقة الدعم:',
+        supportHomeKeyboard(),
+        'Markdown'
+    );
 }
 
 function supportHomeKeyboard(): InlineKeyboard {
@@ -193,6 +209,7 @@ function supportHomeKeyboard(): InlineKeyboard {
         .text('🌍 من خارج العراق', 'support_international').row()
         .text('🎁 بطاقات هدايا', 'support_gift_cards').row()
         .text('📩 إرسال إثبات الدعم', 'support_send_proof').row()
+        .text('⬅️ رجوع', 'menu_main')
         .text('🏠 الرئيسية', 'menu_main');
 }
 

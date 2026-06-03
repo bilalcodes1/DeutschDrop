@@ -1,5 +1,6 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
+import { clearActiveAnnouncements, setActiveAnnouncement } from '../repositories/announcementRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import {
     countActiveSupporters,
@@ -13,6 +14,11 @@ import { sendTelegramMessage } from '../services/notifications';
 import { replaceWithText } from './wordPanel';
 
 interface BroadcastSession {
+    step: 'awaiting_message' | 'confirm';
+    message?: string;
+}
+
+interface AnnouncementSession {
     step: 'awaiting_message' | 'confirm';
     message?: string;
 }
@@ -99,6 +105,42 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
         await replaceWithText(ctx, 'تم إلغاء إرسال التبليغ.', adminPanelKeyboard());
     });
 
+    bot.callbackQuery('admin_announcement_start', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await startAnnouncementFlow(ctx);
+    });
+
+    bot.callbackQuery('admin_announcement_confirm', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return;
+
+        const session = await getBotSession<AnnouncementSession>(ctx.db, user.user_id, 'admin_announcement');
+        if (!session?.data.message) {
+            await replaceWithText(ctx, 'لا توجد رسالة جاهزة للتثبيت.', adminPanelKeyboard());
+            return;
+        }
+
+        await setActiveAnnouncement(ctx.db, user.user_id, session.data.message);
+        await deleteBotSession(ctx.db, user.user_id, 'admin_announcement');
+        await replaceWithText(ctx, 'تم تثبيت الرسالة داخل البوت ✅', adminPanelKeyboard());
+    });
+
+    bot.callbackQuery('admin_announcement_clear', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (user) await deleteBotSession(ctx.db, user.user_id, 'admin_announcement');
+        await clearActiveAnnouncements(ctx.db);
+        await replaceWithText(ctx, 'تم حذف الرسالة المثبتة الحالية ✅', adminPanelKeyboard());
+    });
+
+    bot.callbackQuery('admin_announcement_cancel', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (user) await deleteBotSession(ctx.db, user.user_id, 'admin_announcement');
+        await replaceWithText(ctx, 'تم إلغاء تثبيت الرسالة.', adminPanelKeyboard());
+    });
+
     bot.callbackQuery(/^admin_support_pending(?:_(\d+))?$/, async (ctx) => {
         if (!await requireAdmin(ctx)) return;
         await showPendingSupportProofs(ctx, Number(ctx.match[1] ?? 0));
@@ -116,13 +158,23 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
         if (!user) return next();
 
         const session = await getBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast');
-        if (!session || session.data.step !== 'awaiting_message') return next();
+        if (session?.data.step === 'awaiting_message') {
+            const text = ctx.message?.text?.trim();
+            if (!text || text.startsWith('/')) return next();
+
+            await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', { step: 'confirm', message: text }, 30);
+            await previewBroadcast(ctx, text);
+            return;
+        }
+
+        const announcementSession = await getBotSession<AnnouncementSession>(ctx.db, user.user_id, 'admin_announcement');
+        if (announcementSession?.data.step !== 'awaiting_message') return next();
 
         const text = ctx.message?.text?.trim();
         if (!text || text.startsWith('/')) return next();
 
-        await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', { step: 'confirm', message: text }, 30);
-        await previewBroadcast(ctx, text);
+        await saveBotSession<AnnouncementSession>(ctx.db, user.user_id, 'admin_announcement', { step: 'confirm', message: text }, 30);
+        await previewAnnouncement(ctx, text);
     });
 }
 
@@ -134,15 +186,16 @@ async function requireAdmin(ctx: BotContext): Promise<boolean> {
 }
 
 async function showAdminPanel(ctx: BotContext): Promise<void> {
-    await replaceWithText(ctx, '🛠 *لوحة الأدمن*', adminPanelKeyboard(), 'Markdown');
+    await replaceWithText(ctx, '🛠 *لوحة الأدمن*\n\nالحالة: 🛡 أدمن\nاختر أداة:', adminPanelKeyboard(), 'Markdown');
 }
 
 function adminPanelKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
         .text('📊 إحصائيات', 'admin_stats')
         .text('👥 المستخدمون', 'admin_users_0').row()
-        .text('📢 إرسال تبليغ', 'admin_broadcast_start')
-        .text('💙 طلبات الدعم', 'admin_support_pending_0').row()
+        .text('📢 إرسال تبليغ', 'admin_broadcast_start').row()
+        .text('📌 تثبيت رسالة داخل البوت', 'admin_announcement_start').row()
+        .text('💙 طلبات الدعم', 'admin_support_pending_0')
         .text('🚫 المحظورون', 'admin_banned').row()
         .text('🏠 الرئيسية', 'menu_main');
 }
@@ -216,9 +269,9 @@ async function previewBroadcast(ctx: BotContext, text: string): Promise<void> {
 
     await replaceWithText(
         ctx,
-        `📢 *معاينة التبليغ*\n\n${text}\n\nهل تريد إرسال هذه الرسالة إلى كل المستخدمين؟`,
+        `📢 *معاينة التبليغ:*\n\n${text}\n\nهل تريد إرسالها لكل المستخدمين؟`,
         new InlineKeyboard()
-            .text('✅ إرسال', 'admin_broadcast_confirm')
+            .text('✅ إرسال للجميع', 'admin_broadcast_confirm')
             .text('❌ إلغاء', 'admin_broadcast_cancel'),
         'Markdown'
     );
@@ -246,7 +299,39 @@ async function sendBroadcast(ctx: BotContext, adminUserId: number, text: string)
     }
 
     await createBroadcastLog(ctx.db, adminUserId, text, sent, failed);
-    await replaceWithText(ctx, `تم الإرسال إلى ${sent}\nفشل الإرسال إلى ${failed}`, adminPanelKeyboard());
+    await replaceWithText(ctx, `تم الإرسال إلى ${sent} مستخدم ✅\nفشل الإرسال إلى ${failed} مستخدم ⚠️`, adminPanelKeyboard());
+}
+
+async function startAnnouncementFlow(ctx: BotContext): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (!user) return;
+
+    await saveBotSession<AnnouncementSession>(ctx.db, user.user_id, 'admin_announcement', { step: 'awaiting_message' }, 30);
+    await replaceWithText(ctx, 'اكتب الرسالة التي تريد تثبيتها داخل البوت:', announcementCancelKeyboard());
+}
+
+async function previewAnnouncement(ctx: BotContext, text: string): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (user) {
+        await saveBotSession<AnnouncementSession>(ctx.db, user.user_id, 'admin_announcement', { step: 'confirm', message: text }, 30);
+    }
+
+    await replaceWithText(
+        ctx,
+        `📌 *الرسالة المثبتة:*\n\n${text}`,
+        new InlineKeyboard()
+            .text('✅ تثبيت', 'admin_announcement_confirm').row()
+            .text('🗑 حذف الرسالة الحالية', 'admin_announcement_clear').row()
+            .text('❌ إلغاء', 'admin_announcement_cancel'),
+        'Markdown'
+    );
+}
+
+function announcementCancelKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('🗑 حذف الرسالة الحالية', 'admin_announcement_clear').row()
+        .text('❌ إلغاء', 'admin_announcement_cancel')
+        .text('🛠 لوحة الأدمن', 'admin_panel');
 }
 
 async function showPendingSupportProofs(ctx: BotContext, page: number): Promise<void> {

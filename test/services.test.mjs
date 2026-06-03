@@ -150,7 +150,7 @@ test('registered start flow skips name prompt and shows main menu', () => {
     const source = fs.readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf8');
     assert.match(source, /if \(!user\.display_name\?\.trim\(\)\)/);
     assert.match(source, /مرحباً مجدداً/);
-    assert.match(source, /mainMenuKeyboard\(\)/);
+    assert.match(source, /showMainMenu\(ctx\)/);
 });
 
 test('rename flow updates display_name', () => {
@@ -286,7 +286,7 @@ test('profile and leaderboard show active supporter badge', () => {
     const xpSource = fs.readFileSync(new URL('../src/services/xpLevels.ts', import.meta.url), 'utf8');
 
     assert.match(profileSource, /getActiveSupportStatus/);
-    assert.match(profileSource, /💙 داعم DeutschDrop/);
+    assert.match(profileSource, /💙 حسابك مثبت كداعِم/);
     assert.match(leaderboardSource, /is_supporter_active \? ' 💙' : ''/);
     assert.match(xpSource, /LEFT JOIN user_support_status/);
     assert.match(xpSource, /supporter_until > datetime\('now'\)/);
@@ -320,6 +320,68 @@ test('supporter admin migration adds status and broadcast tables', () => {
     assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS user_support_status/);
     assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS broadcast_logs/);
     assert.match(schemaSource, /'admin_broadcast'/);
+});
+
+test('home button edits the existing main menu panel', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const wordPanelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
+    const mainCallback = menuSource.slice(menuSource.indexOf("bot.callbackQuery('menu_main'"), menuSource.indexOf('export async function showMainMenu'));
+
+    assert.match(mainCallback, /showMainMenu\(ctx\)/);
+    assert.doesNotMatch(mainCallback, /ctx\.reply/);
+    assert.match(wordPanelSource, /ctx\.editMessageText/);
+    assert.match(wordPanelSource, /await ctx\.reply\(text/);
+});
+
+test('role badges distinguish member admin and active supporter', () => {
+    const roleSource = fs.readFileSync(new URL('../src/services/roleUi.ts', import.meta.url), 'utf8');
+    assert.match(roleSource, /export function getUserRoleBadge/);
+    assert.match(roleSource, /return '🛡 أدمن'/);
+    assert.match(roleSource, /return '💙 داعم'/);
+    assert.match(roleSource, /return '👤 عضو'/);
+    assert.match(roleSource, /isAdminTelegramId/);
+});
+
+test('profile shows role and supporter pinning details', () => {
+    const profileSource = fs.readFileSync(new URL('../src/commands/profile.ts', import.meta.url), 'utf8');
+    assert.match(profileSource, /getUserRoleBadge/);
+    assert.match(profileSource, /الحالة:/);
+    assert.match(profileSource, /Telegram ID:/);
+    assert.match(profileSource, /حسابك مثبت كداعِم/);
+});
+
+test('admin can create broadcast and non-admin is denied', () => {
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    assert.match(adminSource, /bot\.callbackQuery\('admin_broadcast_start'/);
+    assert.match(adminSource, /bot\.callbackQuery\('admin_broadcast_confirm'/);
+    assert.match(adminSource, /if \(!await requireAdmin\(ctx\)\) return/);
+    assert.match(adminSource, /غير مصرح لك باستخدام هذا الأمر/);
+    assert.match(adminSource, /✅ إرسال للجميع/);
+});
+
+test('active announcement is rendered in main menu and can be cleared', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/announcementRepository.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0010_admin_announcements_and_role_ui.sql', import.meta.url), 'utf8');
+
+    assert.match(menuSource, /getActiveAnnouncement/);
+    assert.match(menuSource, /📌 \*إعلان:\*/);
+    assert.match(adminSource, /admin_announcement_start/);
+    assert.match(adminSource, /admin_announcement_confirm/);
+    assert.match(adminSource, /admin_announcement_clear/);
+    assert.match(repoSource, /UPDATE bot_announcements SET is_active = 0/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS bot_announcements/);
+});
+
+test('support proof approval cannot run twice', () => {
+    const supportSource = fs.readFileSync(new URL('../src/commands/support.ts', import.meta.url), 'utf8');
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/supportRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(repositorySource, /WHERE id = \? AND status = "pending"/);
+    assert.match(repositorySource, /changes/);
+    assert.match(supportSource, /if \(!updated\)/);
+    assert.match(supportSource, /تمت مراجعته سابقاً/);
 });
 
 test('callback middleware answers callback queries safely', () => {

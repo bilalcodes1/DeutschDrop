@@ -2,7 +2,7 @@ import { Bot } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { completeUserRegistration, createPendingUser, getUserByTelegramId, isRegisteredUser, renameUser } from '../repositories/userRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
-import { mainMenuKeyboard } from './menu';
+import { showMainMenu } from './menu';
 
 interface NameSessionData {
     mode: 'register' | 'rename';
@@ -19,10 +19,8 @@ export function registerStartCommand(bot: Bot<BotContext>): void {
             return;
         }
 
-        await ctx.reply(
-            `مرحباً مجدداً ${user.display_name}! 👋`,
-            { reply_markup: mainMenuKeyboard() }
-        );
+        await ctx.reply(`مرحباً مجدداً ${user.display_name}! 👋`);
+        await showMainMenu(ctx);
     });
 
     bot.command('rename', async (ctx) => {
@@ -54,13 +52,15 @@ export function registerStartCommand(bot: Bot<BotContext>): void {
         if (session.data.mode === 'rename') {
             await renameUser(ctx.db, user.user_id, displayName);
             await deleteBotSession(ctx.db, user.user_id, 'rename');
-            await ctx.reply(`تم تغيير الاسم ✅\n${displayName}`, { reply_markup: mainMenuKeyboard() });
+            await ctx.reply(`تم تغيير الاسم ✅\n${displayName}`);
+            await showMainMenu(ctx);
             return;
         }
 
         await completeUserRegistration(ctx.db, user.user_id, displayName);
         await deleteBotSession(ctx.db, user.user_id, 'register');
-        await ctx.reply(`تم تسجيلك ✅ أهلاً ${displayName}`, { reply_markup: mainMenuKeyboard() });
+        await ctx.reply(`تم تسجيلك ✅ أهلاً ${displayName}`);
+        await showMainMenu(ctx);
     });
 }
 
