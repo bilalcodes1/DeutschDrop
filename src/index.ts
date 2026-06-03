@@ -3,6 +3,7 @@
 import { handleWebhook } from './routes/webhook';
 import type { Env } from './models';
 import { deleteExpiredBotSessions } from './repositories/sessionRepository';
+import { ZAINCASH_QR_BASE64 } from './assets_zaincash_qr';
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -17,6 +18,15 @@ export default {
         if (url.pathname === '/health') {
             return new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
                 headers: { 'Content-Type': 'application/json' },
+            });
+        }
+
+        if (url.pathname === '/support/zaincash-qr') {
+            return new Response(base64ToBytes(ZAINCASH_QR_BASE64), {
+                headers: {
+                    'Content-Type': 'image/jpeg',
+                    'Cache-Control': 'public, max-age=31536000, immutable',
+                },
             });
         }
 
@@ -60,6 +70,15 @@ export default {
         }
     },
 };
+
+function base64ToBytes(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
 
 function getJobNameFromCron(cron: string): string {
     if (cron === '0 * * * *') return 'check_due_reviews';

@@ -49,6 +49,7 @@ export function mainMenuKeyboard(): InlineKeyboard {
         .text('👤 ملفي الشخصي', 'menu_profile')
         .text('🏆 الترتيب', 'menu_leaderboard').row()
         .text('📊 الإحصائيات', 'menu_stats').row()
+        .text('💙 دعم المشروع', 'menu_support').row()
         .text('⚙️ الإعدادات', 'menu_settings')
         .text('🏠 الرئيسية', 'menu_main');
 }

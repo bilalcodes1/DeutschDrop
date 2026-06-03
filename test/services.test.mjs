@@ -208,3 +208,39 @@ test('admin commands are gated by ADMIN_TELEGRAM_IDS', () => {
     }
     assert.match(source, /ADMIN_TELEGRAM_IDS/);
 });
+
+test('support project button is shown in main menu', () => {
+    const source = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    assert.match(source, /💙 دعم المشروع/);
+    assert.match(source, /menu_support/);
+});
+
+test('support screens include QiCard number and ZainCash QR flow', () => {
+    const source = fs.readFileSync(new URL('../src/commands/support.ts', import.meta.url), 'utf8');
+    assert.match(source, /7112008623/);
+    assert.match(source, /support_zaincash/);
+    assert.match(source, /ZAINCASH_QR_URL/);
+    assert.match(source, /امسح الباركود للتحويل/);
+});
+
+test('Payoneer support request is persisted', () => {
+    const supportSource = fs.readFileSync(new URL('../src/commands/support.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/supportRepository.ts', import.meta.url), 'utf8');
+    assert.match(supportSource, /support_payoneer_request/);
+    assert.match(supportSource, /createSupportRequest\(ctx\.db, user\.user_id, 'payoneer'/);
+    assert.match(repoSource, /INSERT INTO support_requests/);
+});
+
+test('callback middleware answers callback queries safely', () => {
+    const source = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+    assert.match(source, /ctx\.callbackQuery/);
+    assert.match(source, /await answer\(\)\.catch\(\(\) => \{\}\)/);
+    assert.match(source, /ctx\.answerCallbackQuery =/);
+});
+
+test('banned users are blocked before support proofs', () => {
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+    const supportSource = fs.readFileSync(new URL('../src/commands/support.ts', import.meta.url), 'utf8');
+    assert.match(botSource, /user\?\.is_banned/);
+    assert.match(supportSource, /user\.is_banned\) return next\(\)/);
+});

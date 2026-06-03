@@ -5,6 +5,7 @@ import { registerStartCommand } from '../commands/start';
 import { registerLearnCommand } from '../commands/learn';
 import { registerMenuCommand } from '../commands/menu';
 import { registerAddWordCommand } from '../commands/addword';
+import { registerSupportCommand } from '../commands/support';
 import { registerUploadCommand } from '../commands/upload';
 import { registerTrainCommand } from '../commands/train';
 import { registerStatsCommand } from '../commands/stats';
@@ -25,6 +26,15 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     bot.use(async (ctx, next) => {
         ctx.env = env;
         ctx.db = env.DB;
+        await next();
+    });
+
+    bot.use(async (ctx, next) => {
+        if (ctx.callbackQuery) {
+            const answer = ctx.answerCallbackQuery.bind(ctx);
+            await answer().catch(() => {});
+            ctx.answerCallbackQuery = ((...args: Parameters<typeof ctx.answerCallbackQuery>) => answer(...args).catch(() => {})) as typeof ctx.answerCallbackQuery;
+        }
         await next();
     });
 
@@ -56,6 +66,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerStartCommand(bot);
     registerLearnCommand(bot);
     registerMenuCommand(bot);
+    registerSupportCommand(bot);
     registerAddWordCommand(bot);
     registerUploadCommand(bot);
     registerTrainCommand(bot);
