@@ -3,6 +3,7 @@ import type { BotContext } from '../bot/context';
 import { getUserByTelegramId } from '../repositories/userRepository';
 import { getWordCountByStatus } from '../repositories/srsRepository';
 import { getTotalXp, getProgressToNextLevel } from '../services/xpLevels';
+import { formatDailyTasks, getTodayTasks } from '../services/dailyTasks';
 import { mainMenuKeyboard } from './menu';
 
 export function registerStatsCommand(bot: Bot<BotContext>): void {
@@ -31,6 +32,7 @@ async function showStats(ctx: BotContext): Promise<void> {
     const reviewStats = await getReviewStats(ctx, user.user_id);
     const hardWords = await getHardWordCount(ctx, user.user_id);
     const streak = await getCurrentStreak(ctx, user.user_id);
+    const dailyTasks = await getTodayTasks(ctx, user.user_id);
     const levelInfo = getProgressToNextLevel(totalXp);
 
     const totalWords = Object.values(statusCounts).reduce((a, b) => a + b, 0);
@@ -59,7 +61,8 @@ async function showStats(ctx: BotContext): Promise<void> {
         `📆 XP الأسبوعي: *${weeklyXp}*\n` +
         `🔥 السلسلة اليومية: *${streak}*\n` +
         `${progressBar} ${levelInfo.percent}%\n\n` +
-        `🇩🇪 تقدم ${cefr.level}: *${cefr.current}/${cefr.target}* كلمة (${cefr.percent}%)`;
+        `🇩🇪 تقدم ${cefr.level}: *${cefr.current}/${cefr.target}* كلمة (${cefr.percent}%)\n\n` +
+        `🎯 *مهام اليوم*\n${formatDailyTasks(dailyTasks)}`;
 
     await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() });
 }

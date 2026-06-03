@@ -10,6 +10,9 @@ import { registerTrainCommand } from '../commands/train';
 import { registerStatsCommand } from '../commands/stats';
 import { registerLeaderboardCommand } from '../commands/leaderboard';
 import { registerSettingsCommand } from '../commands/settings';
+import { registerChallengeCommand } from '../commands/challenge';
+import { registerHardWordsCommand } from '../commands/hardWords';
+import { registerExportWordsCommand } from '../commands/exportWords';
 
 export function createBot(token: string, env: Env): Bot<BotContext> {
     const bot = new Bot<BotContext>(token);
@@ -30,6 +33,9 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerStatsCommand(bot);
     registerLeaderboardCommand(bot);
     registerSettingsCommand(bot);
+    registerChallengeCommand(bot);
+    registerHardWordsCommand(bot);
+    registerExportWordsCommand(bot);
 
     // Error handler
     bot.catch((err) => {

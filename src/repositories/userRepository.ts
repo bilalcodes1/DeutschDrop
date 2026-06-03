@@ -95,6 +95,14 @@ export async function updateUserSettings(
         fields.push('evening_time = ?');
         values.push(settings.evening_time);
     }
+    if (settings.reminders_enabled !== undefined) {
+        fields.push('reminders_enabled = ?');
+        values.push(settings.reminders_enabled ? 1 : 0);
+    }
+    if (settings.competition_notifications_enabled !== undefined) {
+        fields.push('competition_notifications_enabled = ?');
+        values.push(settings.competition_notifications_enabled ? 1 : 0);
+    }
 
     if (fields.length === 0) return;
 

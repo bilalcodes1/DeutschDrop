@@ -23,14 +23,6 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
         await ctx.answerCallbackQuery();
     });
 
-    bot.callbackQuery('menu_challenge', async (ctx) => {
-        await ctx.editMessageText(
-            '⚔️ *التحديات*\n\nقريباً!',
-            { parse_mode: 'Markdown' }
-        );
-        await ctx.answerCallbackQuery();
-    });
-
     // Back to main menu
     bot.callbackQuery('menu_main', async (ctx) => {
         await ctx.editMessageText(
@@ -67,6 +59,7 @@ function wordsMenuKeyboard(): InlineKeyboard {
         .text('➕ إضافة كلمة', 'add_word')
         .text('📤 رفع CSV', 'upload_csv').row()
         .text('📋 عرض الكلمات', 'list_words')
+        .text('📌 الكلمات الصعبة', 'hard_words').row()
         .text('💡 اقتراحات', 'suggest_peer_words').row()
         .text('⬅️ رجوع', 'menu_main');
 }

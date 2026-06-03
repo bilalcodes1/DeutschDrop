@@ -5,6 +5,8 @@ import { getDueWords, updateWordProgress, recordReview } from '../repositories/s
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { calculateNextReview } from '../services/srs';
 import { addXp } from '../services/xpLevels';
+import { checkAchievements } from '../services/achievements';
+import { incrementDailyTask } from '../services/dailyTasks';
 
 interface LearnSessionData {
     words: Array<{ word_id: number; german: string; arabic: string; example: string | null; status: string; ease_factor: number; interval: number; repetitions: number; correct_count: number; wrong_count: number }>;
@@ -163,6 +165,8 @@ async function handleReviewAnswer(
     if (isCorrect) {
         await addXp(ctx.db, user.user_id, 2, 'correct_review');
     }
+    await incrementDailyTask(ctx, user.user_id, 'review_words');
+    await checkAchievements(ctx, user.user_id);
 
     await ctx.answerCallbackQuery(isCorrect ? '✅ صحيح!' : '❌ خطأ، سنعيدها قريباً');
 

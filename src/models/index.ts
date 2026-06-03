@@ -23,6 +23,8 @@ export interface Settings {
     notification_mode: 'morning' | 'morning_evening' | 'all_day';
     morning_time: string;
     evening_time: string;
+    reminders_enabled: boolean;
+    competition_notifications_enabled: boolean;
 }
 
 export interface Word {

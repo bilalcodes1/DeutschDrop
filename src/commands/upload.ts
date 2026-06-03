@@ -4,6 +4,8 @@ import { getUserByTelegramId } from '../repositories/userRepository';
 import { createWordAndAssignToUser, createUploadedList } from '../repositories/wordRepository';
 import { addXp } from '../services/xpLevels';
 import { parseWordCsv, type ParsedWordRow } from '../services/csvParser';
+import { checkAchievements, unlockAchievement } from '../services/achievements';
+import { incrementDailyTask } from '../services/dailyTasks';
 import { mainMenuKeyboard } from './menu';
 
 const CSV_UPLOAD_INSTRUCTIONS =
@@ -65,6 +67,11 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
         const content = await response.text();
 
         const result = await parseCsvAndImport(ctx.db, content, user.user_id);
+        if (result.imported > 0) {
+            await incrementDailyTask(ctx, user.user_id, 'learn_words', result.imported);
+            await unlockAchievement(ctx, user.user_id, 'first_csv');
+            await checkAchievements(ctx, user.user_id);
+        }
 
         await ctx.reply(
             `📊 *ملخص الرفع*\n\n✅ ${result.imported} كلمة مستوردة\n⚠️ ${result.duplicates} تكرار (تم تخطيهم)\n❌ ${result.errors} أخطاء`,

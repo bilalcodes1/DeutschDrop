@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { queryOne, run } from '../db/queries';
 
-export type BotSessionType = 'learn' | 'train' | 'add_word';
+export type BotSessionType = 'learn' | 'train' | 'add_word' | 'challenge';
 
 export interface BotSession<T> {
     session_id: string;

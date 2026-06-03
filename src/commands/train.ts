@@ -6,6 +6,8 @@ import { recordReview } from '../repositories/srsRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { isHardWord, selectTrainingWords } from '../services/srs';
 import { addXp } from '../services/xpLevels';
+import { checkAchievements } from '../services/achievements';
+import { incrementDailyTask } from '../services/dailyTasks';
 import { mainMenuKeyboard } from './menu';
 
 interface TrainingQuestion {
@@ -184,11 +186,15 @@ async function handleTrainAnswer(ctx: BotContext, wordId: number, isCorrect: boo
 
     // Record as review
     await recordReview(ctx.db, user.user_id, wordId, isCorrect, null, null);
+    await checkAchievements(ctx, user.user_id);
 
     // Move to next question
     session.data.currentIndex++;
     session.data.startTime = Date.now();
     await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', session.data);
+    if (session.data.currentIndex >= session.data.questions.length) {
+        await incrementDailyTask(ctx, user.user_id, 'complete_training');
+    }
     await showTrainingQuestion(ctx, user.user_id);
 }
 

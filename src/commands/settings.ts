@@ -57,8 +57,32 @@ export function registerSettingsCommand(bot: Bot<BotContext>): void {
                     .text('☀️ صباحاً فقط', 'notify_morning').row()
                     .text('☀️ صباحاً + 🌙 مساءً', 'notify_both').row()
                     .text('⏰ طوال اليوم', 'notify_all').row()
+                    .text('🔕 إيقاف التذكيرات', 'reminders_off').row()
+                    .text('🔔 تشغيل التذكيرات', 'reminders_on').row()
+                    .text('⚔️ إيقاف إشعارات المنافسة', 'competition_notify_off').row()
+                    .text('⚔️ تشغيل إشعارات المنافسة', 'competition_notify_on').row()
                     .text('⬅️ رجوع', 'menu_settings')
             }
+        );
+        await ctx.answerCallbackQuery();
+    });
+
+    bot.callbackQuery(/^reminders_(on|off)$/, async (ctx) => {
+        const enabled = ctx.match[1] === 'on';
+        await updateBooleanSetting(ctx, { reminders_enabled: enabled });
+        await ctx.editMessageText(
+            enabled ? '✅ تم تشغيل التذكيرات.' : '✅ تم إيقاف التذكيرات.',
+            { reply_markup: settingsNavigationKeyboard() }
+        );
+        await ctx.answerCallbackQuery();
+    });
+
+    bot.callbackQuery(/^competition_notify_(on|off)$/, async (ctx) => {
+        const enabled = ctx.match[1] === 'on';
+        await updateBooleanSetting(ctx, { competition_notifications_enabled: enabled });
+        await ctx.editMessageText(
+            enabled ? '✅ تم تشغيل إشعارات المنافسة.' : '✅ تم إيقاف إشعارات المنافسة.',
+            { reply_markup: settingsNavigationKeyboard() }
         );
         await ctx.answerCallbackQuery();
     });
@@ -114,7 +138,9 @@ async function showSettings(ctx: BotContext): Promise<void> {
         `🎯 الهدف اليومي: *${settings?.daily_goal ?? 10}* كلمات\n` +
         `🔔 الإشعارات: *${modeLabels[settings?.notification_mode ?? 'morning']}*\n` +
         `🕰️ وقت الصباح: *${settings?.morning_time ?? '08:00'}*\n` +
-        `🕰️ وقت المساء: *${settings?.evening_time ?? '18:00'}*`;
+        `🕰️ وقت المساء: *${settings?.evening_time ?? '18:00'}*\n` +
+        `🔔 التذكيرات: *${isEnabled(settings?.reminders_enabled) ? 'مفعلة' : 'متوقفة'}*\n` +
+        `⚔️ إشعارات المنافسة: *${isEnabled(settings?.competition_notifications_enabled) ? 'مفعلة' : 'متوقفة'}*`;
 
     await ctx.reply(text, {
         parse_mode: 'Markdown',
@@ -122,9 +148,21 @@ async function showSettings(ctx: BotContext): Promise<void> {
     });
 }
 
+async function updateBooleanSetting(ctx: BotContext, settings: { reminders_enabled?: boolean; competition_notifications_enabled?: boolean }): Promise<void> {
+    const telegramId = ctx.from?.id ?? 0;
+    const user = await getUserByTelegramId(ctx.db, telegramId);
+    if (user) {
+        await updateUserSettings(ctx.db, user.user_id, settings);
+    }
+}
+
 function settingsNavigationKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
         .text('🎯 تغيير الهدف', 'set_goal')
         .text('🔔 الإشعارات', 'set_notifications').row()
         .text('⬅️ رجوع للقائمة', 'menu_main');
+}
+
+function isEnabled(value: boolean | number | undefined): boolean {
+    return value !== false && value !== 0;
 }

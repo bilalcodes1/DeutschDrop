@@ -12,6 +12,8 @@ import {
 } from '../repositories/wordRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { addXp } from '../services/xpLevels';
+import { checkAchievements } from '../services/achievements';
+import { incrementDailyTask } from '../services/dailyTasks';
 import { mainMenuKeyboard } from './menu';
 
 interface AddWordSessionData {
@@ -100,6 +102,8 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
             try {
                 await createWordAndAssignToUser(ctx.db, pending.data.german, text, null, user.user_id);
                 await addXp(ctx.db, user.user_id, 5, 'new_word');
+                await incrementDailyTask(ctx, user.user_id, 'learn_words');
+                await checkAchievements(ctx, user.user_id);
             } catch (error) {
                 if ((error as Error).message === DUPLICATE_WORD_ERROR) {
                     await ctx.reply('⚠️ هذه الكلمة موجودة مسبقاً في بنك كلماتك.', { reply_markup: mainMenuKeyboard() });
@@ -237,6 +241,8 @@ async function addWordInline(ctx: BotContext, german: string, arabic: string): P
     try {
         await createWordAndAssignToUser(ctx.db, german, arabic, null, user.user_id);
         await addXp(ctx.db, user.user_id, 5, 'new_word');
+        await incrementDailyTask(ctx, user.user_id, 'learn_words');
+        await checkAchievements(ctx, user.user_id);
     } catch (error) {
         if ((error as Error).message === DUPLICATE_WORD_ERROR) {
             await ctx.reply('⚠️ هذه الكلمة موجودة مسبقاً في بنك كلماتك.', { reply_markup: mainMenuKeyboard() });
