@@ -47,18 +47,23 @@ export async function getTotalXp(db: D1Database, userId: number): Promise<number
 
 export async function getLeaderboard(
     db: D1Database
-): Promise<Array<{ user_id: number; display_name: string; telegram_username: string | null; total_xp: number; weekly_xp: number; level: number; achievements_count: number }>> {
-    const rows = await queryAll<{ user_id: number; display_name: string; telegram_username: string | null; total_xp: number; weekly_xp: number; achievements_count: number }>(
+): Promise<Array<{ user_id: number; display_name: string; telegram_username: string | null; total_xp: number; weekly_xp: number; level: number; achievements_count: number; is_supporter_active: number }>> {
+    const rows = await queryAll<{ user_id: number; display_name: string; telegram_username: string | null; total_xp: number; weekly_xp: number; achievements_count: number; is_supporter_active: number }>(
         db,
         `SELECT u.user_id,
                 COALESCE(u.display_name, u.name) AS display_name,
                 COALESCE(u.username, u.telegram_username) AS telegram_username,
                 COALESCE(SUM(x.amount), 0) AS total_xp,
                 COALESCE(SUM(CASE WHEN x.created_at >= datetime('now', '-7 days') THEN x.amount ELSE 0 END), 0) AS weekly_xp,
-                COUNT(DISTINCT ua.achievement_id) AS achievements_count
+                COUNT(DISTINCT ua.achievement_id) AS achievements_count,
+                CASE
+                    WHEN us.is_supporter = 1 AND us.supporter_until > datetime('now') THEN 1
+                    ELSE 0
+                END AS is_supporter_active
          FROM users u
          LEFT JOIN xp_log x ON u.user_id = x.user_id
          LEFT JOIN user_achievements ua ON ua.user_id = u.user_id
+         LEFT JOIN user_support_status us ON us.user_id = u.user_id
          WHERE u.display_name IS NOT NULL
          GROUP BY u.user_id
          ORDER BY total_xp DESC`

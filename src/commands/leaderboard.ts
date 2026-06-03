@@ -32,7 +32,7 @@ async function showLeaderboard(ctx: BotContext): Promise<void> {
     for (let i = 0; i < leaderboard.length; i++) {
         const user = leaderboard[i];
         const rank = i + 1;
-        text += `${rank}. ${user.display_name} — ${user.total_xp} XP`;
+        text += `${rank}. ${user.display_name}${user.is_supporter_active ? ' 💙' : ''} — ${user.total_xp} XP`;
         if (user.achievements_count > 0) text += ` | 🏅 ${user.achievements_count}`;
         text += '\n';
     }

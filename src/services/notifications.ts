@@ -15,6 +15,20 @@ export async function sendTelegramMessage(
     });
 }
 
+export async function sendTelegramPhoto(
+    env: Env,
+    telegramId: number,
+    photo: string,
+    caption: string,
+    replyMarkup?: unknown
+): Promise<void> {
+    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: telegramId, photo, caption, parse_mode: 'Markdown', reply_markup: replyMarkup }),
+    });
+}
+
 export async function getPeerUser(db: D1Database, userId: number): Promise<User | null> {
     return queryOne<User>(
         db,

@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS competition_leaderboard_snapshot (
 CREATE TABLE IF NOT EXISTS bot_sessions (
     session_id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('learn', 'train', 'add_word', 'challenge', 'register', 'rename', 'support_proof')),
+    type TEXT NOT NULL CHECK (type IN ('learn', 'train', 'add_word', 'challenge', 'register', 'rename', 'support_proof', 'admin_broadcast')),
     data TEXT NOT NULL,
     expires_at DATETIME NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -282,8 +282,35 @@ CREATE TABLE IF NOT EXISTS support_proofs (
     amount TEXT,
     message TEXT,
     file_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    reviewed_by_admin_id INTEGER,
+    reviewed_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- 23. user_support_status
+CREATE TABLE IF NOT EXISTS user_support_status (
+    user_id INTEGER PRIMARY KEY,
+    is_supporter INTEGER NOT NULL DEFAULT 0 CHECK (is_supporter IN (0, 1)),
+    supporter_until DATETIME,
+    last_confirmed_by_admin_id INTEGER,
+    last_support_proof_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (last_support_proof_id) REFERENCES support_proofs(id) ON DELETE SET NULL
+);
+
+-- 24. broadcast_logs
+CREATE TABLE IF NOT EXISTS broadcast_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_user_id INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    sent_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (admin_user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
 -- 20. job_runs (Cron job state tracking)
@@ -316,6 +343,8 @@ CREATE INDEX IF NOT EXISTS idx_async_challenges_users ON async_challenges(creato
 CREATE INDEX IF NOT EXISTS idx_daily_tasks_user_date ON daily_tasks(user_id, task_date);
 CREATE INDEX IF NOT EXISTS idx_support_requests_user_id ON support_requests(user_id);
 CREATE INDEX IF NOT EXISTS idx_support_proofs_user_id ON support_proofs(user_id);
+CREATE INDEX IF NOT EXISTS idx_support_proofs_status ON support_proofs(status);
+CREATE INDEX IF NOT EXISTS idx_user_support_status_active ON user_support_status(is_supporter, supporter_until);
 
 -- =====================================================
 -- Seed: Default achievement definitions

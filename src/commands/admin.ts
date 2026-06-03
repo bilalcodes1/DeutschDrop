@@ -1,34 +1,38 @@
-import { Bot } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
-import { getAdminUserList, setUserBanned } from '../repositories/userRepository';
+import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
+import {
+    countActiveSupporters,
+    countPendingSupportProofs,
+    createBroadcastLog,
+    getPendingSupportProofs,
+} from '../repositories/supportRepository';
+import { getAdminUserList, getUserByTelegramId, setUserBanned } from '../repositories/userRepository';
 import { isAdminTelegramId } from '../services/adminAccess';
 import { sendTelegramMessage } from '../services/notifications';
+import { replaceWithText } from './wordPanel';
+
+interface BroadcastSession {
+    step: 'awaiting_message' | 'confirm';
+    message?: string;
+}
+
+const USERS_PAGE_SIZE = 10;
 
 export function registerAdminCommand(bot: Bot<BotContext>): void {
+    bot.command('admin', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showAdminPanel(ctx);
+    });
+
     bot.command('admin_stats', async (ctx) => {
         if (!await requireAdmin(ctx)) return;
-
-        const users = await getAdminUserList(ctx.db);
-        const words = await ctx.db.prepare('SELECT COUNT(*) AS count FROM words').first<{ count: number }>();
-        const reviews = await ctx.db.prepare('SELECT COUNT(*) AS count FROM reviews').first<{ count: number }>();
-        await ctx.reply(
-            `🛠 Admin stats\n\n` +
-            `Users: ${users.length}\n` +
-            `Words: ${words?.count ?? 0}\n` +
-            `Reviews: ${reviews?.count ?? 0}`
-        );
+        await showAdminStats(ctx);
     });
 
     bot.command('users', async (ctx) => {
         if (!await requireAdmin(ctx)) return;
-
-        const users = await getAdminUserList(ctx.db);
-        const text = users.length === 0
-            ? 'لا يوجد مستخدمون.'
-            : users.slice(0, 30).map((user, index) =>
-                `${index + 1}. ${user.display_name} (${user.telegram_user_id ?? user.telegram_id}) — ${user.total_xp} XP — ${user.word_count} words${user.is_banned ? ' — banned' : ''}`
-            ).join('\n');
-        await ctx.reply(text);
+        await showAdminUsers(ctx, 0);
     });
 
     bot.command('broadcast', async (ctx) => {
@@ -36,18 +40,11 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
 
         const text = ctx.message?.text?.replace(/^\/broadcast(@\w+)?\s*/i, '').trim();
         if (!text) {
-            await ctx.reply('استخدم:\n/broadcast نص الرسالة');
+            await startBroadcastFlow(ctx);
             return;
         }
 
-        const users = await getAdminUserList(ctx.db);
-        let sent = 0;
-        for (const user of users) {
-            if (user.is_banned) continue;
-            await sendTelegramMessage(ctx.env, user.telegram_user_id ?? user.telegram_id, text);
-            sent++;
-        }
-        await ctx.reply(`تم إرسال الرسالة إلى ${sent} مستخدم.`);
+        await previewBroadcast(ctx, text);
     });
 
     bot.command('ban', async (ctx) => {
@@ -59,6 +56,74 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
         if (!await requireAdmin(ctx)) return;
         await updateBan(ctx, false);
     });
+
+    bot.callbackQuery('admin_panel', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showAdminPanel(ctx);
+    });
+
+    bot.callbackQuery('admin_stats', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showAdminStats(ctx);
+    });
+
+    bot.callbackQuery(/^admin_users_(\d+)$/, async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showAdminUsers(ctx, Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery('admin_broadcast_start', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await startBroadcastFlow(ctx);
+    });
+
+    bot.callbackQuery('admin_broadcast_confirm', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return;
+
+        const session = await getBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast');
+        if (!session?.data.message) {
+            await replaceWithText(ctx, 'لا توجد رسالة جاهزة للإرسال.', adminPanelKeyboard());
+            return;
+        }
+
+        await sendBroadcast(ctx, user.user_id, session.data.message);
+        await deleteBotSession(ctx.db, user.user_id, 'admin_broadcast');
+    });
+
+    bot.callbackQuery('admin_broadcast_cancel', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (user) await deleteBotSession(ctx.db, user.user_id, 'admin_broadcast');
+        await replaceWithText(ctx, 'تم إلغاء إرسال التبليغ.', adminPanelKeyboard());
+    });
+
+    bot.callbackQuery(/^admin_support_pending(?:_(\d+))?$/, async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showPendingSupportProofs(ctx, Number(ctx.match[1] ?? 0));
+    });
+
+    bot.callbackQuery('admin_banned', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showBannedUsers(ctx);
+    });
+
+    bot.on('message:text', async (ctx, next) => {
+        if (!isAdminTelegramId(ctx.env, ctx.from?.id)) return next();
+
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return next();
+
+        const session = await getBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast');
+        if (!session || session.data.step !== 'awaiting_message') return next();
+
+        const text = ctx.message?.text?.trim();
+        if (!text || text.startsWith('/')) return next();
+
+        await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', { step: 'confirm', message: text }, 30);
+        await previewBroadcast(ctx, text);
+    });
 }
 
 async function requireAdmin(ctx: BotContext): Promise<boolean> {
@@ -66,6 +131,158 @@ async function requireAdmin(ctx: BotContext): Promise<boolean> {
 
     await ctx.reply('غير مصرح لك باستخدام هذا الأمر.');
     return false;
+}
+
+async function showAdminPanel(ctx: BotContext): Promise<void> {
+    await replaceWithText(ctx, '🛠 *لوحة الأدمن*', adminPanelKeyboard(), 'Markdown');
+}
+
+function adminPanelKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('📊 إحصائيات', 'admin_stats')
+        .text('👥 المستخدمون', 'admin_users_0').row()
+        .text('📢 إرسال تبليغ', 'admin_broadcast_start')
+        .text('💙 طلبات الدعم', 'admin_support_pending_0').row()
+        .text('🚫 المحظورون', 'admin_banned').row()
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+async function showAdminStats(ctx: BotContext): Promise<void> {
+    const users = await getAdminUserList(ctx.db);
+    const words = await ctx.db.prepare('SELECT COUNT(*) AS count FROM words').first<{ count: number }>();
+    const todayUsers = await ctx.db.prepare(
+        'SELECT COUNT(*) AS count FROM users WHERE display_name IS NOT NULL AND date(created_at) = date("now")'
+    ).first<{ count: number }>();
+    const reviewsToday = await ctx.db.prepare(
+        'SELECT COUNT(*) AS count FROM reviews WHERE date(reviewed_at) = date("now")'
+    ).first<{ count: number }>();
+    const pendingProofs = await countPendingSupportProofs(ctx.db);
+    const activeSupporters = await countActiveSupporters(ctx.db);
+    const banned = users.filter(user => user.is_banned).length;
+
+    await replaceWithText(
+        ctx,
+        `📊 *إحصائيات الأدمن*\n\n` +
+        `عدد المستخدمين: *${users.length}*\n` +
+        `عدد المستخدمين اليوم: *${todayUsers?.count ?? 0}*\n` +
+        `عدد الكلمات الكلي: *${words?.count ?? 0}*\n` +
+        `إثباتات الدعم pending: *${pendingProofs}*\n` +
+        `الداعمون النشطون: *${activeSupporters}*\n` +
+        `المحظورون: *${banned}*\n` +
+        `التدريبات/المراجعات اليوم: *${reviewsToday?.count ?? 0}*`,
+        adminPanelKeyboard(),
+        'Markdown'
+    );
+}
+
+async function showAdminUsers(ctx: BotContext, page: number): Promise<void> {
+    const users = await getAdminUserList(ctx.db);
+    const totalPages = Math.max(1, Math.ceil(users.length / USERS_PAGE_SIZE));
+    const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+    const pageUsers = users.slice(safePage * USERS_PAGE_SIZE, safePage * USERS_PAGE_SIZE + USERS_PAGE_SIZE);
+
+    const text = pageUsers.length === 0
+        ? '👥 *المستخدمون*\n\nلا يوجد مستخدمون.'
+        : '👥 *المستخدمون*\n\n' + pageUsers.map((user, index) =>
+            `${safePage * USERS_PAGE_SIZE + index + 1}. ${user.display_name} — ${user.telegram_user_id ?? user.telegram_id}\n` +
+            `XP: ${user.total_xp} | ${user.is_supporter_active ? '💙 داعم' : 'غير داعم'} | ${user.is_banned ? 'محظور' : 'نشط'}`
+        ).join('\n\n');
+
+    await replaceWithText(ctx, `${text}\n\nصفحة ${safePage + 1}/${totalPages}`, usersKeyboard(safePage, totalPages), 'Markdown');
+}
+
+function usersKeyboard(page: number, totalPages: number): InlineKeyboard {
+    const keyboard = new InlineKeyboard();
+    if (page > 0) keyboard.text('⬅️ السابق', `admin_users_${page - 1}`);
+    if (page < totalPages - 1) keyboard.text('التالي ➡️', `admin_users_${page + 1}`);
+    if (page > 0 || page < totalPages - 1) keyboard.row();
+    keyboard.text('🛠 لوحة الأدمن', 'admin_panel').text('🏠 الرئيسية', 'menu_main');
+    return keyboard;
+}
+
+async function startBroadcastFlow(ctx: BotContext): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (!user) return;
+
+    await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', { step: 'awaiting_message' }, 30);
+    await replaceWithText(ctx, 'اكتب الرسالة التي تريد إرسالها لكل المستخدمين:', adminCancelKeyboard());
+}
+
+async function previewBroadcast(ctx: BotContext, text: string): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (user) {
+        await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', { step: 'confirm', message: text }, 30);
+    }
+
+    await replaceWithText(
+        ctx,
+        `📢 *معاينة التبليغ*\n\n${text}\n\nهل تريد إرسال هذه الرسالة إلى كل المستخدمين؟`,
+        new InlineKeyboard()
+            .text('✅ إرسال', 'admin_broadcast_confirm')
+            .text('❌ إلغاء', 'admin_broadcast_cancel'),
+        'Markdown'
+    );
+}
+
+function adminCancelKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('❌ إلغاء', 'admin_broadcast_cancel')
+        .text('🛠 لوحة الأدمن', 'admin_panel');
+}
+
+async function sendBroadcast(ctx: BotContext, adminUserId: number, text: string): Promise<void> {
+    const users = await getAdminUserList(ctx.db);
+    let sent = 0;
+    let failed = 0;
+
+    for (const user of users) {
+        if (user.is_banned) continue;
+        try {
+            await sendTelegramMessage(ctx.env, user.telegram_user_id ?? user.telegram_id, text);
+            sent++;
+        } catch {
+            failed++;
+        }
+    }
+
+    await createBroadcastLog(ctx.db, adminUserId, text, sent, failed);
+    await replaceWithText(ctx, `تم الإرسال إلى ${sent}\nفشل الإرسال إلى ${failed}`, adminPanelKeyboard());
+}
+
+async function showPendingSupportProofs(ctx: BotContext, page: number): Promise<void> {
+    const proofs = await getPendingSupportProofs(ctx.db, 5, page * 5);
+    if (proofs.length === 0) {
+        await replaceWithText(ctx, '💙 *طلبات الدعم*\n\nلا توجد إثباتات pending.', adminPanelKeyboard(), 'Markdown');
+        return;
+    }
+
+    const text = '💙 *طلبات الدعم pending*\n\n' + proofs.map((proof, index) =>
+        `${page * 5 + index + 1}. ${proof.display_name ?? 'بدون اسم'}\n` +
+        `الوقت: ${proof.created_at}\n` +
+        `النوع: ${proof.file_id ? 'صورة' : 'نص'}\n` +
+        `#${proof.id}`
+    ).join('\n\n');
+
+    await replaceWithText(ctx, text, pendingSupportKeyboard(proofs[0].id, page, proofs.length === 5), 'Markdown');
+}
+
+function pendingSupportKeyboard(firstProofId: number, page: number, hasNext: boolean): InlineKeyboard {
+    const keyboard = new InlineKeyboard()
+        .text('✅ تأكيد أول طلب', `support_approve_${firstProofId}`)
+        .text('❌ رفض أول طلب', `support_reject_${firstProofId}`).row();
+    if (page > 0) keyboard.text('⬅️ السابق', `admin_support_pending_${page - 1}`);
+    if (hasNext) keyboard.text('التالي ➡️', `admin_support_pending_${page + 1}`);
+    if (page > 0 || hasNext) keyboard.row();
+    keyboard.text('🛠 لوحة الأدمن', 'admin_panel').text('🏠 الرئيسية', 'menu_main');
+    return keyboard;
+}
+
+async function showBannedUsers(ctx: BotContext): Promise<void> {
+    const users = (await getAdminUserList(ctx.db)).filter(user => user.is_banned);
+    const text = users.length === 0
+        ? '🚫 لا يوجد مستخدمون محظورون.'
+        : '🚫 *المحظورون*\n\n' + users.map(user => `${user.display_name} — ${user.telegram_user_id ?? user.telegram_id}`).join('\n');
+    await replaceWithText(ctx, text, adminPanelKeyboard(), 'Markdown');
 }
 
 async function updateBan(ctx: BotContext, banned: boolean): Promise<void> {

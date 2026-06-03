@@ -2,6 +2,7 @@ import { Bot } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { getUserByTelegramId, isRegisteredUser } from '../repositories/userRepository';
 import { getWordsByUser } from '../repositories/wordRepository';
+import { getActiveSupportStatus } from '../repositories/supportRepository';
 import { getTotalXp, getLevelFromXp } from '../services/xpLevels';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
@@ -32,9 +33,14 @@ async function showProfile(ctx: BotContext): Promise<void> {
     const level = getLevelFromXp(xp).level;
     const streak = await ctx.db.prepare('SELECT current_streak FROM daily_streaks WHERE user_id = ?').bind(user.user_id).first<{ current_streak: number }>();
     const achievements = await getAchievementCount(ctx, user.user_id);
+    const supportStatus = await getActiveSupportStatus(ctx.db, user.user_id);
+    const supporterLine = supportStatus?.supporter_until
+        ? `\n💙 داعم DeutschDrop\nينتهي: ${formatRemaining(supportStatus.supporter_until)}\n`
+        : '\n';
 
     const text = `👤 *ملفي الشخصي*\n\n` +
         `الاسم: *${user.display_name}*\n` +
+        supporterLine +
         `XP: *${xp}*\n` +
         `المستوى: *${level}*\n` +
         `عدد الكلمات: *${words.length}*\n` +
@@ -42,6 +48,16 @@ async function showProfile(ctx: BotContext): Promise<void> {
         `الإنجازات: *${achievements}*`;
 
     await replaceWithText(ctx, text, mainMenuKeyboard(), 'Markdown');
+}
+
+function formatRemaining(until: string): string {
+    const ms = new Date(until).getTime() - Date.now();
+    if (ms <= 0) return 'منتهي';
+
+    const hours = Math.floor(ms / (60 * 60 * 1000));
+    const minutes = Math.max(0, Math.floor((ms % (60 * 60 * 1000)) / (60 * 1000)));
+    if (hours > 0) return `${hours} ساعة و ${minutes} دقيقة`;
+    return `${minutes} دقيقة`;
 }
 
 async function showAchievements(ctx: BotContext): Promise<void> {

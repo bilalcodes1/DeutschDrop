@@ -1,10 +1,16 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
-import { createSupportProof, createSupportRequest } from '../repositories/supportRepository';
+import {
+    activateSupporterFor24Hours,
+    createSupportProof,
+    createSupportRequest,
+    getSupportProofById,
+    updateSupportProofStatus,
+} from '../repositories/supportRepository';
 import { getUserByTelegramId } from '../repositories/userRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
-import { getAdminTelegramIds } from '../services/adminAccess';
-import { sendTelegramMessage } from '../services/notifications';
+import { getAdminTelegramIds, isAdminTelegramId } from '../services/adminAccess';
+import { sendTelegramMessage, sendTelegramPhoto } from '../services/notifications';
 import { replaceWithText } from './wordPanel';
 
 const ZAINCASH_QR_URL = 'https://deutschdrop.aque7x.workers.dev/support/zaincash-qr';
@@ -72,6 +78,66 @@ export function registerSupportCommand(bot: Bot<BotContext>): void {
         await replaceWithText(ctx, 'تم استلام طلبك ✅ سيتم إرسال بيانات Payoneer لك.', backKeyboard('support_international'));
     });
 
+    bot.callbackQuery(/^support_approve_(\d+)$/, async (ctx) => {
+        if (!await requireSupportAdmin(ctx)) return;
+
+        const proofId = Number(ctx.match[1]);
+        const proof = await getSupportProofById(ctx.db, proofId);
+        if (!proof || proof.status !== 'pending') {
+            await replaceWithText(ctx, 'هذا الإثبات غير موجود أو تمت مراجعته سابقاً.', adminBackKeyboard());
+            return;
+        }
+
+        await updateSupportProofStatus(ctx.db, proofId, 'approved', ctx.from?.id ?? 0);
+        await activateSupporterFor24Hours(ctx.db, proof.user_id, ctx.from?.id ?? 0, proofId);
+        await sendTelegramMessage(
+            ctx.env,
+            proof.telegram_user_id ?? proof.telegram_id,
+            'شكراً لدعمك DeutschDrop 💙\nتم تفعيل حسابك كداعِم لمدة 24 ساعة ✅'
+        );
+        await replaceWithText(ctx, 'تم تأكيد الدعم وتفعيل المستخدم لمدة 24 ساعة ✅', adminBackKeyboard());
+    });
+
+    bot.callbackQuery(/^support_reject_(\d+)$/, async (ctx) => {
+        if (!await requireSupportAdmin(ctx)) return;
+
+        const proofId = Number(ctx.match[1]);
+        const proof = await getSupportProofById(ctx.db, proofId);
+        if (!proof || proof.status !== 'pending') {
+            await replaceWithText(ctx, 'هذا الإثبات غير موجود أو تمت مراجعته سابقاً.', adminBackKeyboard());
+            return;
+        }
+
+        await updateSupportProofStatus(ctx.db, proofId, 'rejected', ctx.from?.id ?? 0);
+        await sendTelegramMessage(
+            ctx.env,
+            proof.telegram_user_id ?? proof.telegram_id,
+            'لم يتم تأكيد الدعم. إذا كان هناك خطأ، يرجى إرسال إثبات أوضح.'
+        );
+        await replaceWithText(ctx, 'تم رفض إثبات الدعم.', adminBackKeyboard());
+    });
+
+    bot.callbackQuery(/^support_user_(\d+)$/, async (ctx) => {
+        if (!await requireSupportAdmin(ctx)) return;
+
+        const proof = await getSupportProofById(ctx.db, Number(ctx.match[1]));
+        if (!proof) {
+            await replaceWithText(ctx, 'لم أجد هذا المستخدم.', adminBackKeyboard());
+            return;
+        }
+
+        await replaceWithText(
+            ctx,
+            `👤 المستخدم\n\n` +
+            `الاسم: ${proof.display_name ?? 'بدون اسم'}\n` +
+            `Username: ${formatUsername(proof)}\n` +
+            `ID: ${proof.telegram_user_id ?? proof.telegram_id}\n` +
+            `إثبات الدعم: #${proof.id}\n` +
+            `الحالة: ${proof.status}`,
+            supportProofAdminKeyboard(proof.id)
+        );
+    });
+
     bot.callbackQuery('support_global_cards', async (ctx) => {
         await showGiftCards(ctx);
     });
@@ -99,14 +165,20 @@ export function registerSupportCommand(bot: Bot<BotContext>): void {
         const fileId = ctx.message?.photo?.at(-1)?.file_id ?? null;
         const parsed = parseProofMessage(message);
 
-        await createSupportProof(ctx.db, user.user_id, {
+        const proofId = await createSupportProof(ctx.db, user.user_id, {
             method: parsed.method,
             amount: parsed.amount,
             message,
             fileId,
         });
         await deleteBotSession(ctx.db, user.user_id, 'support_proof');
-        await notifyAdmins(ctx, `📩 إثبات دعم جديد من ${user.display_name ?? user.name}\n${message ?? 'صورة مرفقة'}`);
+        await notifyAdminsOfProof(ctx, proofId, {
+            displayName: user.display_name ?? user.name,
+            username: user.username ?? user.telegram_username,
+            telegramId: user.telegram_user_id ?? user.telegram_id,
+            message,
+            fileId,
+        });
         await ctx.reply('تم استلام إثبات الدعم ✅ شكراً لدعمك.', { reply_markup: supportHomeKeyboard() });
     });
 }
@@ -191,6 +263,53 @@ async function notifyAdmins(ctx: BotContext, text: string): Promise<void> {
     for (const id of ids) {
         await sendTelegramMessage(ctx.env, id, text);
     }
+}
+
+async function notifyAdminsOfProof(
+    ctx: BotContext,
+    proofId: number,
+    proof: { displayName: string; username: string | null; telegramId: number; message: string | null; fileId: string | null }
+): Promise<void> {
+    const text =
+        `📩 إثبات دعم جديد\n\n` +
+        `المستخدم: ${proof.displayName}\n` +
+        `Username: ${proof.username ? `@${proof.username}` : 'غير متوفر'}\n` +
+        `ID: ${proof.telegramId}\n` +
+        `الطريقة/النص: ${proof.message ?? 'صورة مرفقة'}\n` +
+        `الوقت: ${new Date().toLocaleString('ar-IQ', { timeZone: 'Asia/Baghdad' })}`;
+    const keyboard = supportProofAdminKeyboard(proofId);
+
+    for (const id of getAdminTelegramIds(ctx.env)) {
+        if (proof.fileId) {
+            await sendTelegramPhoto(ctx.env, id, proof.fileId, text, keyboard);
+        } else {
+            await sendTelegramMessage(ctx.env, id, text, keyboard);
+        }
+    }
+}
+
+async function requireSupportAdmin(ctx: BotContext): Promise<boolean> {
+    if (isAdminTelegramId(ctx.env, ctx.from?.id)) return true;
+    await ctx.reply('غير مصرح لك باستخدام هذا الأمر.');
+    return false;
+}
+
+function supportProofAdminKeyboard(proofId: number): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('✅ تأكيد الدعم 24 ساعة', `support_approve_${proofId}`).row()
+        .text('❌ رفض', `support_reject_${proofId}`)
+        .text('👤 عرض المستخدم', `support_user_${proofId}`);
+}
+
+function adminBackKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('💙 طلبات الدعم', 'admin_support_pending')
+        .text('🛠 لوحة الأدمن', 'admin_panel');
+}
+
+function formatUsername(user: { username: string | null; telegram_username: string | null }): string {
+    const username = user.username ?? user.telegram_username;
+    return username ? `@${username}` : 'غير متوفر';
 }
 
 function parseProofMessage(message: string | null): { method: string | null; amount: string | null } {

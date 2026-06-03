@@ -258,6 +258,70 @@ test('support notifications are sent only through configured admin IDs', () => {
     assert.match(wranglerSource, /ADMIN_TELEGRAM_IDS = "8590766269,8014388174"/);
 });
 
+test('support approval callbacks require admin and activate supporter for 24 hours', () => {
+    const supportSource = fs.readFileSync(new URL('../src/commands/support.ts', import.meta.url), 'utf8');
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/supportRepository.ts', import.meta.url), 'utf8');
+
+    const approveBlock = supportSource.slice(
+        supportSource.indexOf("bot.callbackQuery(/^support_approve_"),
+        supportSource.indexOf("bot.callbackQuery(/^support_reject_")
+    );
+    assert.match(approveBlock, /requireSupportAdmin\(ctx\)/);
+    assert.match(approveBlock, /updateSupportProofStatus\(ctx\.db, proofId, 'approved'/);
+    assert.match(approveBlock, /activateSupporterFor24Hours/);
+    assert.match(repositorySource, /Date\.now\(\) \+ 24 \* 60 \* 60 \* 1000/);
+    assert.match(repositorySource, /supporter_until/);
+});
+
+test('non-admin cannot approve or reject support proofs', () => {
+    const supportSource = fs.readFileSync(new URL('../src/commands/support.ts', import.meta.url), 'utf8');
+    assert.match(supportSource, /async function requireSupportAdmin/);
+    assert.match(supportSource, /isAdminTelegramId\(ctx\.env, ctx\.from\?\.id\)/);
+    assert.match(supportSource, /غير مصرح لك باستخدام هذا الأمر/);
+});
+
+test('profile and leaderboard show active supporter badge', () => {
+    const profileSource = fs.readFileSync(new URL('../src/commands/profile.ts', import.meta.url), 'utf8');
+    const leaderboardSource = fs.readFileSync(new URL('../src/commands/leaderboard.ts', import.meta.url), 'utf8');
+    const xpSource = fs.readFileSync(new URL('../src/services/xpLevels.ts', import.meta.url), 'utf8');
+
+    assert.match(profileSource, /getActiveSupportStatus/);
+    assert.match(profileSource, /💙 داعم DeutschDrop/);
+    assert.match(leaderboardSource, /is_supporter_active \? ' 💙' : ''/);
+    assert.match(xpSource, /LEFT JOIN user_support_status/);
+    assert.match(xpSource, /supporter_until > datetime\('now'\)/);
+});
+
+test('admin broadcast is protected and skips banned users', () => {
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+
+    assert.match(adminSource, /bot\.callbackQuery\('admin_broadcast_confirm'/);
+    assert.match(adminSource, /requireAdmin\(ctx\)/);
+    assert.match(adminSource, /if \(user\.is_banned\) continue/);
+    assert.match(adminSource, /createBroadcastLog/);
+});
+
+test('pending support proofs are reachable only from admin panel', () => {
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    const supportSource = fs.readFileSync(new URL('../src/commands/support.ts', import.meta.url), 'utf8');
+
+    assert.match(adminSource, /bot\.callbackQuery\(\/\^admin_support_pending/);
+    assert.match(adminSource, /requireAdmin\(ctx\)/);
+    assert.match(adminSource, /getPendingSupportProofs/);
+    assert.match(supportSource, /supportProofAdminKeyboard/);
+    assert.doesNotMatch(supportSource, /support_proofs WHERE status = 'pending'/);
+});
+
+test('supporter admin migration adds status and broadcast tables', () => {
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0009_supporter_admin_tools.sql', import.meta.url), 'utf8');
+    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+
+    assert.match(migrationSource, /ALTER TABLE support_proofs ADD COLUMN status/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS user_support_status/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS broadcast_logs/);
+    assert.match(schemaSource, /'admin_broadcast'/);
+});
+
 test('callback middleware answers callback queries safely', () => {
     const source = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
     assert.match(source, /ctx\.callbackQuery/);

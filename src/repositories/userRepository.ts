@@ -77,15 +77,20 @@ export async function getAllUsers(db: D1Database): Promise<User[]> {
     return queryAll<User>(db, 'SELECT * FROM users WHERE display_name IS NOT NULL ORDER BY created_at DESC');
 }
 
-export async function getAdminUserList(db: D1Database): Promise<Array<User & { total_xp: number; word_count: number }>> {
+export async function getAdminUserList(db: D1Database): Promise<Array<User & { total_xp: number; word_count: number; is_supporter_active: number }>> {
     return queryAll(
         db,
         `SELECT u.*,
                 COALESCE(SUM(x.amount), 0) AS total_xp,
-                COUNT(DISTINCT w.word_id) AS word_count
+                COUNT(DISTINCT w.word_id) AS word_count,
+                CASE
+                    WHEN us.is_supporter = 1 AND us.supporter_until > datetime('now') THEN 1
+                    ELSE 0
+                END AS is_supporter_active
          FROM users u
          LEFT JOIN xp_log x ON x.user_id = u.user_id
          LEFT JOIN words w ON w.added_by = u.user_id
+         LEFT JOIN user_support_status us ON us.user_id = u.user_id
          WHERE u.display_name IS NOT NULL
          GROUP BY u.user_id
          ORDER BY u.created_at DESC`
