@@ -3,6 +3,7 @@ import type { BotContext } from '../bot/context';
 import { createSupportProof, createSupportRequest } from '../repositories/supportRepository';
 import { getUserByTelegramId } from '../repositories/userRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
+import { getAdminTelegramIds } from '../services/adminAccess';
 import { sendTelegramMessage } from '../services/notifications';
 import { replaceWithText } from './wordPanel';
 
@@ -28,7 +29,7 @@ export function registerSupportCommand(bot: Bot<BotContext>): void {
     });
 
     bot.callbackQuery('support_zaincash', async (ctx) => {
-        const qrUrl = supportQrUrl(ctx);
+        const qrUrl = supportQrUrl();
         await editOrSendSupportPhoto(
             ctx,
             qrUrl,
@@ -175,7 +176,7 @@ async function editOrSendSupportPhoto(ctx: BotContext, url: string, caption: str
     await ctx.replyWithPhoto(url, { caption, reply_markup: keyboard });
 }
 
-function supportQrUrl(ctx: BotContext): string {
+function supportQrUrl(): string {
     return ZAINCASH_QR_URL;
 }
 
@@ -186,7 +187,7 @@ async function getCurrentUser(ctx: BotContext, reply: boolean = true) {
 }
 
 async function notifyAdmins(ctx: BotContext, text: string): Promise<void> {
-    const ids = ctx.env.ADMIN_TELEGRAM_IDS?.split(',').map(id => Number(id.trim())).filter(Number.isFinite) ?? [];
+    const ids = getAdminTelegramIds(ctx.env);
     for (const id of ids) {
         await sendTelegramMessage(ctx.env, id, text);
     }

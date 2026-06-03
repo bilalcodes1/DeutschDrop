@@ -1,11 +1,12 @@
 import { Bot } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { getAdminUserList, setUserBanned } from '../repositories/userRepository';
+import { isAdminTelegramId } from '../services/adminAccess';
 import { sendTelegramMessage } from '../services/notifications';
 
 export function registerAdminCommand(bot: Bot<BotContext>): void {
     bot.command('admin_stats', async (ctx) => {
-        if (!isAdmin(ctx)) return;
+        if (!await requireAdmin(ctx)) return;
 
         const users = await getAdminUserList(ctx.db);
         const words = await ctx.db.prepare('SELECT COUNT(*) AS count FROM words').first<{ count: number }>();
@@ -19,7 +20,7 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
     });
 
     bot.command('users', async (ctx) => {
-        if (!isAdmin(ctx)) return;
+        if (!await requireAdmin(ctx)) return;
 
         const users = await getAdminUserList(ctx.db);
         const text = users.length === 0
@@ -31,7 +32,7 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
     });
 
     bot.command('broadcast', async (ctx) => {
-        if (!isAdmin(ctx)) return;
+        if (!await requireAdmin(ctx)) return;
 
         const text = ctx.message?.text?.replace(/^\/broadcast(@\w+)?\s*/i, '').trim();
         if (!text) {
@@ -50,20 +51,21 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
     });
 
     bot.command('ban', async (ctx) => {
-        if (!isAdmin(ctx)) return;
+        if (!await requireAdmin(ctx)) return;
         await updateBan(ctx, true);
     });
 
     bot.command('unban', async (ctx) => {
-        if (!isAdmin(ctx)) return;
+        if (!await requireAdmin(ctx)) return;
         await updateBan(ctx, false);
     });
 }
 
-function isAdmin(ctx: BotContext): boolean {
-    const ids = ctx.env.ADMIN_TELEGRAM_IDS?.split(',').map(id => id.trim()).filter(Boolean) ?? [];
-    if (ids.length === 0) return false;
-    return ids.includes(String(ctx.from?.id ?? ''));
+async function requireAdmin(ctx: BotContext): Promise<boolean> {
+    if (isAdminTelegramId(ctx.env, ctx.from?.id)) return true;
+
+    await ctx.reply('غير مصرح لك باستخدام هذا الأمر.');
+    return false;
 }
 
 async function updateBan(ctx: BotContext, banned: boolean): Promise<void> {

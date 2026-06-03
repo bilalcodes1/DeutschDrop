@@ -5,6 +5,7 @@ import { parseWordCsv } from '../dist/services/csvParser.js';
 import { calculateNextReview } from '../dist/services/srs.js';
 import { getLevelFromXp, getProgressToNextLevel } from '../dist/services/xpMath.js';
 import { buildArasaacImageUrl, normalizeArasaacResults, searchEducationalPictograms } from '../dist/services/pictogramSearch.js';
+import { getAdminTelegramIds, isAdminTelegramId } from '../dist/services/adminAccess.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -206,7 +207,23 @@ test('admin commands are gated by ADMIN_TELEGRAM_IDS', () => {
     for (const command of ['admin_stats', 'users', 'broadcast', 'ban', 'unban']) {
         assert.match(source, new RegExp(`bot\\.command\\('${command}'`));
     }
-    assert.match(source, /ADMIN_TELEGRAM_IDS/);
+    assert.match(source, /isAdminTelegramId\(ctx\.env, ctx\.from\?\.id\)/);
+    assert.match(source, /غير مصرح لك باستخدام هذا الأمر/);
+});
+
+test('configured admin IDs are allowed', () => {
+    const env = { ADMIN_TELEGRAM_IDS: '8590766269,8014388174' };
+
+    assert.deepEqual(getAdminTelegramIds(env), [8590766269, 8014388174]);
+    assert.equal(isAdminTelegramId(env, 8590766269), true);
+    assert.equal(isAdminTelegramId(env, 8014388174), true);
+});
+
+test('non-admin IDs are denied', () => {
+    const env = { ADMIN_TELEGRAM_IDS: '8590766269,8014388174' };
+
+    assert.equal(isAdminTelegramId(env, 123456789), false);
+    assert.equal(isAdminTelegramId({}, 8590766269), false);
 });
 
 test('support project button is shown in main menu', () => {
@@ -229,6 +246,16 @@ test('Payoneer support request is persisted', () => {
     assert.match(supportSource, /support_payoneer_request/);
     assert.match(supportSource, /createSupportRequest\(ctx\.db, user\.user_id, 'payoneer'/);
     assert.match(repoSource, /INSERT INTO support_requests/);
+});
+
+test('support notifications are sent only through configured admin IDs', () => {
+    const supportSource = fs.readFileSync(new URL('../src/commands/support.ts', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+
+    assert.match(supportSource, /getAdminTelegramIds\(ctx\.env\)/);
+    assert.doesNotMatch(supportSource, /ADMIN_TELEGRAM_IDS\?\.split/);
+    assert.match(supportSource, /sendTelegramMessage\(ctx\.env, id, text\)/);
+    assert.match(wranglerSource, /ADMIN_TELEGRAM_IDS = "8590766269,8014388174"/);
 });
 
 test('callback middleware answers callback queries safely', () => {

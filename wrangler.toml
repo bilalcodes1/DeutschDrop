@@ -4,6 +4,7 @@ compatibility_date = "2024-06-01"
 
 [vars]
 ENVIRONMENT = "production"
+ADMIN_TELEGRAM_IDS = "8590766269,8014388174"
 
 [[d1_databases]]
 binding = "DB"
