@@ -3,6 +3,7 @@ import type { BotContext } from '../bot/context';
 import { getPictogramByWordId } from '../repositories/pictogramRepository';
 import { getWordById } from '../repositories/wordRepository';
 import type { Word } from '../models';
+import { getUserByTelegramId } from '../repositories/userRepository';
 
 export async function showWordDetailPanel(ctx: BotContext, wordId: number, notice?: string): Promise<void> {
     const word = await getWordById(ctx.db, wordId);
@@ -11,8 +12,17 @@ export async function showWordDetailPanel(ctx: BotContext, wordId: number, notic
         return;
     }
 
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (user && word.added_by !== user.user_id) {
+        await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة في بنك كلماتك.', navigationKeyboard('list_words'));
+        return;
+    }
+
     const pictogram = await getPictogramByWordId(ctx.db, word.word_id);
-    const text = (notice ? `${notice}\n\n` : '') + formatWordDetail(word, Boolean(pictogram));
+    const progress = user
+        ? await ctx.db.prepare('SELECT status FROM user_words WHERE user_id = ? AND word_id = ?').bind(user.user_id, word.word_id).first<{ status: string }>()
+        : null;
+    const text = (notice ? `${notice}\n\n` : '') + formatWordDetail(word, Boolean(pictogram), progress?.status ?? 'new');
     await replaceWithText(ctx, text, wordDetailKeyboard(word.word_id, Boolean(pictogram)), 'Markdown');
 }
 
@@ -48,12 +58,13 @@ export function navigationKeyboard(backCallback: string): InlineKeyboard {
         .text('🏠 الرئيسية', 'menu_main');
 }
 
-function formatWordDetail(word: Word, hasPictogram: boolean): string {
+function formatWordDetail(word: Word, hasPictogram: boolean, reviewStatus: string): string {
     return `📄 *الكلمة*\n\n` +
         `🇩🇪 *${word.german}*\n` +
-        `🇦🇪 ${word.arabic}` +
+        `🇮🇶 ${word.arabic}` +
         (word.example ? `\n💬 _${word.example}_` : '') +
-        `\n\n🖼 الرمز التعليمي: ${hasPictogram ? 'محفوظ ✅' : 'غير معين'}`;
+        `\n\n🖼 الرمز التعليمي: ${hasPictogram ? 'محفوظ ✅' : 'غير معين'}` +
+        `\n🔁 حالة المراجعة: ${reviewStatusLabel(reviewStatus)}`;
 }
 
 function wordDetailKeyboard(wordId: number, hasPictogram: boolean): InlineKeyboard {
@@ -72,4 +83,14 @@ function wordDetailKeyboard(wordId: number, hasPictogram: boolean): InlineKeyboa
         .text('🗑 حذف', `delete_word_${wordId}`).row()
         .text('⬅️ رجوع', 'list_words')
         .text('🏠 الرئيسية', 'menu_main');
+}
+
+function reviewStatusLabel(status: string): string {
+    const labels: Record<string, string> = {
+        new: 'جديدة',
+        learning: 'قيد التعلم',
+        reviewing: 'للمراجعة',
+        mastered: 'متقنة',
+    };
+    return labels[status] ?? status;
 }

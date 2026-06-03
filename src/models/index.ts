@@ -5,6 +5,7 @@
 export interface Env {
     DB: D1Database;
     TELEGRAM_BOT_TOKEN: string;
+    ADMIN_TELEGRAM_IDS?: string;
 }
 
 export interface User {
@@ -21,6 +22,7 @@ export interface User {
     xp: number;
     level: number;
     streak: number;
+    is_banned: number;
     identity: 'bilal' | 'malak' | null;
     created_at: string;
     updated_at: string | null;

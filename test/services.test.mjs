@@ -174,3 +174,37 @@ test('word duplicate checks remain scoped per user', () => {
     assert.match(source, /SELECT \* FROM words WHERE added_by = \? AND LOWER\(german\) = LOWER\(\?\)/);
     assert.match(source, /createWordAndAssignToUser/);
 });
+
+test('main menu exposes the requested public navigation buttons', () => {
+    const source = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    for (const label of ['📚 تعلم', '🏋️ تدريب', '⚔️ تحدي', '🏆 الترتيب', '📂 إدارة الكلمات', '📊 الإحصائيات', '👤 ملفي الشخصي', '⚙️ الإعدادات']) {
+        assert.match(source, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(source, /menu_main/);
+});
+
+test('word panel shows review status and pictogram-specific actions', () => {
+    const source = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
+    assert.match(source, /حالة المراجعة/);
+    assert.match(source, /🖼 عرض الرمز/);
+    assert.match(source, /🖼 تعيين رمز/);
+    assert.match(source, /🔄 تغيير الرمز/);
+    assert.match(source, /word\.added_by !== user\.user_id/);
+});
+
+test('pictogram flow uses single-message carousel controls', () => {
+    const source = fs.readFileSync(new URL('../src/commands/pictograms.ts', import.meta.url), 'utf8');
+    assert.match(source, /editMessageMedia/);
+    assert.match(source, /pictogram_nav_/);
+    assert.match(source, /⬅️ السابق/);
+    assert.match(source, /التالي ➡️/);
+    assert.match(source, /❌ إلغاء/);
+});
+
+test('admin commands are gated by ADMIN_TELEGRAM_IDS', () => {
+    const source = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    for (const command of ['admin_stats', 'users', 'broadcast', 'ban', 'unban']) {
+        assert.match(source, new RegExp(`bot\\.command\\('${command}'`));
+    }
+    assert.match(source, /ADMIN_TELEGRAM_IDS/);
+});

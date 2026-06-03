@@ -15,6 +15,7 @@ import { registerHardWordsCommand } from '../commands/hardWords';
 import { registerExportWordsCommand } from '../commands/exportWords';
 import { registerPictogramCommand } from '../commands/pictograms';
 import { registerProfileCommand } from '../commands/profile';
+import { registerAdminCommand } from '../commands/admin';
 import { getUserByTelegramId, isRegisteredUser } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 
@@ -35,6 +36,11 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
         if (text?.startsWith('/start')) return next();
 
         const user = await getUserByTelegramId(ctx.db, telegramId);
+        if (user?.is_banned) {
+            await ctx.reply('تم إيقاف حسابك من استخدام البوت.');
+            return;
+        }
+
         const waitingForName = user ? await getBotSession(ctx.db, user.user_id, 'register') : null;
         if (waitingForName && text && !text.startsWith('/')) return next();
 
@@ -61,6 +67,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerExportWordsCommand(bot);
     registerPictogramCommand(bot);
     registerProfileCommand(bot);
+    registerAdminCommand(bot);
 
     // Error handler
     bot.catch((err) => {

@@ -77,6 +77,30 @@ export async function getAllUsers(db: D1Database): Promise<User[]> {
     return queryAll<User>(db, 'SELECT * FROM users WHERE display_name IS NOT NULL ORDER BY created_at DESC');
 }
 
+export async function getAdminUserList(db: D1Database): Promise<Array<User & { total_xp: number; word_count: number }>> {
+    return queryAll(
+        db,
+        `SELECT u.*,
+                COALESCE(SUM(x.amount), 0) AS total_xp,
+                COUNT(DISTINCT w.word_id) AS word_count
+         FROM users u
+         LEFT JOIN xp_log x ON x.user_id = u.user_id
+         LEFT JOIN words w ON w.added_by = u.user_id
+         WHERE u.display_name IS NOT NULL
+         GROUP BY u.user_id
+         ORDER BY u.created_at DESC`
+    );
+}
+
+export async function setUserBanned(db: D1Database, telegramId: number, banned: boolean): Promise<boolean> {
+    const result = await run(
+        db,
+        'UPDATE users SET is_banned = ?, updated_at = datetime("now") WHERE telegram_user_id = ? OR telegram_id = ?',
+        [banned ? 1 : 0, telegramId, telegramId]
+    );
+    return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
+}
+
 export async function getChallengeCandidates(db: D1Database, currentUserId: number): Promise<Array<Pick<User, 'user_id' | 'display_name' | 'name'>>> {
     return queryAll(
         db,

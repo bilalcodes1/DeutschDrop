@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     xp INTEGER DEFAULT 0,
     level INTEGER DEFAULT 1,
     streak INTEGER DEFAULT 0,
+    is_banned INTEGER DEFAULT 0 CHECK (is_banned IN (0, 1)),
     identity TEXT CHECK (identity IN ('bilal', 'malak')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

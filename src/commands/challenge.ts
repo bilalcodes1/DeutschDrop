@@ -8,6 +8,7 @@ import { unlockAchievement } from '../services/achievements';
 import { competitionNotificationsEnabled, displayUserName, sendTelegramMessage } from '../services/notifications';
 import { addXp } from '../services/xpLevels';
 import { mainMenuKeyboard } from './menu';
+import { replaceWithText } from './wordPanel';
 
 interface ChallengeSessionData {
     challengeId: number;
@@ -76,10 +77,7 @@ async function showChallengeOptions(ctx: BotContext): Promise<void> {
 
     keyboard.row().text('⬅️ رجوع', 'menu_main');
 
-    await ctx.reply('⚔️ *التحديات*\n\nاختر عدد الأسئلة:', {
-        parse_mode: 'Markdown',
-        reply_markup: keyboard,
-    });
+    await replaceWithText(ctx, '⚔️ *التحديات*\n\nاختر عدد الأسئلة:', keyboard, 'Markdown');
 }
 
 async function showOpponentSelection(ctx: BotContext, count: number): Promise<void> {
@@ -88,7 +86,7 @@ async function showOpponentSelection(ctx: BotContext, count: number): Promise<vo
 
     const candidates = await getChallengeCandidates(ctx.db, user.user_id);
     if (candidates.length === 0) {
-        await ctx.reply('⚠️ لا يوجد مستخدمون آخرون للتحدي حالياً.', { reply_markup: mainMenuKeyboard() });
+        await replaceWithText(ctx, '⚠️ لا يوجد مستخدمون آخرون للتحدي حالياً.', mainMenuKeyboard());
         return;
     }
 
@@ -97,7 +95,7 @@ async function showOpponentSelection(ctx: BotContext, count: number): Promise<vo
         keyboard.text(candidate.display_name ?? candidate.name, `challenge_opp_${count}_${candidate.user_id}`).row();
     }
     keyboard.text('⬅️ رجوع', 'menu_challenge');
-    await ctx.reply(`⚔️ اختر مستخدم للتحدي (${count} أسئلة):`, { reply_markup: keyboard });
+    await replaceWithText(ctx, `⚔️ اختر مستخدم للتحدي (${count} أسئلة):`, keyboard);
 }
 
 async function createChallenge(ctx: BotContext, count: number, opponentUserId: number): Promise<void> {
