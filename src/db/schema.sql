@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS word_pictograms (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_word_pictograms_word_id ON word_pictograms(word_id);
 
 -- 5. user_uploaded_lists
 CREATE TABLE IF NOT EXISTS user_uploaded_lists (

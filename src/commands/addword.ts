@@ -10,11 +10,13 @@ import {
     searchDuplicateWordForUser,
     updateWordForUser,
 } from '../repositories/wordRepository';
+import { getPictogramByWordId } from '../repositories/pictogramRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { addXp } from '../services/xpLevels';
 import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
 import { mainMenuKeyboard } from './menu';
+import { startPictogramSelection } from './pictograms';
 
 interface AddWordSessionData {
     german: string | null;
@@ -100,10 +102,16 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
             }
 
             try {
-                await createWordAndAssignToUser(ctx.db, pending.data.german, text, null, user.user_id);
+                const wordId = await createWordAndAssignToUser(ctx.db, pending.data.german, text, null, user.user_id);
                 await addXp(ctx.db, user.user_id, 5, 'new_word');
                 await incrementDailyTask(ctx, user.user_id, 'learn_words');
                 await checkAchievements(ctx, user.user_id);
+                await ctx.reply(
+                    `✅ تمت الإضافة!\n\n🇩🇪 ${pending.data.german}\n🇦🇪 ${text}`
+                );
+                await deleteBotSession(ctx.db, user.user_id, 'add_word');
+                await startPictogramSelection(ctx, wordId);
+                return;
             } catch (error) {
                 if ((error as Error).message === DUPLICATE_WORD_ERROR) {
                     await ctx.reply('⚠️ هذه الكلمة موجودة مسبقاً في بنك كلماتك.', { reply_markup: mainMenuKeyboard() });
@@ -113,11 +121,6 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
                 throw error;
             }
 
-            await ctx.reply(
-                `✅ تمت الإضافة!\n\n🇩🇪 ${pending.data.german}\n🇦🇪 ${text}`,
-                { reply_markup: mainMenuKeyboard() }
-            );
-            await deleteBotSession(ctx.db, user.user_id, 'add_word');
         } else if (pending.data.step === 'edit' && pending.data.wordId) {
             if (!user) {
                 await ctx.reply('يرجى استخدام /start أولاً.');
@@ -239,10 +242,13 @@ async function addWordInline(ctx: BotContext, german: string, arabic: string): P
     }
 
     try {
-        await createWordAndAssignToUser(ctx.db, german, arabic, null, user.user_id);
+        const wordId = await createWordAndAssignToUser(ctx.db, german, arabic, null, user.user_id);
         await addXp(ctx.db, user.user_id, 5, 'new_word');
         await incrementDailyTask(ctx, user.user_id, 'learn_words');
         await checkAchievements(ctx, user.user_id);
+        await ctx.reply(`✅ تمت الإضافة!\n\n🇩🇪 ${german}\n🇦🇪 ${arabic}`);
+        await startPictogramSelection(ctx, wordId);
+        return;
     } catch (error) {
         if ((error as Error).message === DUPLICATE_WORD_ERROR) {
             await ctx.reply('⚠️ هذه الكلمة موجودة مسبقاً في بنك كلماتك.', { reply_markup: mainMenuKeyboard() });
@@ -250,11 +256,6 @@ async function addWordInline(ctx: BotContext, german: string, arabic: string): P
         }
         throw error;
     }
-
-    await ctx.reply(
-        `✅ تمت الإضافة!\n\n🇩🇪 ${german}\n🇦🇪 ${arabic}`,
-        { reply_markup: mainMenuKeyboard() }
-    );
 }
 
 async function showUserWords(ctx: BotContext, userId: number): Promise<void> {
@@ -276,11 +277,21 @@ async function showUserWords(ctx: BotContext, userId: number): Promise<void> {
 
     const keyboard = new InlineKeyboard();
     for (const word of visible) {
+        const pictogram = await getPictogramByWordId(ctx.db, word.word_id);
         keyboard
             .text(`✏️ ${word.german}`, `edit_word_${word.word_id}`)
             .text('🗑️', `delete_word_${word.word_id}`)
-            .text('🖼', `pictogram_search_${word.word_id}`)
             .row();
+        if (pictogram) {
+            keyboard
+                .text('🖼 عرض الرمز', `pictogram_view_${word.word_id}`)
+                .text('🔄 تغيير الرمز', `pictogram_change_${word.word_id}`)
+                .row();
+        } else {
+            keyboard
+                .text('🖼 تعيين رمز', `pictogram_assign_${word.word_id}`)
+                .row();
+        }
     }
     keyboard.text('⬅️ رجوع', 'menu_words');
 

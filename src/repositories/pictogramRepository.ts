@@ -3,7 +3,7 @@ import { queryOne, run } from '../db/queries';
 import type { WordPictogram } from '../models';
 import type { PictogramSearchResult } from '../services/pictogramSearch';
 
-export async function getWordPictogram(
+export async function getPictogramByWordId(
     db: D1Database,
     wordId: number
 ): Promise<WordPictogram | null> {
@@ -14,7 +14,7 @@ export async function getWordPictogram(
     );
 }
 
-export async function saveWordPictogram(
+export async function upsertPictogramForWord(
     db: D1Database,
     wordId: number,
     pictogram: PictogramSearchResult
@@ -47,3 +47,13 @@ export async function saveWordPictogram(
         ]
     );
 }
+
+export async function deletePictogramForWord(
+    db: D1Database,
+    wordId: number
+): Promise<void> {
+    await run(db, 'DELETE FROM word_pictograms WHERE word_id = ?', [wordId]);
+}
+
+export const getWordPictogram = getPictogramByWordId;
+export const saveWordPictogram = upsertPictogramForWord;

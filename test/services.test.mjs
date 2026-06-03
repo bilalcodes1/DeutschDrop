@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import { parseWordCsv } from '../dist/services/csvParser.js';
 import { calculateNextReview } from '../dist/services/srs.js';
 import { getLevelFromXp, getProgressToNextLevel } from '../dist/services/xpMath.js';
-import { buildArasaacImageUrl, normalizeArasaacResults } from '../dist/services/pictogramSearch.js';
+import { buildArasaacImageUrl, normalizeArasaacResults, searchEducationalPictograms } from '../dist/services/pictogramSearch.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -90,5 +91,48 @@ test('pictogram helpers normalize ARASAAC results', () => {
 
     assert.equal(results[0].pictogramId, '6964');
     assert.equal(results[0].provider, 'arasaac');
-    assert.equal(results[0].attribution, 'ARASAAC / Sergio Palao');
+    assert.equal(results[0].attribution, 'Pictogram: ARASAAC / Sergio Palao');
+});
+
+test('pictogram search limits options to 3 for words without saved pictogram', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+        ok: true,
+        json: async () => [
+            { _id: 1, keywords: [{ keyword: 'Haus' }], aac: true, aacColor: true, schematic: true },
+            { _id: 2, keywords: [{ keyword: 'Haus' }] },
+            { _id: 3, keywords: [{ keyword: 'Haus' }] },
+            { _id: 4, keywords: [{ keyword: 'Haus' }] },
+        ],
+    });
+
+    try {
+        const results = await searchEducationalPictograms('Haus', 'بيت', 3);
+        assert.equal(results.length, 3);
+        assert.deepEqual(results.map(result => result.pictogramId), ['1', '2', '3']);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('pictogram repository uses word_id upsert to replace one row', () => {
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/pictogramRepository.ts', import.meta.url), 'utf8');
+    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+
+    assert.match(repositorySource, /export async function getPictogramByWordId/);
+    assert.match(repositorySource, /export async function upsertPictogramForWord/);
+    assert.match(repositorySource, /ON CONFLICT\(word_id\) DO UPDATE/);
+    assert.match(schemaSource, /CREATE UNIQUE INDEX IF NOT EXISTS idx_word_pictograms_word_id/);
+});
+
+test('CSV upload flow does not call ARASAAC pictogram search', () => {
+    const uploadSource = fs.readFileSync(new URL('../src/commands/upload.ts', import.meta.url), 'utf8');
+    assert.doesNotMatch(uploadSource, /pictogramSearch|searchEducationalPictograms|ARASAAC/i);
+});
+
+test('saved pictogram view path does not call ARASAAC search directly', () => {
+    const source = fs.readFileSync(new URL('../src/commands/pictograms.ts', import.meta.url), 'utf8');
+    const viewBlock = source.slice(source.indexOf("bot.callbackQuery(/^pictogram_view_"), source.indexOf("bot.callbackQuery(/^pictogram_use_"));
+    assert.match(viewBlock, /showSavedPictogram/);
+    assert.doesNotMatch(viewBlock, /searchEducationalPictograms/);
 });

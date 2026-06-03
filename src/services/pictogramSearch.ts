@@ -18,7 +18,7 @@ interface ArasaacPictogram {
 }
 
 const ARASAAC_LICENSE = 'CC BY-NC-SA 4.0';
-const ARASAAC_ATTRIBUTION = 'ARASAAC / Sergio Palao';
+const ARASAAC_ATTRIBUTION = 'Pictogram: ARASAAC / Sergio Palao';
 
 export async function searchEducationalPictograms(
     german: string,

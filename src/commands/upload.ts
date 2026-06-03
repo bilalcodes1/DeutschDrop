@@ -74,7 +74,7 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
         }
 
         await ctx.reply(
-            `📊 *ملخص الرفع*\n\n✅ ${result.imported} كلمة مستوردة\n⚠️ ${result.duplicates} تكرار (تم تخطيهم)\n❌ ${result.errors} أخطاء`,
+            `📊 *ملخص الرفع*\n\n✅ ${result.imported} كلمة مستوردة\n⚠️ ${result.duplicates} تكرار (تم تخطيهم)\n❌ ${result.errors} أخطاء\n\nتم رفع الكلمات ✅ يمكنك تعيين رمز تعليمي لكل كلمة من 📂 إدارة الكلمات.`,
             { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
         );
     });
