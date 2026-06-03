@@ -1,5 +1,6 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
+import { replaceWithText } from './wordPanel';
 
 export function registerMenuCommand(bot: Bot<BotContext>): void {
     bot.command('menu', async (ctx) => {
@@ -8,26 +9,32 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
 
     // Handle menu callbacks that are not owned by feature modules.
     bot.callbackQuery('menu_train', async (ctx) => {
-        await ctx.editMessageText(
+        await replaceWithText(
+            ctx,
             '🏋️ *وضع التدريب*\n\nاختر عدد الأسئلة:',
-            { parse_mode: 'Markdown', reply_markup: trainCountKeyboard() }
+            trainCountKeyboard(),
+            'Markdown'
         );
         await ctx.answerCallbackQuery();
     });
 
     bot.callbackQuery('menu_words', async (ctx) => {
-        await ctx.editMessageText(
+        await replaceWithText(
+            ctx,
             '📂 *إدارة الكلمات*\n\nاختر إحدى الخيارات:',
-            { parse_mode: 'Markdown', reply_markup: wordsMenuKeyboard() }
+            wordsMenuKeyboard(),
+            'Markdown'
         );
         await ctx.answerCallbackQuery();
     });
 
     // Back to main menu
     bot.callbackQuery('menu_main', async (ctx) => {
-        await ctx.editMessageText(
+        await replaceWithText(
+            ctx,
             '🏠 *القائمة الرئيسية*',
-            { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
+            mainMenuKeyboard(),
+            'Markdown'
         );
         await ctx.answerCallbackQuery();
     });
@@ -41,7 +48,8 @@ export function mainMenuKeyboard(): InlineKeyboard {
         .text('🏆 الترتيب', 'menu_leaderboard').row()
         .text('📂 إدارة الكلمات', 'menu_words')
         .text('📊 الإحصائيات', 'menu_stats').row()
-        .text('⚙️ الإعدادات', 'menu_settings');
+        .text('⚙️ الإعدادات', 'menu_settings')
+        .text('🏠 الرئيسية', 'menu_main');
 }
 
 function trainCountKeyboard(): InlineKeyboard {

@@ -9,6 +9,7 @@ import { addXp } from '../services/xpLevels';
 import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
 import { mainMenuKeyboard } from './menu';
+import { replaceWithText } from './wordPanel';
 
 interface TrainingQuestion {
     word_id: number;
@@ -64,7 +65,7 @@ async function showTrainOptions(ctx: BotContext): Promise<void> {
         .text('🎯 مراجعة قبل الامتحان', 'train_exam').row()
         .text('⬅️ رجوع', 'menu_main');
 
-    await ctx.reply('🏋️ *اختر عدد الأسئلة:*', { parse_mode: 'Markdown', reply_markup: keyboard });
+    await replaceWithText(ctx, '🏋️ *اختر عدد الأسئلة:*', keyboard, 'Markdown');
 }
 
 async function startTraining(ctx: BotContext, count: number, mode: 'standard' | 'hard' | 'exam'): Promise<void> {
@@ -83,9 +84,10 @@ async function startTraining(ctx: BotContext, count: number, mode: 'standard' | 
 
     if (words.length < count) {
         const label = mode === 'hard' ? 'كلمة صعبة' : 'كلمة';
-        await ctx.reply(
+        await replaceWithText(
+            ctx,
             `⚠️ لديك ${words.length} ${label} فقط.\nأضف المزيد عبر /addword أو راجع كلمات أكثر.`,
-            { reply_markup: mainMenuKeyboard() }
+            mainMenuKeyboard()
         );
         return;
     }
@@ -130,9 +132,10 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
         const correct = session?.data.correctCount ?? 0;
         const percent = total > 0 ? Math.round((correct / total) * 100) : 0;
 
-        await ctx.reply(
+        await replaceWithText(
+            ctx,
             `✅ انتهى التدريب!\n\n📊 النتيجة: ${correct}/${total} (${percent}%)\n🎯 XP: +${correct * 2}`,
-            { reply_markup: mainMenuKeyboard() }
+            mainMenuKeyboard()
         );
         return;
     }
@@ -145,13 +148,15 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
         const isCorrect = opt === q.answer;
         keyboard.text(opt, `train_ans_${q.word_id}_${i}_${isCorrect ? 'correct' : 'wrong'}`).row();
     }
-    keyboard.text('⬅️ رجوع', 'menu_main');
+    keyboard.text('⬅️ رجوع', 'menu_train').text('🏠 الرئيسية', 'menu_main');
 
     const label = q.direction === 'de_ar' ? 'اختر المعنى العربي' : 'اختر الكلمة الألمانية';
     const flag = q.direction === 'de_ar' ? '🇩🇪' : '🇦🇪';
-    await ctx.reply(
+    await replaceWithText(
+        ctx,
         `🏋️ (${progress}) ${label}:\n\n${flag} *${q.prompt}*`,
-        { parse_mode: 'Markdown', reply_markup: keyboard }
+        keyboard,
+        'Markdown'
     );
 }
 

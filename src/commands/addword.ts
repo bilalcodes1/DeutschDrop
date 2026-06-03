@@ -10,13 +10,13 @@ import {
     searchDuplicateWordForUser,
     updateWordForUser,
 } from '../repositories/wordRepository';
-import { getPictogramByWordId } from '../repositories/pictogramRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { addXp } from '../services/xpLevels';
 import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
 import { mainMenuKeyboard } from './menu';
 import { startPictogramSelection } from './pictograms';
+import { navigationKeyboard, replaceWithText, showWordDetailPanel } from './wordPanel';
 
 interface AddWordSessionData {
     german: string | null;
@@ -169,6 +169,12 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         await ctx.answerCallbackQuery();
     });
 
+    bot.callbackQuery(/^word_detail_(\d+)$/, async (ctx) => {
+        const wordId = parseInt(ctx.match[1], 10);
+        await ctx.answerCallbackQuery();
+        await showWordDetailPanel(ctx, wordId);
+    });
+
     bot.callbackQuery(/^delete_word_(\d+)$/, async (ctx) => {
         const wordId = parseInt(ctx.match[1], 10);
         const telegramId = ctx.from?.id ?? 0;
@@ -201,7 +207,7 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         );
         await ctx.editMessageText(
             '✏️ أرسل التعديل بهذه الصيغة:\n\nHaus = بيت\n\nأو:\nHaus,بيت,Das Haus ist groß.',
-            { reply_markup: new InlineKeyboard().text('⬅️ رجوع', 'list_words') }
+            { reply_markup: navigationKeyboard(`word_detail_${wordId}`) }
         );
         await ctx.answerCallbackQuery();
     });
@@ -261,12 +267,11 @@ async function addWordInline(ctx: BotContext, german: string, arabic: string): P
 async function showUserWords(ctx: BotContext, userId: number): Promise<void> {
     const words = await getWordsByUser(ctx.db, userId);
     if (words.length === 0) {
-        await ctx.editMessageText('📋 لا توجد كلمات بعد.', {
-            reply_markup: new InlineKeyboard()
+        await replaceWithText(ctx, '📋 لا توجد كلمات بعد.', new InlineKeyboard()
                 .text('➕ إضافة كلمة', 'add_word')
                 .text('📤 رفع CSV', 'upload_csv').row()
-                .text('⬅️ رجوع', 'menu_words'),
-        });
+                .text('⬅️ رجوع', 'menu_words')
+                .text('🏠 الرئيسية', 'menu_main'));
         return;
     }
 
@@ -277,25 +282,11 @@ async function showUserWords(ctx: BotContext, userId: number): Promise<void> {
 
     const keyboard = new InlineKeyboard();
     for (const word of visible) {
-        const pictogram = await getPictogramByWordId(ctx.db, word.word_id);
-        keyboard
-            .text(`✏️ ${word.german}`, `edit_word_${word.word_id}`)
-            .text('🗑️', `delete_word_${word.word_id}`)
-            .row();
-        if (pictogram) {
-            keyboard
-                .text('🖼 عرض الرمز', `pictogram_view_${word.word_id}`)
-                .text('🔄 تغيير الرمز', `pictogram_change_${word.word_id}`)
-                .row();
-        } else {
-            keyboard
-                .text('🖼 تعيين رمز', `pictogram_assign_${word.word_id}`)
-                .row();
-        }
+        keyboard.text(`📄 ${word.german}`, `word_detail_${word.word_id}`).row();
     }
-    keyboard.text('⬅️ رجوع', 'menu_words');
+    keyboard.text('⬅️ رجوع', 'menu_words').text('🏠 الرئيسية', 'menu_main');
 
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: keyboard });
+    await replaceWithText(ctx, text, keyboard, 'Markdown');
 }
 
 function parseWordInput(text: string): { german: string; arabic: string; example: string | null } | null {

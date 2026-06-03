@@ -7,6 +7,7 @@ import { calculateNextReview } from '../services/srs';
 import { addXp } from '../services/xpLevels';
 import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
+import { replaceWithText } from './wordPanel';
 
 interface LearnSessionData {
     words: Array<{ word_id: number; german: string; arabic: string; example: string | null; status: string; ease_factor: number; interval: number; repetitions: number; correct_count: number; wrong_count: number }>;
@@ -57,9 +58,13 @@ async function startLearning(ctx: BotContext): Promise<void> {
     const words = await getDueWords(ctx.db, user.user_id, 10);
 
     if (words.length === 0) {
-        await ctx.reply(
+        await replaceWithText(
+            ctx,
             '✅ لا توجد كلمات مستحقة للمراجعة حالياً!\n\nيمكنك إضافة كلمات جديدة عبر /addword أو رفع ملف CSV.',
-            { reply_markup: new InlineKeyboard().text('➕ إضافة كلمة', 'add_word').text('📤 رفع CSV', 'upload_csv') }
+            new InlineKeyboard()
+                .text('➕ إضافة كلمة', 'add_word')
+                .text('📤 رفع CSV', 'upload_csv').row()
+                .text('🏠 الرئيسية', 'menu_main')
         );
         return;
     }
@@ -78,9 +83,10 @@ async function showWord(ctx: BotContext, userId: number): Promise<void> {
     if (!session || session.data.currentIndex >= session.data.words.length) {
         // Session complete
         await deleteBotSession(ctx.db, userId, 'learn');
-        await ctx.reply(
+        await replaceWithText(
+            ctx,
             '✅ انتهت المراجعة!\n\nأحسنت، استمر بالتعلم! 🎉',
-            { reply_markup: new InlineKeyboard().text('📚 مراجعة أخرى', 'menu_learn').text('🏠 القائمة', 'menu_main') }
+            new InlineKeyboard().text('📚 مراجعة أخرى', 'menu_learn').text('🏠 الرئيسية', 'menu_main')
         );
         return;
     }
@@ -99,9 +105,10 @@ async function showWord(ctx: BotContext, userId: number): Promise<void> {
         .text('😊 سهلة', `review_easy_${word.word_id}`)
         .text('😐 متوسطة', `review_medium_${word.word_id}`)
         .text('😰 صعبة', `review_hard_${word.word_id}`).row()
-        .text('❌ لا أعرفها', `review_unknown_${word.word_id}`);
+        .text('❌ لا أعرفها', `review_unknown_${word.word_id}`).row()
+        .text('🏠 الرئيسية', 'menu_main');
 
-    await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: keyboard });
+    await replaceWithText(ctx, text, keyboard, 'Markdown');
 }
 
 async function handleReviewAnswer(
