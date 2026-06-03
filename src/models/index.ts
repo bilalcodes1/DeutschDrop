@@ -9,11 +9,21 @@ export interface Env {
 
 export interface User {
     user_id: number;
+    id: number | null;
     name: string;
     telegram_id: number;
+    telegram_user_id: number | null;
     telegram_username: string | null;
+    display_name: string | null;
+    username: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    xp: number;
+    level: number;
+    streak: number;
     identity: 'bilal' | 'malak' | null;
     created_at: string;
+    updated_at: string | null;
 }
 
 export interface Settings {

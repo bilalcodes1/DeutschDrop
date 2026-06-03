@@ -45,8 +45,9 @@ export function mainMenuKeyboard(): InlineKeyboard {
         .text('📚 تعلم', 'menu_learn')
         .text('🏋️ تدريب', 'menu_train').row()
         .text('⚔️ تحدي', 'menu_challenge')
+        .text('📂 إدارة الكلمات', 'menu_words').row()
+        .text('👤 ملفي الشخصي', 'menu_profile')
         .text('🏆 الترتيب', 'menu_leaderboard').row()
-        .text('📂 إدارة الكلمات', 'menu_words')
         .text('📊 الإحصائيات', 'menu_stats').row()
         .text('⚙️ الإعدادات', 'menu_settings')
         .text('🏠 الرئيسية', 'menu_main');

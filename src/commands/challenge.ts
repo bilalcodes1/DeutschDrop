@@ -2,10 +2,10 @@ import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { createAsyncChallenge, getChallenge, getChallengeQuestions, submitChallengeResult } from '../repositories/challengeRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
-import { getUserByTelegramId } from '../repositories/userRepository';
+import { getChallengeCandidates, getUserByTelegramId } from '../repositories/userRepository';
 import { getWordsForUserWithStatus } from '../repositories/wordRepository';
 import { unlockAchievement } from '../services/achievements';
-import { competitionNotificationsEnabled, displayUserName, getPeerUser, sendTelegramMessage } from '../services/notifications';
+import { competitionNotificationsEnabled, displayUserName, sendTelegramMessage } from '../services/notifications';
 import { addXp } from '../services/xpLevels';
 import { mainMenuKeyboard } from './menu';
 
@@ -27,7 +27,12 @@ export function registerChallengeCommand(bot: Bot<BotContext>): void {
 
     bot.callbackQuery(/^challenge_create_(5|10|20)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
-        await createChallenge(ctx, parseInt(ctx.match[1], 10));
+        await showOpponentSelection(ctx, parseInt(ctx.match[1], 10));
+    });
+
+    bot.callbackQuery(/^challenge_opp_(5|10|20)_(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await createChallenge(ctx, parseInt(ctx.match[1], 10), parseInt(ctx.match[2], 10));
     });
 
     bot.callbackQuery(/^challenge_start_(\d+)$/, async (ctx) => {
@@ -48,14 +53,14 @@ async function showChallengeOptions(ctx: BotContext): Promise<void> {
     if (!user) return;
 
     const pending = await ctx.db.prepare(
-        `SELECT c.challenge_id, c.question_count, u.identity, u.name
+        `SELECT c.challenge_id, c.question_count, u.display_name, u.name
          FROM async_challenges c
          INNER JOIN users u ON u.user_id = c.creator_user_id
          WHERE c.opponent_user_id = ?
            AND c.status = 'opponent_pending'
          ORDER BY c.created_at DESC
          LIMIT 5`
-    ).bind(user.user_id).all<{ challenge_id: number; question_count: number; identity: 'bilal' | 'malak' | null; name: string }>();
+    ).bind(user.user_id).all<{ challenge_id: number; question_count: number; display_name: string | null; name: string }>();
 
     const keyboard = new InlineKeyboard()
         .text('5 أسئلة', 'challenge_create_5')
@@ -71,19 +76,39 @@ async function showChallengeOptions(ctx: BotContext): Promise<void> {
 
     keyboard.row().text('⬅️ رجوع', 'menu_main');
 
-    await ctx.reply('⚔️ *تحدي بلال وملاك*\n\nاختر عدد الأسئلة:', {
+    await ctx.reply('⚔️ *التحديات*\n\nاختر عدد الأسئلة:', {
         parse_mode: 'Markdown',
         reply_markup: keyboard,
     });
 }
 
-async function createChallenge(ctx: BotContext, count: number): Promise<void> {
+async function showOpponentSelection(ctx: BotContext, count: number): Promise<void> {
     const user = await getCurrentUser(ctx);
     if (!user) return;
 
-    const peer = await getPeerUser(ctx.db, user.user_id);
-    if (!peer) {
-        await ctx.reply('⚠️ الطرف الثاني غير مسجل بعد.');
+    const candidates = await getChallengeCandidates(ctx.db, user.user_id);
+    if (candidates.length === 0) {
+        await ctx.reply('⚠️ لا يوجد مستخدمون آخرون للتحدي حالياً.', { reply_markup: mainMenuKeyboard() });
+        return;
+    }
+
+    const keyboard = new InlineKeyboard();
+    for (const candidate of candidates) {
+        keyboard.text(candidate.display_name ?? candidate.name, `challenge_opp_${count}_${candidate.user_id}`).row();
+    }
+    keyboard.text('⬅️ رجوع', 'menu_challenge');
+    await ctx.reply(`⚔️ اختر مستخدم للتحدي (${count} أسئلة):`, { reply_markup: keyboard });
+}
+
+async function createChallenge(ctx: BotContext, count: number, opponentUserId: number): Promise<void> {
+    const user = await getCurrentUser(ctx);
+    if (!user) return;
+
+    const peer = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ? AND display_name IS NOT NULL')
+        .bind(opponentUserId)
+        .first<typeof user>();
+    if (!peer || peer.user_id === user.user_id) {
+        await ctx.reply('⚠️ هذا المستخدم غير متاح للتحدي.');
         return;
     }
 
@@ -191,16 +216,14 @@ async function finishChallenge(ctx: BotContext, userId: number, session: Challen
     await addXp(ctx.db, userId, session.correctCount * 2, 'challenge_participation');
     await ctx.reply(`✅ انتهى دورك في التحدي.\nنتيجتك: ${session.correctCount}/${session.questions.length}`);
 
-    const currentUser = await getCurrentUser(ctx);
-    if (!currentUser) return;
-
     if (challenge.status === 'opponent_pending' && challenge.creator_user_id === userId) {
-        const peer = await getPeerUser(ctx.db, userId);
-        if (peer && await competitionNotificationsEnabled(ctx.db, peer.user_id)) {
+        const creator = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ?').bind(challenge.creator_user_id).first<{ display_name: string | null; name: string }>();
+        const opponent = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ?').bind(challenge.opponent_user_id).first<{ user_id: number; telegram_id: number; display_name: string | null; name: string }>();
+        if (creator && opponent && await competitionNotificationsEnabled(ctx.db, opponent.user_id)) {
             await sendTelegramMessage(
                 ctx.env,
-                peer.telegram_id,
-                `⚔️ ${displayUserName(currentUser)} تحداك! عندك ${challenge.question_count} أسئلة. ابدأ الآن؟`,
+                opponent.telegram_id,
+                `⚔️ ${displayUserName(creator)} تحداك! عندك ${challenge.question_count} أسئلة. ابدأ الآن؟`,
                 {
                     inline_keyboard: [[
                         { text: '⚔️ ابدأ التحدي', callback_data: `challenge_start_${challenge.challenge_id}` },
@@ -217,8 +240,8 @@ async function finishChallenge(ctx: BotContext, userId: number, session: Challen
 }
 
 async function announceChallengeResult(ctx: BotContext, challenge: NonNullable<Awaited<ReturnType<typeof getChallenge>>>): Promise<void> {
-    const creator = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ?').bind(challenge.creator_user_id).first<{ telegram_id: number; name: string; identity: 'bilal' | 'malak' | null }>();
-    const opponent = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ?').bind(challenge.opponent_user_id).first<{ telegram_id: number; name: string; identity: 'bilal' | 'malak' | null }>();
+    const creator = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ?').bind(challenge.creator_user_id).first<{ telegram_id: number; display_name: string | null; name: string }>();
+    const opponent = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ?').bind(challenge.opponent_user_id).first<{ telegram_id: number; display_name: string | null; name: string }>();
     if (!creator || !opponent) return;
 
     let result = `⚔️ نتيجة التحدي #${challenge.challenge_id}\n\n` +

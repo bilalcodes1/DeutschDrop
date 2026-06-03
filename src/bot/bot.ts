@@ -14,6 +14,9 @@ import { registerChallengeCommand } from '../commands/challenge';
 import { registerHardWordsCommand } from '../commands/hardWords';
 import { registerExportWordsCommand } from '../commands/exportWords';
 import { registerPictogramCommand } from '../commands/pictograms';
+import { registerProfileCommand } from '../commands/profile';
+import { getUserByTelegramId, isRegisteredUser } from '../repositories/userRepository';
+import { getBotSession } from '../repositories/sessionRepository';
 
 export function createBot(token: string, env: Env): Bot<BotContext> {
     const bot = new Bot<BotContext>(token);
@@ -22,6 +25,25 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
         ctx.env = env;
         ctx.db = env.DB;
         await next();
+    });
+
+    bot.use(async (ctx, next) => {
+        const telegramId = ctx.from?.id;
+        if (!telegramId) return next();
+
+        const text = ctx.message?.text;
+        if (text?.startsWith('/start')) return next();
+
+        const user = await getUserByTelegramId(ctx.db, telegramId);
+        const waitingForName = user ? await getBotSession(ctx.db, user.user_id, 'register') : null;
+        if (waitingForName && text && !text.startsWith('/')) return next();
+
+        if (!isRegisteredUser(user)) {
+            await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب /start ثم اكتب اسمك للانضمام.');
+            return;
+        }
+
+        return next();
     });
 
     // Register all command handlers
@@ -38,6 +60,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerHardWordsCommand(bot);
     registerExportWordsCommand(bot);
     registerPictogramCommand(bot);
+    registerProfileCommand(bot);
 
     // Error handler
     bot.catch((err) => {

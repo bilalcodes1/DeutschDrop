@@ -136,3 +136,41 @@ test('saved pictogram view path does not call ARASAAC search directly', () => {
     assert.match(viewBlock, /showSavedPictogram/);
     assert.doesNotMatch(viewBlock, /searchEducationalPictograms/);
 });
+
+test('public start flow asks new users for display name and stores registration session', () => {
+    const source = fs.readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf8');
+    assert.match(source, /اكتب اسمك للانضمام/);
+    assert.match(source, /saveBotSession<NameSessionData>\(ctx\.db, user\.user_id, 'register'/);
+    assert.match(source, /completeUserRegistration\(ctx\.db, user\.user_id, displayName\)/);
+    assert.match(source, /تم تسجيلك ✅ أهلاً/);
+});
+
+test('registered start flow skips name prompt and shows main menu', () => {
+    const source = fs.readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf8');
+    assert.match(source, /if \(!user\.display_name\?\.trim\(\)\)/);
+    assert.match(source, /مرحباً مجدداً/);
+    assert.match(source, /mainMenuKeyboard\(\)/);
+});
+
+test('rename flow updates display_name', () => {
+    const startSource = fs.readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf8');
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/userRepository.ts', import.meta.url), 'utf8');
+    assert.match(startSource, /bot\.command\('rename'/);
+    assert.match(startSource, /اكتب الاسم الجديد/);
+    assert.match(repositorySource, /export async function renameUser/);
+    assert.match(repositorySource, /SET display_name = \?, name = \?/);
+});
+
+test('leaderboard uses display_name and orders by XP', () => {
+    const xpSource = fs.readFileSync(new URL('../src/services/xpLevels.ts', import.meta.url), 'utf8');
+    const leaderboardSource = fs.readFileSync(new URL('../src/commands/leaderboard.ts', import.meta.url), 'utf8');
+    assert.match(xpSource, /COALESCE\(u\.display_name, u\.name\) AS display_name/);
+    assert.match(xpSource, /ORDER BY total_xp DESC/);
+    assert.match(leaderboardSource, /الترتيب العام/);
+});
+
+test('word duplicate checks remain scoped per user', () => {
+    const source = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+    assert.match(source, /SELECT \* FROM words WHERE added_by = \? AND LOWER\(german\) = LOWER\(\?\)/);
+    assert.match(source, /createWordAndAssignToUser/);
+});

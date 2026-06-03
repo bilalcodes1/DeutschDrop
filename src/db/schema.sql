@@ -7,11 +7,21 @@
 -- 1. users
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER,
     name TEXT NOT NULL,
     telegram_id INTEGER NOT NULL UNIQUE,
+    telegram_user_id INTEGER UNIQUE,
     telegram_username TEXT,
+    display_name TEXT,
+    username TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    xp INTEGER DEFAULT 0,
+    level INTEGER DEFAULT 1,
+    streak INTEGER DEFAULT 0,
     identity TEXT CHECK (identity IN ('bilal', 'malak')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 2. settings
@@ -199,7 +209,7 @@ CREATE TABLE IF NOT EXISTS competition_leaderboard_snapshot (
 CREATE TABLE IF NOT EXISTS bot_sessions (
     session_id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('learn', 'train', 'add_word', 'challenge')),
+    type TEXT NOT NULL CHECK (type IN ('learn', 'train', 'add_word', 'challenge', 'register', 'rename')),
     data TEXT NOT NULL,
     expires_at DATETIME NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -265,6 +275,8 @@ CREATE TABLE IF NOT EXISTS job_runs (
 
 CREATE INDEX IF NOT EXISTS idx_user_words_next_review ON user_words(next_review);
 CREATE INDEX IF NOT EXISTS idx_user_words_status ON user_words(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_telegram_user_id ON users(telegram_user_id);
+CREATE INDEX IF NOT EXISTS idx_users_display_name ON users(display_name);
 CREATE INDEX IF NOT EXISTS idx_reviews_user_id ON reviews(user_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_word_id ON reviews(word_id);
 CREATE INDEX IF NOT EXISTS idx_xp_log_user_id ON xp_log(user_id);

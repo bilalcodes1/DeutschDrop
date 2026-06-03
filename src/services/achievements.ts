@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { BotContext } from '../bot/context';
 import { queryAll, queryOne, run } from '../db/queries';
 import { addXp } from './xpLevels';
-import { displayUserName, getPeerUser, sendTelegramMessage } from './notifications';
+import { sendTelegramMessage } from './notifications';
 
 const ACHIEVEMENT_XP = 100;
 
@@ -32,9 +32,9 @@ export async function unlockAchievement(ctx: BotContext, userId: number, key: st
 
     await addXp(ctx.db, userId, ACHIEVEMENT_XP, `achievement_${key}`);
 
-    const user = await queryOne<{ telegram_id: number; name: string; identity: 'bilal' | 'malak' | null }>(
+    const user = await queryOne<{ telegram_id: number; display_name: string | null; name: string }>(
         ctx.db,
-        'SELECT telegram_id, name, identity FROM users WHERE user_id = ?',
+        'SELECT telegram_id, display_name, name FROM users WHERE user_id = ?',
         [userId]
     );
     const currentTelegramId = ctx.from?.id;
@@ -43,15 +43,6 @@ export async function unlockAchievement(ctx: BotContext, userId: number, key: st
         await sendTelegramMessage(ctx.env, user.telegram_id, achievementMessage);
     } else {
         await ctx.reply(achievementMessage);
-    }
-
-    const peer = await getPeerUser(ctx.db, userId);
-    if (peer && user) {
-        await sendTelegramMessage(
-            ctx.env,
-            peer.telegram_id,
-            `🎉 ${displayUserName(user)} فتح إنجاز: ${definition.name}`
-        );
     }
 
     return true;

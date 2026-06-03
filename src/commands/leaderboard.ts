@@ -2,6 +2,7 @@ import { Bot } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { getLeaderboard } from '../services/xpLevels';
 import { mainMenuKeyboard } from './menu';
+import { replaceWithText } from './wordPanel';
 
 export function registerLeaderboardCommand(bot: Bot<BotContext>): void {
     bot.command('leaderboard', async (ctx) => {
@@ -18,21 +19,24 @@ async function showLeaderboard(ctx: BotContext): Promise<void> {
     const leaderboard = await getLeaderboard(ctx.db);
 
     if (leaderboard.length === 0) {
-        await ctx.reply(
+        await replaceWithText(
+            ctx,
             '🏆 *لوحة الترتيب*\n\nلا يوجد مستخدمين مسجلين بعد.',
-            { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
+            mainMenuKeyboard(),
+            'Markdown'
         );
         return;
     }
 
-    let text = '🏆 *لوحة الترتيب*\n\n';
+    let text = '🏆 *الترتيب العام*\n\n';
     for (let i = 0; i < leaderboard.length; i++) {
         const user = leaderboard[i];
         const rank = i + 1;
-        const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '📌';
-        const username = user.telegram_username ? `@${user.telegram_username}` : user.name;
-        text += `${medal} *${rank}.* ${username}\n   ⭐ XP: ${user.total_xp} | 🏅 Level: ${user.level}\n\n`;
+        text += `${rank}. ${user.display_name} — ${user.total_xp} XP`;
+        if (user.achievements_count > 0) text += ` | 🏅 ${user.achievements_count}`;
+        text += '\n';
     }
+    text += '\n*الترتيب الأسبوعي جاهز بالبنية:* leaderboard_weekly';
 
-    await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() });
+    await replaceWithText(ctx, text, mainMenuKeyboard(), 'Markdown');
 }

@@ -27,6 +27,12 @@ export async function addXp(
         [userId, amount, reason]
     );
     const total = await getTotalXp(db, userId);
+    const level = getLevelFromXp(total).level;
+    await run(
+        db,
+        'UPDATE users SET xp = ?, level = ?, updated_at = datetime("now") WHERE user_id = ?',
+        [total, level, userId]
+    );
     return total;
 }
 
@@ -41,12 +47,19 @@ export async function getTotalXp(db: D1Database, userId: number): Promise<number
 
 export async function getLeaderboard(
     db: D1Database
-): Promise<Array<{ user_id: number; name: string; telegram_username: string | null; total_xp: number; level: number }>> {
-    const rows = await queryAll<{ user_id: number; name: string; telegram_username: string | null; total_xp: number }>(
+): Promise<Array<{ user_id: number; display_name: string; telegram_username: string | null; total_xp: number; weekly_xp: number; level: number; achievements_count: number }>> {
+    const rows = await queryAll<{ user_id: number; display_name: string; telegram_username: string | null; total_xp: number; weekly_xp: number; achievements_count: number }>(
         db,
-        `SELECT u.user_id, u.name, u.telegram_username, COALESCE(SUM(x.amount), 0) as total_xp
+        `SELECT u.user_id,
+                COALESCE(u.display_name, u.name) AS display_name,
+                COALESCE(u.username, u.telegram_username) AS telegram_username,
+                COALESCE(SUM(x.amount), 0) AS total_xp,
+                COALESCE(SUM(CASE WHEN x.created_at >= datetime('now', '-7 days') THEN x.amount ELSE 0 END), 0) AS weekly_xp,
+                COUNT(DISTINCT ua.achievement_id) AS achievements_count
          FROM users u
          LEFT JOIN xp_log x ON u.user_id = x.user_id
+         LEFT JOIN user_achievements ua ON ua.user_id = u.user_id
+         WHERE u.display_name IS NOT NULL
          GROUP BY u.user_id
          ORDER BY total_xp DESC`
     );

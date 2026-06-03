@@ -1,110 +1,113 @@
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot } from 'grammy';
 import type { BotContext } from '../bot/context';
-import { getUserByTelegramId, createUser, updateUserIdentity, updateUserSettings } from '../repositories/userRepository';
+import { completeUserRegistration, createPendingUser, getUserByTelegramId, isRegisteredUser, renameUser } from '../repositories/userRepository';
+import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
+import { mainMenuKeyboard } from './menu';
 
-const GOAL_OPTIONS = [3, 5, 10, 20];
-const IDENTITY_LABELS: Record<'bilal' | 'malak', string> = {
-    bilal: 'بلال',
-    malak: 'ملاك',
-};
+interface NameSessionData {
+    mode: 'register' | 'rename';
+}
 
 export function registerStartCommand(bot: Bot<BotContext>): void {
     bot.command('start', async (ctx) => {
-        const telegramId = ctx.from?.id ?? 0;
-        const name = ctx.from?.first_name ?? 'User';
-        const username = ctx.from?.username ?? null;
+        const user = await ensureTelegramUser(ctx);
+        if (!user) return;
 
-        let user = await getUserByTelegramId(ctx.db, telegramId);
-        let isNewUser = false;
-
-        if (!user) {
-            const userId = await createUser(ctx.db, name, telegramId, username);
-            user = {
-                user_id: userId,
-                name,
-                telegram_id: telegramId,
-                telegram_username: username,
-                identity: null,
-                created_at: new Date().toISOString(),
-            };
-            isNewUser = true;
-        }
-
-        if (isNewUser || !user.identity) {
-            await showIdentitySelection(ctx);
-        } else {
-            await ctx.reply(
-                `مرحباً مجدداً ${name}! 👋\n\nاستخدم القائمة أدناه للبدء.`,
-                { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
-            );
-        }
-    });
-
-    bot.callbackQuery(/^identity_(bilal|malak)$/, async (ctx) => {
-        const identity = ctx.match[1] as 'bilal' | 'malak';
-        const telegramId = ctx.from?.id ?? 0;
-        const user = await getUserByTelegramId(ctx.db, telegramId);
-
-        if (!user) {
-            await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
+        if (!user.display_name?.trim()) {
+            await saveBotSession<NameSessionData>(ctx.db, user.user_id, 'register', { mode: 'register' }, 30);
+            await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:');
             return;
         }
 
-        await updateUserIdentity(ctx.db, user.user_id, identity);
-        await ctx.editMessageText(
-            `تم اختيار: *${IDENTITY_LABELS[identity]}*\n\nاختر هدفك اليومي:`,
-            { parse_mode: 'Markdown', reply_markup: goalSelectionKeyboard() }
+        await ctx.reply(
+            `مرحباً مجدداً ${user.display_name}! 👋`,
+            { reply_markup: mainMenuKeyboard() }
         );
-        await ctx.answerCallbackQuery();
     });
 
-    // Handle goal selection callback
-    bot.callbackQuery(/^goal_(\d+)$/, async (ctx) => {
-        const goal = parseInt(ctx.match[1], 10);
-        const telegramId = ctx.from?.id ?? 0;
-        const user = await getUserByTelegramId(ctx.db, telegramId);
-
-        if (user) {
-            await updateUserSettings(ctx.db, user.user_id, {
-                daily_goal: goal,
-                new_words_per_day: goal,
-            });
+    bot.command('rename', async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!isRegisteredUser(user)) {
+            await promptForRegistration(ctx);
+            return;
         }
 
-        await ctx.editMessageText(
-            `تم! هدفك اليومي: *${goal}* كلمات يومياً.\n\nلنبدأ التعلم! 🎉`,
-            { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
-        );
-        await ctx.answerCallbackQuery();
+        await saveBotSession<NameSessionData>(ctx.db, user.user_id, 'rename', { mode: 'rename' }, 30);
+        await ctx.reply('اكتب الاسم الجديد:');
+    });
+
+    bot.on('message:text', async (ctx, next) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return next();
+
+        const registerSession = await getBotSession<NameSessionData>(ctx.db, user.user_id, 'register');
+        const renameSession = await getBotSession<NameSessionData>(ctx.db, user.user_id, 'rename');
+        const session = registerSession ?? renameSession;
+        if (!session) return next();
+
+        const displayName = sanitizeName(ctx.message.text);
+        if (!displayName) {
+            await ctx.reply('اكتب اسماً واضحاً بين 2 و 40 حرفاً.');
+            return;
+        }
+
+        if (session.data.mode === 'rename') {
+            await renameUser(ctx.db, user.user_id, displayName);
+            await deleteBotSession(ctx.db, user.user_id, 'rename');
+            await ctx.reply(`تم تغيير الاسم ✅\n${displayName}`, { reply_markup: mainMenuKeyboard() });
+            return;
+        }
+
+        await completeUserRegistration(ctx.db, user.user_id, displayName);
+        await deleteBotSession(ctx.db, user.user_id, 'register');
+        await ctx.reply(`تم تسجيلك ✅ أهلاً ${displayName}`, { reply_markup: mainMenuKeyboard() });
     });
 }
 
-async function showIdentitySelection(ctx: BotContext): Promise<void> {
-    await ctx.reply(
-        'مرحباً بك في DeutschDrop 👋\nمن أنت؟',
-        {
-            reply_markup: new InlineKeyboard()
-                .text('بلال', 'identity_bilal')
-                .text('ملاك', 'identity_malak'),
-        }
+async function ensureTelegramUser(ctx: BotContext) {
+    const telegramId = ctx.from?.id ?? 0;
+    if (!telegramId) return null;
+
+    const existing = await getUserByTelegramId(ctx.db, telegramId);
+    if (existing) return existing;
+
+    const userId = await createPendingUser(
+        ctx.db,
+        telegramId,
+        ctx.from?.username ?? null,
+        ctx.from?.first_name ?? null,
+        ctx.from?.last_name ?? null
     );
+    return getUserByTelegramId(ctx.db, telegramId) ?? {
+        user_id: userId,
+        id: userId,
+        name: ctx.from?.first_name ?? 'User',
+        telegram_id: telegramId,
+        telegram_user_id: telegramId,
+        telegram_username: ctx.from?.username ?? null,
+        username: ctx.from?.username ?? null,
+        first_name: ctx.from?.first_name ?? null,
+        last_name: ctx.from?.last_name ?? null,
+        display_name: null,
+        xp: 0,
+        level: 1,
+        streak: 0,
+        identity: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+    };
 }
 
-function goalSelectionKeyboard(): InlineKeyboard {
-    const keyboard = new InlineKeyboard();
-    for (const g of GOAL_OPTIONS) {
-        keyboard.text(`${g} كلمات`, `goal_${g}`).row();
+async function promptForRegistration(ctx: BotContext): Promise<void> {
+    const user = await ensureTelegramUser(ctx);
+    if (user) {
+        await saveBotSession<NameSessionData>(ctx.db, user.user_id, 'register', { mode: 'register' }, 30);
     }
-    return keyboard;
+    await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:');
 }
 
-function mainMenuKeyboard(): InlineKeyboard {
-    return new InlineKeyboard()
-        .text('📚 تعلم', 'menu_learn')
-        .text('🏋️ تدريب', 'menu_train').row()
-        .text('⚔️ تحدي', 'menu_challenge')
-        .text('🏆 الترتيب', 'menu_leaderboard').row()
-        .text('📂 إدارة الكلمات', 'menu_words')
-        .text('📊 الإحصائيات', 'menu_stats').row()
-        .text('⚙️ الإعدادات', 'menu_settings');
+function sanitizeName(value: string): string | null {
+    const name = value.trim().replace(/\s+/g, ' ');
+    if (name.length < 2 || name.length > 40 || name.startsWith('/')) return null;
+    return name;
 }

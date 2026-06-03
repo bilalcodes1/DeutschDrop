@@ -153,7 +153,7 @@ export async function getPeerWordSuggestions(
          FROM words w
          INNER JOIN users u ON u.user_id = w.added_by
          WHERE w.added_by != ?
-           AND u.identity IS NOT NULL
+           AND u.display_name IS NOT NULL
            AND NOT EXISTS (
                 SELECT 1 FROM words own
                 WHERE own.added_by = ?

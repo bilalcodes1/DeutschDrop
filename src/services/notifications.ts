@@ -16,21 +16,19 @@ export async function sendTelegramMessage(
 }
 
 export async function getPeerUser(db: D1Database, userId: number): Promise<User | null> {
-    const current = await queryOne<User>(db, 'SELECT * FROM users WHERE user_id = ?', [userId]);
-    if (!current?.identity) return null;
-
-    const targetIdentity = current.identity === 'bilal' ? 'malak' : 'bilal';
-    return queryOne<User>(db, 'SELECT * FROM users WHERE identity = ? LIMIT 1', [targetIdentity]);
+    return queryOne<User>(
+        db,
+        'SELECT * FROM users WHERE user_id != ? AND display_name IS NOT NULL ORDER BY created_at LIMIT 1',
+        [userId]
+    );
 }
 
 export async function getIdentityUsers(db: D1Database): Promise<User[]> {
-    return queryAll<User>(db, 'SELECT * FROM users WHERE identity IN ("bilal", "malak") ORDER BY identity');
+    return queryAll<User>(db, 'SELECT * FROM users WHERE display_name IS NOT NULL ORDER BY display_name');
 }
 
-export function displayUserName(user: Pick<User, 'identity' | 'name'>): string {
-    if (user.identity === 'bilal') return 'بلال';
-    if (user.identity === 'malak') return 'ملاك';
-    return user.name;
+export function displayUserName(user: Partial<Pick<User, 'display_name' | 'name'>>): string {
+    return user.display_name || user.name || 'مستخدم';
 }
 
 export async function competitionNotificationsEnabled(db: D1Database, userId: number): Promise<boolean> {
