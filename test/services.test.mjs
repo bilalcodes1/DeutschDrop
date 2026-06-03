@@ -3,6 +3,7 @@ import test from 'node:test';
 import { parseWordCsv } from '../dist/services/csvParser.js';
 import { calculateNextReview } from '../dist/services/srs.js';
 import { getLevelFromXp, getProgressToNextLevel } from '../dist/services/xpMath.js';
+import { buildArasaacImageUrl, normalizeArasaacResults } from '../dist/services/pictogramSearch.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -74,4 +75,20 @@ test('XP level helpers return current level and progress', () => {
     assert.equal(progress.current, 2000);
     assert.equal(progress.target, 3000);
     assert.equal(progress.percent, 33);
+});
+
+test('pictogram helpers normalize ARASAAC results', () => {
+    assert.equal(
+        buildArasaacImageUrl(6964),
+        'https://static.arasaac.org/pictograms/6964/6964_300.png'
+    );
+
+    const results = normalizeArasaacResults([
+        { _id: 1, keywords: [{ keyword: 'Gebäude' }], aac: false, aacColor: false, schematic: false },
+        { _id: 6964, keywords: [{ keyword: 'Haus' }], aac: true, aacColor: true, schematic: true },
+    ], 'Haus');
+
+    assert.equal(results[0].pictogramId, '6964');
+    assert.equal(results[0].provider, 'arasaac');
+    assert.equal(results[0].attribution, 'ARASAAC / Sergio Palao');
 });

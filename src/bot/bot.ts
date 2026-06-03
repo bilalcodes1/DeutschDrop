@@ -13,6 +13,7 @@ import { registerSettingsCommand } from '../commands/settings';
 import { registerChallengeCommand } from '../commands/challenge';
 import { registerHardWordsCommand } from '../commands/hardWords';
 import { registerExportWordsCommand } from '../commands/exportWords';
+import { registerPictogramCommand } from '../commands/pictograms';
 
 export function createBot(token: string, env: Env): Bot<BotContext> {
     const bot = new Bot<BotContext>(token);
@@ -36,6 +37,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerChallengeCommand(bot);
     registerHardWordsCommand(bot);
     registerExportWordsCommand(bot);
+    registerPictogramCommand(bot);
 
     // Error handler
     bot.catch((err) => {

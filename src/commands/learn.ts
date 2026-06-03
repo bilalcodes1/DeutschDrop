@@ -94,6 +94,7 @@ async function showWord(ctx: BotContext, userId: number): Promise<void> {
         (word.example ? `\n\n💬 مثال: _${word.example}_` : '');
 
     const keyboard = new InlineKeyboard()
+        .text('🖼 رمز تعليمي', `pictogram_search_${word.word_id}`).row()
         .text('👍 أعرفها', `review_known_${word.word_id}`).row()
         .text('😊 سهلة', `review_easy_${word.word_id}`)
         .text('😐 متوسطة', `review_medium_${word.word_id}`)

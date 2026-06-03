@@ -279,6 +279,7 @@ async function showUserWords(ctx: BotContext, userId: number): Promise<void> {
         keyboard
             .text(`✏️ ${word.german}`, `edit_word_${word.word_id}`)
             .text('🗑️', `delete_word_${word.word_id}`)
+            .text('🖼', `pictogram_search_${word.word_id}`)
             .row();
     }
     keyboard.text('⬅️ رجوع', 'menu_words');

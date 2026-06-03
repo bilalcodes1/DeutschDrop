@@ -42,6 +42,19 @@ export interface WordAudio {
     generated_at: string | null;
 }
 
+export interface WordPictogram {
+    word_id: number;
+    provider: string;
+    pictogram_id: string;
+    image_url: string;
+    thumbnail_url: string;
+    title: string;
+    license: string;
+    attribution: string;
+    source_url: string;
+    created_at: string;
+}
+
 export interface UserUploadedList {
     list_id: number;
     user_id: number;
