@@ -30,6 +30,60 @@ export async function getWordsByUser(
     );
 }
 
+export async function countWordsByUser(db: D1Database, userId: number): Promise<number> {
+    const row = await queryOne<{ count: number }>(
+        db,
+        'SELECT COUNT(*) AS count FROM words WHERE added_by = ?',
+        [userId]
+    );
+    return row?.count ?? 0;
+}
+
+export async function getWordsByUserPaginated(
+    db: D1Database,
+    userId: number,
+    limit: number,
+    offset: number
+): Promise<Word[]> {
+    return queryAll<Word>(
+        db,
+        'SELECT * FROM words WHERE added_by = ? ORDER BY created_at DESC, word_id DESC LIMIT ? OFFSET ?',
+        [userId, limit, offset]
+    );
+}
+
+export async function searchWordsByUser(
+    db: D1Database,
+    userId: number,
+    query: string,
+    limit: number,
+    offset: number
+): Promise<Word[]> {
+    const pattern = `%${query.trim()}%`;
+    return queryAll<Word>(
+        db,
+        `SELECT * FROM words
+         WHERE added_by = ?
+           AND (german LIKE ? COLLATE NOCASE OR arabic LIKE ?)
+         ORDER BY created_at DESC, word_id DESC
+         LIMIT ? OFFSET ?`,
+        [userId, pattern, pattern, limit, offset]
+    );
+}
+
+export async function countSearchWordsByUser(db: D1Database, userId: number, query: string): Promise<number> {
+    const pattern = `%${query.trim()}%`;
+    const row = await queryOne<{ count: number }>(
+        db,
+        `SELECT COUNT(*) AS count
+         FROM words
+         WHERE added_by = ?
+           AND (german LIKE ? COLLATE NOCASE OR arabic LIKE ?)`,
+        [userId, pattern, pattern]
+    );
+    return row?.count ?? 0;
+}
+
 export async function createWord(
     db: D1Database,
     german: string,

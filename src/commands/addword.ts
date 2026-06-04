@@ -3,12 +3,17 @@ import type { BotContext } from '../bot/context';
 import { getUserByTelegramId } from '../repositories/userRepository';
 import {
     createWordAndAssignToUser,
+    countSearchWordsByUser,
+    countWordsByUser,
     deleteAllWordsForUser,
     deleteWordForUser,
     deleteWordsForUser,
     DUPLICATE_WORD_ERROR,
     getPeerWordSuggestions,
+    getWordById,
     getWordsByUser,
+    getWordsByUserPaginated,
+    searchWordsByUser,
     searchDuplicateWordForUser,
     updateWordForUser,
 } from '../repositories/wordRepository';
@@ -29,6 +34,13 @@ interface AddWordSessionData {
 interface WordSelectionSession {
     selectedIds: number[];
 }
+
+interface WordSearchSession {
+    awaiting: boolean;
+    query: string | null;
+}
+
+const WORDS_PAGE_SIZE = 10;
 
 export function registerAddWordCommand(bot: Bot<BotContext>): void {
     bot.command('addword', async (ctx) => {
@@ -60,6 +72,14 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
     bot.on('message:text', async (ctx, next) => {
         const telegramId = ctx.from?.id ?? 0;
         const user = await getUserByTelegramId(ctx.db, telegramId);
+        const searchSession = user ? await getBotSession<WordSearchSession>(ctx.db, user.user_id, 'word_search') : null;
+        if (user && searchSession?.data.awaiting) {
+            const query = ctx.message.text.trim();
+            await saveBotSession<WordSearchSession>(ctx.db, user.user_id, 'word_search', { awaiting: false, query }, 30);
+            await showSearchWords(ctx, user.user_id, query, 0);
+            return;
+        }
+
         const pending = user ? await getBotSession<AddWordSessionData>(ctx.db, user.user_id, 'add_word') : null;
 
         if (!pending) {
@@ -171,7 +191,46 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
             return;
         }
 
-        await showUserWords(ctx, user.user_id);
+        await deleteBotSession(ctx.db, user.user_id, 'word_search');
+        await showUserWords(ctx, user.user_id, 0);
+        await ctx.answerCallbackQuery();
+    });
+
+    bot.callbackQuery(/^list_words_(\d+)$/, async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) {
+            await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
+            return;
+        }
+        await deleteBotSession(ctx.db, user.user_id, 'word_search');
+        await showUserWords(ctx, user.user_id, Number(ctx.match[1]));
+        await ctx.answerCallbackQuery();
+    });
+
+    bot.callbackQuery('word_search_start', async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) {
+            await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
+            return;
+        }
+        await saveBotSession<WordSearchSession>(ctx.db, user.user_id, 'word_search', { awaiting: true, query: null }, 10);
+        await replaceWithText(ctx, '🔍 اكتب كلمة للبحث', navigationKeyboard('list_words'));
+        await ctx.answerCallbackQuery();
+    });
+
+    bot.callbackQuery(/^word_search_page_(\d+)$/, async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) {
+            await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
+            return;
+        }
+        const session = await getBotSession<WordSearchSession>(ctx.db, user.user_id, 'word_search');
+        if (!session?.data.query) {
+            await showUserWords(ctx, user.user_id, 0);
+            await ctx.answerCallbackQuery();
+            return;
+        }
+        await showSearchWords(ctx, user.user_id, session.data.query, Number(ctx.match[1]));
         await ctx.answerCallbackQuery();
     });
 
@@ -194,8 +253,8 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         }
         const wordId = Number(ctx.match[1]);
         const page = Number(ctx.match[2]);
-        const words = await getWordsByUser(ctx.db, user.user_id);
-        if (!words.some(word => word.word_id === wordId)) {
+        const word = await getWordById(ctx.db, wordId);
+        if (!word || word.added_by !== user.user_id) {
             await ctx.answerCallbackQuery('الكلمة غير موجودة');
             return;
         }
@@ -312,7 +371,7 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
 
         const deleted = await deleteWordForUser(ctx.db, user.user_id, wordId);
         await ctx.answerCallbackQuery(deleted ? 'تم الحذف' : 'الكلمة غير موجودة');
-        await showUserWords(ctx, user.user_id);
+        await showUserWords(ctx, user.user_id, 0);
     });
 
     bot.callbackQuery(/^edit_word_(\d+)$/, async (ctx) => {
@@ -390,30 +449,66 @@ async function addWordInline(ctx: BotContext, german: string, arabic: string): P
     }
 }
 
-async function showUserWords(ctx: BotContext, userId: number): Promise<void> {
-    const words = await getWordsByUser(ctx.db, userId);
-    if (words.length === 0) {
-        await replaceWithText(ctx, '📋 لا توجد كلمات بعد.', new InlineKeyboard()
-                .text('➕ إضافة كلمة', 'add_word')
-                .text('📤 رفع CSV', 'upload_csv').row()
-                .text('⬅️ رجوع', 'menu_words')
-                .text('🏠 الرئيسية', 'menu_main'));
+async function showUserWords(ctx: BotContext, userId: number, page: number): Promise<void> {
+    const totalWords = await countWordsByUser(ctx.db, userId);
+    if (totalWords === 0) {
+        await replaceWithText(
+            ctx,
+            '📭 لا توجد كلمات بعد.\nأضف كلمة بهذه الصيغة:\nHaus = بيت\nأو ارفع ملف CSV.',
+            new InlineKeyboard()
+                .text('📤 رفع CSV', 'upload_csv')
+                .text('➕ إضافة كلمة', 'add_word').row()
+                .text('🏠 الرئيسية', 'menu_main')
+        );
         return;
     }
 
-    const visible = words.slice(0, 10);
-    const text = '📋 *كلماتك*\n\n' +
-        visible.map((word, index) => `${index + 1}. 🇩🇪 ${word.german}\n   🇦🇪 ${word.arabic}`).join('\n\n') +
-        (words.length > visible.length ? `\n\nو ${words.length - visible.length} كلمة أخرى.` : '');
+    const totalPages = Math.max(1, Math.ceil(totalWords / WORDS_PAGE_SIZE));
+    const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+    const visible = await getWordsByUserPaginated(ctx.db, userId, WORDS_PAGE_SIZE, safePage * WORDS_PAGE_SIZE);
+    await replaceWithText(ctx, formatWordsPage('📋 *كلماتي*', visible, safePage, totalPages, totalWords), wordsPageKeyboard(visible, safePage, totalPages, false), 'Markdown');
+}
 
+async function showSearchWords(ctx: BotContext, userId: number, query: string, page: number): Promise<void> {
+    const totalWords = await countSearchWordsByUser(ctx.db, userId, query);
+    const totalPages = Math.max(1, Math.ceil(totalWords / WORDS_PAGE_SIZE));
+    const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+    const visible = totalWords > 0
+        ? await searchWordsByUser(ctx.db, userId, query, WORDS_PAGE_SIZE, safePage * WORDS_PAGE_SIZE)
+        : [];
+
+    const text = totalWords === 0
+        ? `🔍 *نتائج البحث*\n\nلا توجد نتائج لـ: ${query}`
+        : formatWordsPage(`🔍 *نتائج البحث: ${query}*`, visible, safePage, totalPages, totalWords);
+    await replaceWithText(ctx, text, wordsPageKeyboard(visible, safePage, totalPages, true), 'Markdown');
+}
+
+function formatWordsPage(title: string, words: Array<{ german: string; arabic: string }>, page: number, totalPages: number, totalWords: number): string {
+    return `${title}\n\n` +
+        `الصفحة: *${page + 1} / ${totalPages}*\n` +
+        `عدد الكلمات: *${totalWords}*\n\n` +
+        words.map((word, index) =>
+            `${index + 1}. 🇩🇪 ${word.german}\n   🇮🇶 ${word.arabic}`
+        ).join('\n\n');
+}
+
+function wordsPageKeyboard(words: Array<{ word_id: number; german: string; arabic: string }>, page: number, totalPages: number, search: boolean): InlineKeyboard {
     const keyboard = new InlineKeyboard();
-    for (const word of visible) {
-        keyboard.text(`📄 ${word.german}`, `word_detail_${word.word_id}`).row();
-    }
-    keyboard.text('☑️ تحديد', 'select_words_0').row()
-        .text('⬅️ رجوع', 'menu_words').text('🏠 الرئيسية', 'menu_main');
+    words.forEach((word, index) => {
+        keyboard.text(`${index + 1}. ${word.german} — ${word.arabic}`, `word_detail_${word.word_id}`).row();
+    });
 
-    await replaceWithText(ctx, text, keyboard, 'Markdown');
+    if (page > 0) {
+        keyboard.text('⬅️ السابق', search ? `word_search_page_${page - 1}` : `list_words_${page - 1}`);
+    }
+    if (page < totalPages - 1) {
+        keyboard.text('التالي ➡️', search ? `word_search_page_${page + 1}` : `list_words_${page + 1}`);
+    }
+    if (page > 0 || page < totalPages - 1) keyboard.row();
+    keyboard.text('🔍 بحث', 'word_search_start')
+        .text('☑️ تحديد', `select_words_${page}`).row()
+        .text('⬅️ رجوع', 'menu_words').text('🏠 الرئيسية', 'menu_main');
+    return keyboard;
 }
 
 async function ensureSelectionSession(ctx: BotContext, userId: number): Promise<WordSelectionSession> {
@@ -429,13 +524,12 @@ async function saveSelectionSession(ctx: BotContext, userId: number, selectedIds
 }
 
 async function showSelectionPanel(ctx: BotContext, userId: number, page: number): Promise<void> {
-    const words = await getWordsByUser(ctx.db, userId);
     const session = await ensureSelectionSession(ctx, userId);
     const selected = new Set(session.selectedIds);
-    const pageSize = 8;
-    const totalPages = Math.max(1, Math.ceil(words.length / pageSize));
+    const totalWords = await countWordsByUser(ctx.db, userId);
+    const totalPages = Math.max(1, Math.ceil(totalWords / WORDS_PAGE_SIZE));
     const safePage = Math.min(Math.max(page, 0), totalPages - 1);
-    const visible = words.slice(safePage * pageSize, safePage * pageSize + pageSize);
+    const visible = await getWordsByUserPaginated(ctx.db, userId, WORDS_PAGE_SIZE, safePage * WORDS_PAGE_SIZE);
 
     const text = visible.length === 0
         ? '☑️ *تحديد الكلمات*\n\nلا توجد كلمات.'
@@ -450,12 +544,11 @@ async function showSelectionPanel(ctx: BotContext, userId: number, page: number)
     keyboard
         .text('✅ تحديد الكل', 'word_select_all')
         .text('❎ إلغاء التحديد', 'word_select_clear').row()
-        .text('🗑 حذف المحدد', 'word_delete_selected')
-        .text('🧨 حذف كل الكلمات', 'word_delete_all').row();
+        .text('🗑 حذف المحدد', 'word_delete_selected').row();
     if (safePage > 0) keyboard.text('⬅️ السابق', `select_words_${safePage - 1}`);
     if (safePage < totalPages - 1) keyboard.text('التالي ➡️', `select_words_${safePage + 1}`);
     if (safePage > 0 || safePage < totalPages - 1) keyboard.row();
-    keyboard.text('⬅️ رجوع', 'menu_words').text('🏠 الرئيسية', 'menu_main');
+    keyboard.text('⬅️ رجوع للعرض', `list_words_${safePage}`).text('🏠 الرئيسية', 'menu_main');
 
     await replaceWithText(ctx, `${text}\n\nالمحدد: ${selected.size}\nصفحة ${safePage + 1}/${totalPages}`, keyboard, 'Markdown');
 }

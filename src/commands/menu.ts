@@ -96,7 +96,7 @@ function wordsMenuKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
         .text('➕ إضافة كلمة', 'add_word')
         .text('📤 رفع CSV', 'upload_csv').row()
-        .text('📋 عرض الكلمات', 'list_words')
+        .text('📋 عرض كل الكلمات', 'list_words')
         .text('📌 الكلمات الصعبة', 'hard_words').row()
         .text('☑️ تحديد الكلمات', 'select_words_0').row()
         .text('💡 اقتراحات', 'suggest_peer_words').row()

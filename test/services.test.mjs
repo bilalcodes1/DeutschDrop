@@ -194,6 +194,41 @@ test('main menu exposes the requested public navigation buttons', () => {
     assert.match(source, /menu_main/);
 });
 
+test('word list uses D1 pagination and exposes page controls', () => {
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+
+    assert.match(menuSource, /📋 عرض كل الكلمات/);
+    assert.match(repositorySource, /export async function countWordsByUser/);
+    assert.match(repositorySource, /export async function getWordsByUserPaginated/);
+    assert.match(repositorySource, /LIMIT \? OFFSET \?/);
+    assert.match(addWordSource, /const WORDS_PAGE_SIZE = 10/);
+    assert.match(addWordSource, /الصفحة:/);
+    assert.match(addWordSource, /التالي ➡️/);
+    assert.match(addWordSource, /⬅️ السابق/);
+});
+
+test('word list first and last pages hide unavailable navigation', () => {
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    assert.match(addWordSource, /if \(page > 0\)/);
+    assert.match(addWordSource, /if \(page < totalPages - 1\)/);
+    assert.match(addWordSource, /word_detail_\$\{word\.word_id\}/);
+});
+
+test('word search is scoped to current user and paginated', () => {
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+
+    assert.match(repositorySource, /export async function searchWordsByUser/);
+    assert.match(repositorySource, /export async function countSearchWordsByUser/);
+    assert.match(repositorySource, /WHERE added_by = \?/);
+    assert.match(repositorySource, /german LIKE \? COLLATE NOCASE OR arabic LIKE \?/);
+    assert.match(addWordSource, /word_search_start/);
+    assert.match(addWordSource, /word_search_page_/);
+    assert.match(addWordSource, /اكتب كلمة للبحث/);
+});
+
 test('admin main menu button is shown only for admins', () => {
     const source = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
@@ -408,6 +443,8 @@ test('word selection bulk delete is limited to current user', () => {
         assert.match(addWordSource, new RegExp(callback));
     }
     assert.match(addWordSource, /saveBotSession<WordSelectionSession>/);
+    assert.match(addWordSource, /getWordsByUserPaginated\(ctx\.db, userId, WORDS_PAGE_SIZE/);
+    assert.match(addWordSource, /⬅️ رجوع للعرض/);
     assert.match(wordSource, /deleteWordsForUser/);
     assert.match(wordSource, /deleteAllWordsForUser/);
     assert.match(wordSource, /deleteWordForUser\(db, userId, wordId\)/);
