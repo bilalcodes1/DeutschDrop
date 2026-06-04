@@ -6,10 +6,10 @@ export async function getDueWords(
     db: D1Database,
     userId: number,
     limit: number = 10
-): Promise<Array<UserWord & { german: string; arabic: string; example: string | null; pronunciation_ar: string | null }>> {
+): Promise<Array<UserWord & { german: string; arabic: string; example: string | null; pronunciation_ar: string | null; pronunciation_latin: string | null }>> {
     return queryAll(
         db,
-        `SELECT uw.*, w.german, w.arabic, w.example, w.pronunciation_ar
+        `SELECT uw.*, w.german, w.arabic, w.example, w.pronunciation_ar, w.pronunciation_latin
          FROM user_words uw
          INNER JOIN words w ON uw.word_id = w.word_id
          WHERE uw.user_id = ?

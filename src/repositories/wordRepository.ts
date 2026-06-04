@@ -3,6 +3,9 @@ import { queryOne, queryAll, run, runBatch } from '../db/queries';
 import type { Word, UserUploadedList, ListWord } from '../models';
 
 export const DUPLICATE_WORD_ERROR = 'duplicate_word';
+const WORD_SELECT_COLUMNS = `word_id, german, arabic, example, example_ar, pronunciation_ar,
+    pronunciation_latin, level, added_by, created_at, updated_at`;
+const WORD_SELECT_COLUMNS_SAFE = 'word_id, german, arabic, example, added_by, created_at';
 
 export function normalizeGermanForCompare(value: string): string {
     return value
@@ -45,10 +48,27 @@ export async function getWordsByUserPaginated(
     limit: number,
     offset: number
 ): Promise<Word[]> {
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 10)));
+    const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
     return queryAll<Word>(
         db,
-        'SELECT * FROM words WHERE added_by = ? ORDER BY created_at DESC, word_id DESC LIMIT ? OFFSET ?',
-        [userId, limit, offset]
+        `SELECT ${WORD_SELECT_COLUMNS} FROM words WHERE added_by = ? ORDER BY created_at DESC, word_id DESC LIMIT ? OFFSET ?`,
+        [userId, safeLimit, safeOffset]
+    );
+}
+
+export async function getWordsByUserPaginatedFallback(
+    db: D1Database,
+    userId: number,
+    limit: number,
+    offset: number
+): Promise<Word[]> {
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 10)));
+    const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
+    return queryAll<Word>(
+        db,
+        `SELECT ${WORD_SELECT_COLUMNS_SAFE} FROM words WHERE added_by = ? ORDER BY word_id DESC LIMIT ? OFFSET ?`,
+        [userId, safeLimit, safeOffset]
     );
 }
 
@@ -60,14 +80,16 @@ export async function searchWordsByUser(
     offset: number
 ): Promise<Word[]> {
     const pattern = `%${query.trim()}%`;
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 10)));
+    const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
     return queryAll<Word>(
         db,
-        `SELECT * FROM words
+        `SELECT ${WORD_SELECT_COLUMNS} FROM words
          WHERE added_by = ?
            AND (german LIKE ? COLLATE NOCASE OR arabic LIKE ?)
          ORDER BY created_at DESC, word_id DESC
          LIMIT ? OFFSET ?`,
-        [userId, pattern, pattern, limit, offset]
+        [userId, pattern, pattern, safeLimit, safeOffset]
     );
 }
 
@@ -217,7 +239,7 @@ export async function updateWordAiFieldsForUser(
     db: D1Database,
     userId: number,
     wordId: number,
-    fields: { example?: string | null; example_ar?: string | null; pronunciation_ar?: string | null; level?: string | null }
+    fields: { example?: string | null; example_ar?: string | null; pronunciation_ar?: string | null; pronunciation_latin?: string | null; level?: string | null }
 ): Promise<boolean> {
     const updates: string[] = [];
     const values: unknown[] = [];
@@ -225,6 +247,7 @@ export async function updateWordAiFieldsForUser(
     if (fields.example !== undefined) { updates.push('example = ?'); values.push(fields.example); }
     if (fields.example_ar !== undefined) { updates.push('example_ar = ?'); values.push(fields.example_ar); }
     if (fields.pronunciation_ar !== undefined) { updates.push('pronunciation_ar = ?'); values.push(fields.pronunciation_ar); }
+    if (fields.pronunciation_latin !== undefined) { updates.push('pronunciation_latin = ?'); values.push(fields.pronunciation_latin); }
     if (fields.level !== undefined) { updates.push('level = ?'); values.push(fields.level); }
     if (updates.length === 0) return false;
 
@@ -357,17 +380,21 @@ export async function getTrainingWordCandidates(
     db: D1Database,
     userId: number,
     limit: number = 100
-): Promise<Array<Word & { status: string; next_review: string | null; correct_count: number; wrong_count: number }>> {
+): Promise<Array<Word & { status: string; next_review: string | null; correct_count: number; wrong_count: number; difficulty_score?: number; stats_is_hard?: number; consecutive_wrong?: number }>> {
     return queryAll(
         db,
-        `SELECT w.*, uw.status, uw.next_review, uw.correct_count, uw.wrong_count
+        `SELECT w.*, uw.status, uw.next_review, uw.correct_count, uw.wrong_count,
+                COALESCE(wls.difficulty_score, 0) AS difficulty_score,
+                COALESCE(wls.is_hard, 0) AS stats_is_hard,
+                COALESCE(wls.consecutive_wrong, 0) AS consecutive_wrong
          FROM words w
          INNER JOIN user_words uw ON w.word_id = uw.word_id
+         LEFT JOIN word_learning_stats wls ON wls.user_id = uw.user_id AND wls.word_id = uw.word_id
          WHERE uw.user_id = ?
          ORDER BY
             CASE
                 WHEN uw.next_review IS NOT NULL AND datetime(uw.next_review) <= datetime('now') THEN 0
-                WHEN uw.wrong_count >= 2 OR uw.wrong_count > uw.correct_count OR uw.status = 'learning' THEN 1
+                WHEN COALESCE(wls.is_hard, 0) = 1 OR COALESCE(wls.difficulty_score, 0) >= 0.7 OR uw.wrong_count >= 2 OR uw.wrong_count > uw.correct_count OR uw.status = 'learning' THEN 1
                 WHEN uw.wrong_count > 0 THEN 2
                 WHEN uw.status = 'new' OR (uw.correct_count = 0 AND uw.wrong_count = 0) THEN 3
                 ELSE 4

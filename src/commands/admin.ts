@@ -44,6 +44,16 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
         await showAdminStats(ctx);
     });
 
+    bot.command('admin_db_check', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showAdminDbCheck(ctx);
+    });
+
+    bot.command('admin_word_stats', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showAdminWordStats(ctx);
+    });
+
     bot.command('users', async (ctx) => {
         if (!await requireAdmin(ctx)) return;
         await showAdminUsers(ctx, 0);
@@ -79,6 +89,11 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery('admin_stats', async (ctx) => {
         if (!await requireAdmin(ctx)) return;
         await showAdminStats(ctx);
+    });
+
+    bot.callbackQuery('admin_db_check', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showAdminDbCheck(ctx);
     });
 
     bot.callbackQuery(/^admin_users_(\d+)$/, async (ctx) => {
@@ -251,9 +266,75 @@ function adminPanelKeyboard(): InlineKeyboard {
         .text('📢 إرسال تبليغ', 'admin_broadcast_start').row()
         .text('📌 تثبيت رسالة داخل البوت', 'admin_announcement_start').row()
         .text('📚 إدارة المصادر', 'admin_sources').row()
+        .text('🛠 فحص قاعدة البيانات', 'admin_db_check').row()
         .text('💙 طلبات الدعم', 'admin_support_pending_0')
         .text('🚫 المحظورون', 'admin_banned').row()
         .text('🏠 الرئيسية', 'menu_main');
+}
+
+async function showAdminDbCheck(ctx: BotContext): Promise<void> {
+    const requiredTables = ['words', 'users', 'bot_sessions', 'learning_sources', 'ai_cache', 'ai_usage'];
+    const requiredWordColumns = [
+        'word_id',
+        'german',
+        'arabic',
+        'example',
+        'example_ar',
+        'created_at',
+        'updated_at',
+        'pronunciation_ar',
+        'pronunciation_latin',
+        'level',
+        'added_by',
+    ];
+
+    const tableRows = await ctx.db.prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${requiredTables.map(() => '?').join(',')})`
+    ).bind(...requiredTables).all<{ name: string }>();
+    const existingTables = new Set((tableRows.results ?? []).map(row => row.name));
+    const columnRows = await ctx.db.prepare('PRAGMA table_info(words)').all<{ name: string }>();
+    const existingColumns = new Set((columnRows.results ?? []).map(row => row.name));
+
+    const lines: string[] = ['🛠 فحص قاعدة البيانات', ''];
+    for (const table of requiredTables) {
+        lines.push(existingTables.has(table) ? `✅ table: ${table}` : `❌ missing table: ${table}`);
+    }
+    lines.push('');
+    for (const column of requiredWordColumns) {
+        lines.push(existingColumns.has(column) ? `✅ words.${column}` : `❌ missing column: words.${column}`);
+    }
+
+    await replaceWithText(ctx, lines.join('\n'), adminPanelKeyboard());
+}
+
+async function showAdminWordStats(ctx: BotContext): Promise<void> {
+    const totals = await ctx.db.prepare(
+        `SELECT
+            COUNT(w.word_id) AS total_words,
+            SUM(CASE WHEN COALESCE(wls.is_hard, 0) = 1 THEN 1 ELSE 0 END) AS hard_words
+         FROM words w
+         LEFT JOIN word_learning_stats wls ON wls.word_id = w.word_id AND wls.user_id = w.added_by`
+    ).first<{ total_words: number; hard_words: number }>();
+    const hardest = await ctx.db.prepare(
+        `SELECT w.german, w.arabic, COALESCE(wls.wrong_count, uw.wrong_count, 0) AS wrong_count,
+                COALESCE(wls.difficulty_score, 0) AS difficulty_score
+         FROM words w
+         LEFT JOIN user_words uw ON uw.word_id = w.word_id AND uw.user_id = w.added_by
+         LEFT JOIN word_learning_stats wls ON wls.word_id = w.word_id AND wls.user_id = w.added_by
+         ORDER BY COALESCE(wls.difficulty_score, 0) DESC, COALESCE(wls.wrong_count, uw.wrong_count, 0) DESC
+         LIMIT 10`
+    ).all<{ german: string; arabic: string; wrong_count: number; difficulty_score: number }>();
+    const lines = (hardest.results ?? []).map((word, index) =>
+        `${index + 1}. ${word.german} — ${word.arabic}\nأخطاء: ${word.wrong_count} | صعوبة: ${word.difficulty_score}`
+    ).join('\n\n');
+    await replaceWithText(
+        ctx,
+        `📊 تحليل الكلمات الصعبة\n\n` +
+        `عدد الكلمات: ${totals?.total_words ?? 0}\n` +
+        `عدد hard words: ${totals?.hard_words ?? 0}\n\n` +
+        `أكثر 10 كلمات تحتاج تركيز:\n${lines || '-'}`,
+        adminPanelKeyboard()
+    );
 }
 
 async function showAdminStats(ctx: BotContext): Promise<void> {

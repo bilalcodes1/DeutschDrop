@@ -64,7 +64,11 @@ function formatWordDetail(word: Word, hasPictogram: boolean, reviewStatus: strin
         `🇮🇶 ${word.arabic}` +
         (word.example ? `\n💬 _${word.example}_` : '') +
         (word.example_ar ? `\n🇮🇶 _${word.example_ar}_` : '') +
-        (word.pronunciation_ar ? `\n🗣 اللفظ: ${word.pronunciation_ar}` : '') +
+        (word.pronunciation_latin || word.pronunciation_ar
+            ? `\n🗣 اللفظ:` +
+                (word.pronunciation_latin ? `\nLatin: ${word.pronunciation_latin}` : '') +
+                (word.pronunciation_ar ? `\nعربي: ${word.pronunciation_ar}` : '')
+            : '') +
         (word.level ? `\n📊 المستوى: ${word.level}` : '') +
         `\n\n🖼 الرمز التعليمي: ${hasPictogram ? 'محفوظ ✅' : 'غير معين'}` +
         `\n🔁 حالة المراجعة: ${reviewStatusLabel(reviewStatus)}`;
@@ -73,7 +77,7 @@ function formatWordDetail(word: Word, hasPictogram: boolean, reviewStatus: strin
 function wordDetailKeyboard(word: Word, hasPictogram: boolean): InlineKeyboard {
     const wordId = word.word_id;
     const keyboard = new InlineKeyboard();
-    if (!word.example || !word.pronunciation_ar) {
+    if (!word.example || !word.pronunciation_ar || !word.pronunciation_latin) {
         keyboard.text('✨ تحسين بالذكاء الاصطناعي', `ai_improve_${wordId}`).row();
     }
     if (word.example && !word.pronunciation_ar) {

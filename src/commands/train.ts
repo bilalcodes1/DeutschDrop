@@ -10,6 +10,7 @@ import { addXp } from '../services/xpLevels';
 import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
 import { gradeTrainingAnswer } from '../services/trainingAnswerGrader';
+import { updateWordLearningAfterAnswer } from '../services/adaptiveReview';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
 import type { TrainExplainSession } from './aiCoach';
@@ -168,7 +169,7 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
 
     const allWords = await getTrainingWordCandidates(ctx.db, user.user_id, Math.max(100, count * 6));
     const words = mode === 'hard'
-        ? allWords.filter(w => isHardWord({ wrongCount: w.wrong_count, correctCount: w.correct_count, status: w.status }))
+        ? allWords.filter(w => isHardWord({ wrongCount: w.wrong_count, correctCount: w.correct_count, status: w.status, difficultyScore: w.difficulty_score, isHard: Boolean(w.stats_is_hard), consecutiveWrong: w.consecutive_wrong }))
         : allWords;
 
     if (words.length === 0) {
@@ -188,6 +189,9 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
             wrongCount: w.wrong_count,
             correctCount: w.correct_count,
             nextReview: w.next_review,
+            difficultyScore: w.difficulty_score,
+            isHard: Boolean(w.stats_is_hard),
+            consecutiveWrong: w.consecutive_wrong,
         })),
         count,
         mode
@@ -310,6 +314,14 @@ async function handleTrainAnswer(ctx: BotContext, questionIndex: number, wordId:
 
     // Record as review
     await recordReview(ctx.db, user.user_id, wordId, isCorrect, null, null);
+    await updateWordLearningAfterAnswer(ctx.db, {
+        userId: user.user_id,
+        wordId,
+        questionType: current.type,
+        isCorrect,
+        grade: isCorrect ? 'correct' : 'wrong',
+        source: 'train',
+    });
     await checkAchievements(ctx, user.user_id);
 
     if (!isCorrect) {
@@ -369,6 +381,14 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
     }
 
     await recordReview(ctx.db, user.user_id, current.word_id, isCorrect, null, null);
+    await updateWordLearningAfterAnswer(ctx.db, {
+        userId: user.user_id,
+        wordId: current.word_id,
+        questionType: current.type,
+        isCorrect,
+        grade: grade.verdict === 'almost' ? 'almost' : isCorrect ? 'correct' : 'wrong',
+        source: 'train',
+    });
     await checkAchievements(ctx, user.user_id);
 
     if (!isCorrect) {

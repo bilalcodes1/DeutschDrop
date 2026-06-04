@@ -1,6 +1,7 @@
 export interface AiExampleSuggestion {
     example_de?: string;
     example_ar?: string;
+    pronunciation_latin?: string;
     pronunciation_ar?: string;
     level?: string;
 }
@@ -16,11 +17,27 @@ export function validateExampleSuggestion(input: AiSuggestionValidationInput): b
     const result = input.result;
     if (!result.example_de?.trim()) return false;
     if (!result.example_ar?.trim()) return false;
+    if (!result.pronunciation_latin?.trim()) return false;
     if (!result.pronunciation_ar?.trim()) return false;
     if (!VALID_LEVELS.has(result.level?.trim().toUpperCase() ?? '')) return false;
     if (!exampleContainsGerman(input.german, result.example_de)) return false;
+    if (!pronunciationLatinMatchesGerman(input.german, result.pronunciation_latin)) return false;
     if (hasSuspiciousPronunciation(input.german, result.pronunciation_ar)) return false;
+    if (pronunciationArabicMismatchesLatin(result.pronunciation_latin, result.pronunciation_ar)) return false;
     return true;
+}
+
+export function validateAiExplanation(
+    input: { german: string; correctAnswer: string },
+    result: { short_explanation?: string; correct_answer?: string; extra_example_de?: string; extra_example_ar?: string }
+): boolean {
+    if (!result.short_explanation?.trim()) return false;
+    if (!result.correct_answer?.trim()) return false;
+    if (!result.extra_example_de?.trim()) return false;
+    if (!result.extra_example_ar?.trim()) return false;
+    if (/\bStille\s+Nacht\b/i.test(result.extra_example_de) && !/\bStille\s+Nacht\b/i.test(input.german)) return false;
+    return exampleContainsGerman(input.german, result.extra_example_de) ||
+        exampleContainsGerman(input.correctAnswer, result.extra_example_de);
 }
 
 export function exampleContainsGerman(german: string, exampleDe: string): boolean {
@@ -52,6 +69,32 @@ export function hasSuspiciousPronunciation(german: string, pronunciationAr: stri
             return true;
         }
     }
+    return false;
+}
+
+export function pronunciationLatinMatchesGerman(german: string, pronunciationLatin: string): boolean {
+    const germanKey = normalizeGermanText(german).replace(/\s+/g, '');
+    const latinKey = normalizeGermanText(pronunciationLatin)
+        .replace(/sh/g, 'sch')
+        .replace(/kh/g, 'ch')
+        .replace(/oy/g, 'eu')
+        .replace(/ow/g, 'au')
+        .replace(/\s+/g, '');
+    if (!germanKey || !latinKey) return false;
+    const tokens = germanTokens(normalizeGermanText(german));
+    if (tokens.length <= 1) return latinKey.length >= Math.min(2, germanKey.length);
+    const latinTokens = new Set(germanTokens(normalizeGermanText(pronunciationLatin)));
+    const matched = tokens.filter(token => latinTokens.has(token) || latinKey.includes(token.slice(0, 3))).length;
+    return matched >= Math.max(1, Math.floor(tokens.length * 0.5)) || latinKey.length >= Math.min(4, germanKey.length);
+}
+
+export function pronunciationArabicMismatchesLatin(pronunciationLatin: string, pronunciationAr: string): boolean {
+    const latin = pronunciationLatin.toLowerCase();
+    const arabic = pronunciationAr;
+    if (latin.includes('sh') && !arabic.includes('ش')) return true;
+    if ((latin.includes('goot') || latin.includes('gut') || latin.includes('g')) && !/[گكج]/.test(arabic)) return true;
+    if (latin.includes('hows') && !arabic.includes('هاوس')) return true;
+    if (/\bikh\b/.test(latin) && !/[إا]ِ?خ|اخ/.test(arabic)) return true;
     return false;
 }
 

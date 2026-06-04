@@ -5,7 +5,7 @@ import { getWordById, updateWordAiFieldsForUser } from '../repositories/wordRepo
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { AI_ERROR_MESSAGES, getAiUsageSummary, runAiTask } from '../services/ai/aiRouter';
 import type { AiTaskResult } from '../services/ai/aiTypes';
-import { validateExampleSuggestion } from '../services/ai/aiValidation';
+import { validateAiExplanation, validateExampleSuggestion } from '../services/ai/aiValidation';
 import { buildAiDebugReport, formatAiDebugReport } from '../services/ai/aiDebug';
 import { isAdminTelegramId } from '../services/adminAccess';
 import { navigationKeyboard, replaceWithText, showWordDetailPanel } from './wordPanel';
@@ -13,6 +13,7 @@ import { navigationKeyboard, replaceWithText, showWordDetailPanel } from './word
 interface ExampleResult {
     example_de: string;
     example_ar: string;
+    pronunciation_latin: string;
     pronunciation_ar: string;
     level: string;
 }
@@ -101,6 +102,7 @@ export function registerAiCoachCommand(bot: Bot<BotContext>): void {
         await updateWordAiFieldsForUser(ctx.db, user.user_id, wordId, {
             example: result.example_de,
             example_ar: result.example_ar,
+            pronunciation_latin: result.pronunciation_latin,
             pronunciation_ar: result.pronunciation_ar,
             level: normalizeLevel(result.level),
         });
@@ -279,18 +281,32 @@ async function explainCurrentTrainingAnswer(ctx: BotContext): Promise<void> {
             correctAnswer: session.data.correctAnswer,
             example: session.data.example,
         },
-        { userId: user.user_id }
+        {
+            userId: user.user_id,
+            validateResult: (candidate) => validateAiExplanation(
+                { german: session.data.german, correctAnswer: session.data.correctAnswer },
+                candidate as ExplainResult
+            ),
+        }
     );
-    if (!result.result) return showAiError(ctx, result, 'train_continue');
+    if (!result.result) {
+        await replaceWithText(
+            ctx,
+            `🤖 الشرح\n\nالجواب الصحيح هو: ${session.data.correctAnswer}. حاول تقارنه بجوابك وراجع ترتيب الكلمات.`,
+            new InlineKeyboard()
+                .text('🏋️ أكمل التدريب', 'train_continue').row()
+                .text('🏠 الرئيسية', 'menu_main')
+        );
+        return;
+    }
     await replaceWithText(
         ctx,
-        `🤖 *الشرح*\n\n${result.result.short_explanation}\n\n✅ الصحيح: *${result.result.correct_answer}*` +
-        (result.result.extra_example_de ? `\n\nمثال:\n${result.result.extra_example_de}` : '') +
-        (result.result.extra_example_ar ? `\n${result.result.extra_example_ar}` : ''),
+        `🤖 الشرح\n\n${result.result.short_explanation}\n\n` +
+        `الصحيح:\n${result.result.correct_answer}\n\n` +
+        `مثال مرتبط:\n🇩🇪 ${result.result.extra_example_de ?? '-'}\n🇮🇶 ${result.result.extra_example_ar ?? '-'}`,
         new InlineKeyboard()
             .text('🏋️ أكمل التدريب', 'train_continue').row()
-            .text('🏠 الرئيسية', 'menu_main'),
-        'Markdown'
+            .text('🏠 الرئيسية', 'menu_main')
     );
 }
 
@@ -340,8 +356,8 @@ function formatExampleSuggestion(result: ExampleResult): string {
     return `✨ *اقتراح تحسين الكلمة*\n\n` +
         `مثال ألماني:\n${result.example_de}\n\n` +
         `الترجمة:\n${result.example_ar}\n\n` +
-        `🗣 اللفظ: ${result.pronunciation_ar}\n` +
-        `📊 المستوى: ${normalizeLevel(result.level)}`;
+        `🗣 اللفظ:\nLatin: ${result.pronunciation_latin}\nعربي: ${result.pronunciation_ar}\n\n` +
+        `المستوى:\n${normalizeLevel(result.level)}`;
 }
 
 function suggestionKeyboard(wordId: number, mode: AiWordSession['mode']): InlineKeyboard {

@@ -10,6 +10,7 @@ export interface SmartWord {
     arabic: string;
     example: string | null;
     pronunciation_ar: string | null;
+    pronunciation_latin: string | null;
     image_url?: string | null;
 }
 
@@ -64,16 +65,12 @@ export async function selectNotificationForUser(db: D1Database, userId: number):
     const activePlan = await getActiveReviewPlanForNotification(db, userId);
     if (activePlan) return buildReviewPlanNotification(activePlan);
 
+    const selected = await selectNotificationWord(db, userId, 'normal');
+    if (selected?.reason === 'hard' || selected?.reason === 'recent_wrong') return buildHardWordNotification(selected.word);
     const dueCount = await countDueWords(db, userId);
-    if (dueCount > 0) {
-        const due = await selectDueWord(db, userId);
-        if (due) return buildDueWordNotification(due, dueCount, userId);
-    }
+    if (selected?.reason === 'due') return buildDueWordNotification(selected.word, Math.max(1, dueCount), userId);
 
-    const hard = await selectHardWord(db, userId);
-    if (hard) return buildHardWordNotification(hard);
-
-    const randomWord = await selectAnyWord(db, userId);
+    const randomWord = selected?.word ?? await selectAnyWord(db, userId);
     if (randomWord) {
         const variants = [
             () => buildQuickRecallNotification(randomWord),
@@ -89,6 +86,23 @@ export async function selectNotificationForUser(db: D1Database, userId: number):
     }
 
     return buildMotivationalNotification(userId + totalWords);
+}
+
+export async function selectNotificationWord(
+    db: D1Database,
+    userId: number,
+    notificationType: 'light' | 'normal' | 'intensive' | 'custom'
+): Promise<{ word: SmartWord; reason: 'hard' | 'recent_wrong' | 'due' | 'new' | 'normal' } | null> {
+    const hard = await selectHardWord(db, userId);
+    if (hard) return { word: hard, reason: 'hard' };
+    const recent = await selectRecentWrongWord(db, userId);
+    if (recent) return { word: recent, reason: 'recent_wrong' };
+    const due = await selectDueWord(db, userId);
+    if (due) return { word: due, reason: 'due' };
+    const fresh = await selectNewLowSeenWord(db, userId);
+    if (fresh) return { word: fresh, reason: 'new' };
+    const normal = await selectAnyWord(db, userId);
+    return normal ? { word: normal, reason: notificationType === 'intensive' ? 'due' : 'normal' } : null;
 }
 
 export async function sendSmartNotification(env: Env, user: UserForNotification): Promise<boolean> {
@@ -123,7 +137,7 @@ export async function sendSmartNotification(env: Env, user: UserForNotification)
 
 export async function getNotificationEventWord(db: D1Database, eventId: number): Promise<SmartWord | null> {
     return db.prepare(
-        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar
+        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar, w.pronunciation_latin
          FROM notification_events ne
          INNER JOIN words w ON w.word_id = ne.word_id
          WHERE ne.id = ?`
@@ -237,7 +251,7 @@ async function countDueWords(db: D1Database, userId: number): Promise<number> {
 
 async function selectDueWord(db: D1Database, userId: number): Promise<SmartWord | null> {
     return db.prepare(
-        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar
+        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar, w.pronunciation_latin
          FROM words w
          INNER JOIN user_words uw ON uw.word_id = w.word_id
          WHERE uw.user_id = ?
@@ -255,25 +269,56 @@ async function selectDueWord(db: D1Database, userId: number): Promise<SmartWord 
 
 async function selectHardWord(db: D1Database, userId: number): Promise<SmartWord | null> {
     return db.prepare(
-        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar
+        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar, w.pronunciation_latin
          FROM words w
          INNER JOIN user_words uw ON uw.word_id = w.word_id
+         LEFT JOIN word_learning_stats wls ON wls.user_id = uw.user_id AND wls.word_id = uw.word_id
          WHERE uw.user_id = ?
-           AND (uw.wrong_count >= 2 OR uw.wrong_count > uw.correct_count OR uw.status = 'learning')
+           AND (COALESCE(wls.is_hard, 0) = 1 OR COALESCE(wls.difficulty_score, 0) >= 0.7 OR uw.wrong_count >= 2 OR uw.wrong_count > uw.correct_count OR uw.status = 'learning')
            AND NOT EXISTS (
                 SELECT 1 FROM notification_events ne
                 WHERE ne.user_id = ?
                   AND ne.word_id = w.word_id
                   AND ne.sent_at >= datetime('now', '-24 hours')
            )
-         ORDER BY uw.wrong_count DESC, RANDOM()
+         ORDER BY COALESCE(wls.difficulty_score, 0) DESC, uw.wrong_count DESC, RANDOM()
          LIMIT 1`
     ).bind(userId, userId).first<SmartWord>();
 }
 
+async function selectRecentWrongWord(db: D1Database, userId: number): Promise<SmartWord | null> {
+    return db.prepare(
+        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar, w.pronunciation_latin
+         FROM word_learning_stats wls
+         INNER JOIN words w ON w.word_id = wls.word_id
+         WHERE wls.user_id = ?
+           AND wls.last_wrong_at IS NOT NULL
+           AND NOT EXISTS (
+                SELECT 1 FROM notification_events ne
+                WHERE ne.user_id = ?
+                  AND ne.word_id = w.word_id
+                  AND ne.sent_at >= datetime('now', '-24 hours')
+           )
+         ORDER BY datetime(wls.last_wrong_at) DESC, wls.difficulty_score DESC
+         LIMIT 1`
+    ).bind(userId, userId).first<SmartWord>();
+}
+
+async function selectNewLowSeenWord(db: D1Database, userId: number): Promise<SmartWord | null> {
+    return db.prepare(
+        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar, w.pronunciation_latin
+         FROM words w
+         LEFT JOIN word_learning_stats wls ON wls.user_id = w.added_by AND wls.word_id = w.word_id
+         WHERE w.added_by = ?
+           AND COALESCE(wls.seen_count, 0) <= 1
+         ORDER BY w.created_at DESC, RANDOM()
+         LIMIT 1`
+    ).bind(userId).first<SmartWord>();
+}
+
 async function selectExampleWord(db: D1Database, userId: number): Promise<SmartWord | null> {
     return db.prepare(
-        `SELECT word_id, german, arabic, example, pronunciation_ar FROM words
+        `SELECT word_id, german, arabic, example, pronunciation_ar, pronunciation_latin FROM words
          WHERE added_by = ? AND example IS NOT NULL AND TRIM(example) != ''
          ORDER BY RANDOM() LIMIT 1`
     ).bind(userId).first<SmartWord>();
@@ -281,7 +326,7 @@ async function selectExampleWord(db: D1Database, userId: number): Promise<SmartW
 
 async function selectPictogramWord(db: D1Database, userId: number): Promise<SmartWord | null> {
     return db.prepare(
-        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar, wp.image_url
+        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar, w.pronunciation_latin, wp.image_url
          FROM words w
          INNER JOIN word_pictograms wp ON wp.word_id = w.word_id
          WHERE w.added_by = ?
@@ -290,12 +335,30 @@ async function selectPictogramWord(db: D1Database, userId: number): Promise<Smar
 }
 
 async function selectAnyWord(db: D1Database, userId: number): Promise<SmartWord | null> {
-    return db.prepare('SELECT word_id, german, arabic, example, pronunciation_ar FROM words WHERE added_by = ? ORDER BY RANDOM() LIMIT 1').bind(userId).first<SmartWord>();
+    return db.prepare('SELECT word_id, german, arabic, example, pronunciation_ar, pronunciation_latin FROM words WHERE added_by = ? ORDER BY RANDOM() LIMIT 1').bind(userId).first<SmartWord>();
 }
 
 async function createNotificationEvent(db: D1Database, userId: number, type: SmartNotificationType, wordId: number | null): Promise<number> {
-    const result = await db.prepare('INSERT INTO notification_events (user_id, type, word_id) VALUES (?, ?, ?)').bind(userId, type, wordId).run();
+    const result = await db.prepare(
+        'INSERT INTO notification_events (user_id, type, word_id, prompt_type, selected_reason, question_type) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(userId, type, wordId, type, inferSelectedReason(type), inferQuestionType(type)).run();
     return (result.meta as { last_row_id?: number })?.last_row_id ?? 0;
+}
+
+function inferSelectedReason(type: SmartNotificationType): string {
+    if (type === 'hard_word') return 'hard';
+    if (type === 'due_word') return 'due';
+    if (type === 'quick_recall') return 'new';
+    return 'normal';
+}
+
+function inferQuestionType(type: SmartNotificationType): string {
+    if (type === 'arabic_to_german') return 'reverse';
+    if (type === 'missing_letters') return 'missing_letters';
+    if (type === 'first_last_hint') return 'first_last';
+    if (type === 'context_example') return 'example';
+    if (type === 'pictogram_recall') return 'pictogram';
+    return 'meaning';
 }
 
 function withEventCallbacks(markup: SmartNotification['replyMarkup'], eventId: number, hasWord: boolean): SmartNotification['replyMarkup'] {

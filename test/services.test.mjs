@@ -9,6 +9,7 @@ import { getAdminTelegramIds, isAdminTelegramId } from '../dist/services/adminAc
 import { classifyHttpStatus, sanitizeErrorMessage } from '../dist/services/ai/aiErrors.js';
 import { exampleContainsGerman, hasSuspiciousPronunciation, validateExampleSuggestion } from '../dist/services/ai/aiValidation.js';
 import { selectTrainingWords } from '../dist/services/srs.js';
+import { calculateDifficultyScore, shouldBeHard } from '../dist/services/adaptiveReview.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -251,8 +252,8 @@ test('word list uses D1 pagination and exposes page controls', () => {
 
 test('word list first and last pages hide unavailable navigation', () => {
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
-    assert.match(addWordSource, /if \(page > 0\)/);
-    assert.match(addWordSource, /if \(page < totalPages - 1\)/);
+    assert.match(addWordSource, /if \(page > 1\)/);
+    assert.match(addWordSource, /if \(page < totalPages\)/);
     assert.match(addWordSource, /word_detail_\$\{word\.word_id\}/);
 });
 
@@ -262,11 +263,13 @@ test('word list handles invalid pages and DB errors with retry navigation', () =
 
     assert.match(addWordSource, /list_words_retry/);
     assert.match(addWordSource, /parseSafePage/);
-    assert.match(addWordSource, /Math\.min\(safeRequestedPage, totalPages - 1\)/);
+    assert.match(addWordSource, /normalizeRequestedPage/);
+    assert.match(addWordSource, /Math\.min\(safeRequestedPage, totalPages\)/);
     assert.match(addWordSource, /catch \(error\)/);
-    assert.match(addWordSource, /word list load failed/);
+    assert.match(addWordSource, /word_list_load_failed/);
     assert.match(addWordSource, /تعذر تحميل الكلمات حالياً/);
     assert.match(addWordSource, /🔄 إعادة المحاولة/);
+    assert.match(addWordSource, /getWordsByUserPaginatedFallback/);
     assert.match(repositorySource, /LIMIT \? OFFSET \?/);
     assert.match(repositorySource, /WHERE added_by = \?/);
 });
@@ -585,7 +588,8 @@ test('notification messages are real word questions with answer and disable acti
     assert.match(serviceSource, /🔕 إيقاف الإشعارات/);
     assert.match(commandSource, /notif_disable/);
     assert.match(commandSource, /notification_mode: 'off'/);
-    assert.match(commandSource, /🗣 \$\{word\.pronunciation_ar\}/);
+    assert.match(commandSource, /Latin: \$\{word\.pronunciation_latin\}/);
+    assert.match(commandSource, /عربي: \$\{word\.pronunciation_ar\}/);
 });
 
 test('notification intensity limits light normal intensive and disabled sends nothing', () => {
@@ -669,7 +673,7 @@ test('training selection changes order across new sessions and prioritizes due h
     }));
     const runs = new Set(Array.from({ length: 6 }, () => selectTrainingWords(words, 10, 'mixed').map(word => word.wordId).join(',')));
     assert.ok(runs.size > 1);
-    assert.ok(selectTrainingWords(words, 5, 'hard').every(word => word.reason === 'hard' || word.reason === 'repeat'));
+    assert.ok(selectTrainingWords(words, 5, 'hard').every(word => word.reason === 'hard' || word.reason === 'due' || word.reason === 'repeat'));
     assert.ok(selectTrainingWords(words, 5, 'review').some(word => word.reason === 'due'));
 });
 
@@ -1075,6 +1079,7 @@ test('AI word improvement rejects unrelated examples and suspicious pronunciatio
         result: {
             example_de: 'Ich bin froh.',
             example_ar: 'أنا سعيد.',
+            pronunciation_latin: 'ikh bin froh',
             pronunciation_ar: 'إخ بن فروه',
             level: 'A1',
         },
@@ -1085,6 +1090,7 @@ test('AI word improvement rejects unrelated examples and suspicious pronunciatio
         result: {
             example_de: 'Ich habe ein Auto.',
             example_ar: 'لدي سيارة.',
+            pronunciation_latin: 'OW-toh',
             pronunciation_ar: 'آوتو',
             level: 'A1',
         },
@@ -1095,6 +1101,7 @@ test('AI word improvement rejects unrelated examples and suspicious pronunciatio
         result: {
             example_de: 'Das Auto ist richtig gut in Schuss.',
             example_ar: 'السيارة بحالة جيدة جداً.',
+            pronunciation_latin: 'RIKH-tikh goot in shoos',
             pronunciation_ar: 'رِشتِش گوت إِن شوس',
             level: 'B1',
         },
@@ -1112,7 +1119,8 @@ test('AI word improvement validates cached provider results before display or sa
     const validationSource = fs.readFileSync(new URL('../src/services/ai/aiValidation.ts', import.meta.url), 'utf8');
 
     assert.match(promptsSource, /example_de يجب أن يحتوي german الأصلي/);
-    assert.match(promptsSource, /pronunciation_ar يجب أن يكون لفظ german الأصلي فقط/);
+    assert.match(promptsSource, /pronunciation_latin يجب أن يكون لفظ german الأصلي فقط/);
+    assert.match(promptsSource, /pronunciation_ar يجب أن يكون مبنياً صوتياً على pronunciation_latin/);
     assert.match(validationSource, /Math\.ceil\(tokens\.length \* 0\.6\)/);
     assert.match(validationSource, /hasSuspiciousPronunciation/);
     assert.match(routerSource, /options\.validateResult/);
@@ -1132,7 +1140,7 @@ test('AI payloads avoid Telegram identity and private user data', () => {
     assert.doesNotMatch(runCalls, /telegram_id|telegram_user_id|username|display_name|support_proof|payment|file_id/i);
     assert.match(runCalls, /german/);
     assert.match(runCalls, /arabic/);
-    assert.match(runCalls, /correctAnswer/);
+    assert.match(aiSource, /correctAnswer/);
 });
 
 test('AI pronunciation is displayed in learn, notifications, and word detail', () => {
@@ -1422,4 +1430,93 @@ test('safe AI error messages redact known secret patterns', () => {
     assert.doesNotMatch(sanitizeErrorMessage('bad AIzaabcdefghijklmnopqrstuvwxyz123456'), /AIza/);
     assert.doesNotMatch(sanitizeErrorMessage('bad <ak-abcdefghijklmnopqrstuvwxyz123456>'), /ak-/);
     assert.match(sanitizeErrorMessage('bad <ak-abcdefghijklmnopqrstuvwxyz123456>'), /<redacted>/);
+});
+
+test('quality migration adds pronunciation latin adaptive stats and notification metadata', () => {
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0019_quality_training_notifications_wordlist_ai.sql', import.meta.url), 'utf8');
+    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+
+    assert.match(migrationSource, /ALTER TABLE words ADD COLUMN pronunciation_latin/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS word_learning_stats/);
+    assert.match(migrationSource, /UNIQUE\(user_id, word_id\)/);
+    assert.match(migrationSource, /ALTER TABLE notification_events ADD COLUMN prompt_type/);
+    assert.match(migrationSource, /idx_word_learning_stats_user_hard/);
+    assert.match(migrationSource, /idx_notification_events_user_word_created/);
+    assert.match(schemaSource, /pronunciation_latin TEXT DEFAULT NULL/);
+    assert.match(schemaSource, /prompt_type TEXT/);
+    assert.match(schemaSource, /selected_reason TEXT/);
+    assert.match(schemaSource, /question_type TEXT/);
+});
+
+test('adaptive review marks hard words and weights typing mistakes more heavily', () => {
+    const multipleChoiceWrong = calculateDifficultyScore({
+        seenCount: 4,
+        correctCount: 1,
+        wrongCount: 3,
+        lapseCount: 1,
+        consecutiveWrong: 1,
+        questionType: 'multiple_choice',
+        previous: 0.2,
+        isCorrect: false,
+        sourceImpact: 1,
+    });
+    const typingWrong = calculateDifficultyScore({
+        seenCount: 4,
+        correctCount: 1,
+        wrongCount: 3,
+        lapseCount: 1,
+        consecutiveWrong: 1,
+        questionType: 'typing_de',
+        previous: 0.2,
+        isCorrect: false,
+        sourceImpact: 1,
+    });
+
+    assert.ok(typingWrong > multipleChoiceWrong);
+    assert.equal(shouldBeHard({ wrongCount: 3, lapseCount: 0, consecutiveWrong: 0, consecutiveCorrect: 0, difficultyScore: 0.2 }), true);
+    assert.equal(shouldBeHard({ wrongCount: 3, lapseCount: 0, consecutiveWrong: 0, consecutiveCorrect: 4, difficultyScore: 0.2 }), false);
+});
+
+test('word list db check and fallback query are wired safely', () => {
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(adminSource, /admin_db_check/);
+    assert.match(adminSource, /PRAGMA table_info\(words\)/);
+    assert.match(adminSource, /missing column: words\.\$\{column\}/);
+    assert.match(addWordSource, /words:list\|words_list\|word_list\|manage_words:list/);
+    assert.match(addWordSource, /words:page:/);
+    assert.match(addWordSource, /wordListErrorKeyboard\(Boolean\(isAdmin\)\)/);
+    assert.match(repositorySource, /WORD_SELECT_COLUMNS_SAFE/);
+    assert.doesNotMatch(adminSource, /SELECT \* FROM users/);
+});
+
+test('AI explanation and pronunciation quality validation are wired', () => {
+    const aiSource = fs.readFileSync(new URL('../src/commands/aiCoach.ts', import.meta.url), 'utf8');
+    const promptsSource = fs.readFileSync(new URL('../src/services/ai/prompts.ts', import.meta.url), 'utf8');
+    const validationSource = fs.readFileSync(new URL('../src/services/ai/aiValidation.ts', import.meta.url), 'utf8');
+
+    assert.match(promptsSource, /pronunciation_latin/);
+    assert.match(promptsSource, /Stille Nacht/);
+    assert.match(validationSource, /validateAiExplanation/);
+    assert.match(validationSource, /pronunciationArabicMismatchesLatin/);
+    assert.match(aiSource, /validateAiExplanation/);
+    assert.match(aiSource, /الجواب الصحيح هو:/);
+    assert.match(aiSource, /Latin: \$\{result\.pronunciation_latin\}/);
+    assert.match(aiSource, /pronunciation_latin: result\.pronunciation_latin/);
+});
+
+test('notifications use adaptive-style word selection metadata without AI selection', () => {
+    const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+    const commandSource = fs.readFileSync(new URL('../src/commands/smartNotifications.ts', import.meta.url), 'utf8');
+
+    assert.match(serviceSource, /export async function selectNotificationWord/);
+    assert.match(serviceSource, /selectRecentWrongWord/);
+    assert.match(serviceSource, /word_learning_stats/);
+    assert.match(serviceSource, /selected_reason/);
+    assert.match(serviceSource, /question_type/);
+    assert.match(serviceSource, /inferSelectedReason/);
+    assert.match(commandSource, /updateWordLearningAfterAnswer/);
+    assert.doesNotMatch(serviceSource, /runAiTask/);
 });

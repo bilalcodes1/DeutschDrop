@@ -13,6 +13,7 @@ import {
     getWordById,
     getWordsByUser,
     getWordsByUserPaginated,
+    getWordsByUserPaginatedFallback,
     searchWordsByUser,
     searchDuplicateWordForUser,
     updateWordForUser,
@@ -174,7 +175,8 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         }
     });
 
-    bot.callbackQuery('list_words', async (ctx) => {
+    bot.callbackQuery(/^(list_words|words:list|words_list|word_list|manage_words:list)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
         const telegramId = ctx.from?.id ?? 0;
         const user = await getUserByTelegramId(ctx.db, telegramId);
         if (!user) {
@@ -183,29 +185,36 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         }
 
         await deleteBotSession(ctx.db, user.user_id, 'word_search');
-        await showUserWords(ctx, user.user_id, 0);
-        await ctx.answerCallbackQuery();
+        await showUserWords(ctx, user.user_id, 1, ctx.callbackQuery?.data);
     });
 
     bot.callbackQuery('list_words_retry', async (ctx) => {
+        await ctx.answerCallbackQuery();
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) {
             await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
             return;
         }
-        await showUserWords(ctx, user.user_id, 0);
-        await ctx.answerCallbackQuery();
+        await showUserWords(ctx, user.user_id, 1, ctx.callbackQuery?.data);
     });
 
     bot.callbackQuery(/^list_words_(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) {
             await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
             return;
         }
         await deleteBotSession(ctx.db, user.user_id, 'word_search');
-        await showUserWords(ctx, user.user_id, parseSafePage(ctx.match[1]));
+        await showUserWords(ctx, user.user_id, parseSafePage(ctx.match[1]) + 1, ctx.callbackQuery?.data);
+    });
+
+    bot.callbackQuery(/^words:page:(\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return;
+        await deleteBotSession(ctx.db, user.user_id, 'word_search');
+        await showUserWords(ctx, user.user_id, parseSafePage(ctx.match[1]), ctx.callbackQuery?.data);
     });
 
     bot.callbackQuery('word_search_start', async (ctx) => {
@@ -517,10 +526,10 @@ async function addWordInline(ctx: BotContext, german: string, arabic: string): P
     }
 }
 
-async function showUserWords(ctx: BotContext, userId: number, page: number): Promise<void> {
-    const safeRequestedPage = Number.isFinite(page) && page >= 0 ? Math.floor(page) : 0;
+async function showUserWords(ctx: BotContext, userId: number, page: number | undefined, callbackData?: string): Promise<void> {
+    const safeRequestedPage = normalizeRequestedPage(page);
     try {
-        const totalWords = await countWordsByUser(ctx.db, userId);
+        const totalWords = await loadWordCountWithLogging(ctx, userId, safeRequestedPage, callbackData);
         if (totalWords === 0) {
             await replaceWithText(
                 ctx,
@@ -534,17 +543,19 @@ async function showUserWords(ctx: BotContext, userId: number, page: number): Pro
         }
 
         const totalPages = Math.max(1, Math.ceil(totalWords / WORDS_PAGE_SIZE));
-        const safePage = Math.min(safeRequestedPage, totalPages - 1);
-        const visible = await getWordsByUserPaginated(ctx.db, userId, WORDS_PAGE_SIZE, safePage * WORDS_PAGE_SIZE);
-        await replaceWithText(ctx, formatWordsPage('📋 *كلماتي*', visible, safePage, totalPages, totalWords), wordsPageKeyboard(visible, safePage, totalPages, false), 'Markdown');
+        const safePage = Math.min(safeRequestedPage, totalPages);
+        const offset = (safePage - 1) * WORDS_PAGE_SIZE;
+        const visible = await loadWordsPageWithFallback(ctx, userId, WORDS_PAGE_SIZE, offset, safePage, callbackData);
+        await replaceWithText(ctx, formatWordsPage('📋 كلماتي', visible, safePage, totalPages, totalWords), wordsPageKeyboard(visible, safePage, totalPages, false));
     } catch (error) {
-        console.warn('word list load failed', { userId, page: safeRequestedPage, errorType: (error as Error).name ?? 'unknown' });
+        logWordListFailure({ userId, page: safeRequestedPage, limit: WORDS_PAGE_SIZE, callbackData, step: 'render', error });
+        const isAdmin = ctx.env.ADMIN_TELEGRAM_IDS?.split(',').map(id => id.trim()).includes(String(ctx.from?.id));
+        const errorText = error instanceof Error ? error.message.slice(0, 160) : 'unknown';
         await replaceWithText(
             ctx,
-            'تعذر تحميل الكلمات حالياً. جرّب مرة ثانية.',
-            new InlineKeyboard()
-                .text('🔄 إعادة المحاولة', 'list_words_retry').row()
-                .text('🏠 الرئيسية', 'menu_main')
+            'تعذر تحميل الكلمات حالياً.' +
+            (isAdmin ? `\n\nسبب تقني مختصر:\n${errorText}` : ''),
+            wordListErrorKeyboard(Boolean(isAdmin))
         );
     }
 }
@@ -559,14 +570,14 @@ async function showSearchWords(ctx: BotContext, userId: number, query: string, p
 
     const text = totalWords === 0
         ? `🔍 *نتائج البحث*\n\nلا توجد نتائج لـ: ${query}`
-        : formatWordsPage(`🔍 *نتائج البحث: ${query}*`, visible, safePage, totalPages, totalWords);
-    await replaceWithText(ctx, text, wordsPageKeyboard(visible, safePage, totalPages, true), 'Markdown');
+        : formatWordsPage(`🔍 نتائج البحث: ${query}`, visible, safePage + 1, totalPages, totalWords);
+    await replaceWithText(ctx, text, wordsPageKeyboard(visible, safePage + 1, totalPages, true));
 }
 
 function formatWordsPage(title: string, words: Array<{ german: string; arabic: string }>, page: number, totalPages: number, totalWords: number): string {
     return `${title}\n\n` +
-        `الصفحة: *${page + 1} / ${totalPages}*\n` +
-        `عدد الكلمات: *${totalWords}*\n\n` +
+        `عدد الكلمات: ${totalWords}\n` +
+        `الصفحة: ${page}/${totalPages}\n\n` +
         words.map((word, index) =>
             `${index + 1}. 🇩🇪 ${word.german}\n   🇮🇶 ${word.arabic}`
         ).join('\n\n');
@@ -578,16 +589,19 @@ function wordsPageKeyboard(words: Array<{ word_id: number; german: string; arabi
         keyboard.text(`${index + 1}. ${word.german} — ${word.arabic}`, `word_detail_${word.word_id}`).row();
     });
 
-    if (page > 0) {
-        keyboard.text('⬅️ السابق', search ? `word_search_page_${page - 1}` : `list_words_${page - 1}`);
+    if (page > 1) {
+        keyboard.text('⬅️ السابق', search ? `word_search_page_${page - 2}` : `words:page:${page - 1}`);
     }
-    if (page < totalPages - 1) {
-        keyboard.text('التالي ➡️', search ? `word_search_page_${page + 1}` : `list_words_${page + 1}`);
+    if (page < totalPages) {
+        keyboard.text('التالي ➡️', search ? `word_search_page_${page}` : `words:page:${page + 1}`);
     }
-    if (page > 0 || page < totalPages - 1) keyboard.row();
+    if (page > 1 || page < totalPages) keyboard.row();
     keyboard.text('🔍 بحث', 'word_search_start')
-        .text('☑️ تحديد', `select_words_${page}`).row()
-        .text('⬅️ رجوع', 'menu_words').text('🏠 الرئيسية', 'menu_main');
+        .text('☑️ تحديد', `select_words_${page - 1}`).row()
+        .text('➕ إضافة كلمة', 'add_word')
+        .text('📤 رفع CSV', 'upload_csv').row()
+        .text('⬅️ رجوع', 'menu_words')
+        .text('🏠 الرئيسية', 'menu_main');
     return keyboard;
 }
 
@@ -638,6 +652,58 @@ function selectionActionsKeyboard(): InlineKeyboard {
         .text('☑️ تحديد', 'select_words_0').row()
         .text('⬅️ رجوع', 'menu_words')
         .text('🏠 الرئيسية', 'menu_main');
+}
+
+function normalizeRequestedPage(page: number | undefined): number {
+    const value = Number(page);
+    if (!Number.isFinite(value) || Number.isNaN(value)) return 1;
+    return Math.max(1, Math.floor(value));
+}
+
+async function loadWordCountWithLogging(ctx: BotContext, userId: number, page: number, callbackData?: string): Promise<number> {
+    try {
+        return await countWordsByUser(ctx.db, userId);
+    } catch (error) {
+        logWordListFailure({ userId, page, limit: WORDS_PAGE_SIZE, callbackData, step: 'count', error });
+        throw error;
+    }
+}
+
+async function loadWordsPageWithFallback(ctx: BotContext, userId: number, limit: number, offset: number, page: number, callbackData?: string) {
+    try {
+        return await getWordsByUserPaginated(ctx.db, userId, limit, offset);
+    } catch (error) {
+        logWordListFailure({ userId, page, limit, callbackData, step: 'query', error });
+        return getWordsByUserPaginatedFallback(ctx.db, userId, limit, offset);
+    }
+}
+
+function logWordListFailure(input: {
+    userId: number;
+    page: number;
+    limit: number;
+    callbackData?: string;
+    step: 'count' | 'query' | 'render';
+    error: unknown;
+}): void {
+    const error = input.error instanceof Error ? input.error : new Error('unknown');
+    console.warn('word_list_load_failed', {
+        userId: input.userId,
+        page: input.page,
+        limit: input.limit,
+        callbackData: input.callbackData,
+        step: input.step,
+        errorName: error.name,
+        errorMessage: error.message.slice(0, 200),
+    });
+}
+
+function wordListErrorKeyboard(isAdmin: boolean): InlineKeyboard {
+    const keyboard = new InlineKeyboard()
+        .text('🔄 إعادة المحاولة', 'list_words_retry').row()
+        .text('🏠 الرئيسية', 'menu_main');
+    if (isAdmin) keyboard.row().text('🛠 فحص قاعدة البيانات', 'admin_db_check');
+    return keyboard;
 }
 
 function parseSafePage(value: string | undefined): number {

@@ -103,12 +103,15 @@ export interface TrainingWordCandidate {
     wrongCount: number;
     correctCount: number;
     nextReview?: string | null;
+    difficultyScore?: number;
+    isHard?: boolean;
+    consecutiveWrong?: number;
 }
 
 export interface SelectedTrainingWord {
     wordId: number;
     status: string;
-    reason: 'due' | 'hard' | 'wrong' | 'new' | 'exam' | 'fallback' | 'repeat';
+    reason: 'due' | 'hard' | 'recent_wrong' | 'wrong' | 'new' | 'normal' | 'exam' | 'fallback' | 'repeat';
 }
 
 export function selectTrainingWords(
@@ -133,22 +136,26 @@ export function selectTrainingWords(
 
     const due = words.filter(w => w.nextReview && new Date(w.nextReview).getTime() <= now);
     const hard = words.filter(isHardWord);
+    const recentMistakes = words.filter(w => (w.consecutiveWrong ?? 0) > 0 || w.wrongCount > 0);
     const wrong = words.filter(w => w.wrongCount > 0 && !hard.some(h => h.wordId === w.wordId));
     const fresh = words.filter(w => w.status === 'new' || (w.correctCount === 0 && w.wrongCount === 0));
+    const normal = words.filter(w => !hard.some(h => h.wordId === w.wordId) && !fresh.some(f => f.wordId === w.wordId));
     const fallback = shuffle(words);
 
     if (mode === 'hard') {
-        addBucket(hard, 'hard', count);
+        addBucket(hard, 'hard', Math.ceil(count * 0.8));
+        addBucket(due.concat(recentMistakes), 'due', Math.ceil(count * 0.2));
     } else if (mode === 'exam') {
         addBucket([...words].sort((a, b) => (b.wrongCount * 2 - b.correctCount) - (a.wrongCount * 2 - a.correctCount)), 'exam', count);
     } else if (mode === 'review' || mode === 'plan') {
-        addBucket(due, 'due', Math.ceil(count * 0.7));
-        addBucket(hard, 'hard', Math.ceil(count * 0.3));
-    } else {
-        addBucket(due, 'due', Math.ceil(count * 0.35));
+        addBucket(due, 'due', Math.ceil(count * 0.6));
         addBucket(hard, 'hard', Math.ceil(count * 0.25));
-        addBucket(wrong, 'wrong', Math.ceil(count * 0.2));
-        addBucket(fresh, 'new', Math.ceil(count * 0.25));
+        addBucket(normal, 'normal', Math.ceil(count * 0.15));
+    } else {
+        addBucket(hard.concat(recentMistakes), 'hard', Math.ceil(count * 0.35));
+        addBucket(due, 'due', Math.ceil(count * 0.25));
+        addBucket(fresh, 'new', Math.ceil(count * 0.2));
+        addBucket(normal.concat(wrong), 'normal', Math.ceil(count * 0.2));
     }
 
     addBucket(fallback, 'fallback', count);
@@ -168,8 +175,13 @@ export function selectTrainingWords(
     return shuffle(result).slice(0, count);
 }
 
-export function isHardWord(word: { wrongCount: number; correctCount: number; status: string }): boolean {
-    return word.wrongCount >= 2 || word.wrongCount > word.correctCount || word.status === 'learning';
+export function isHardWord(word: { wrongCount: number; correctCount: number; status: string; difficultyScore?: number; isHard?: boolean; consecutiveWrong?: number }): boolean {
+    return Boolean(word.isHard) ||
+        (word.difficultyScore ?? 0) >= 0.7 ||
+        (word.consecutiveWrong ?? 0) >= 2 ||
+        word.wrongCount >= 2 ||
+        word.wrongCount > word.correctCount ||
+        word.status === 'learning';
 }
 
 function shuffle<T>(array: T[]): T[] {

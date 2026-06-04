@@ -59,9 +59,11 @@ CREATE TABLE IF NOT EXISTS words (
     example TEXT,
     example_ar TEXT DEFAULT NULL,
     pronunciation_ar TEXT DEFAULT NULL,
+    pronunciation_latin TEXT DEFAULT NULL,
     level TEXT DEFAULT NULL,
     added_by INTEGER NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME,
     FOREIGN KEY (added_by) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
@@ -403,6 +405,9 @@ CREATE TABLE IF NOT EXISTS notification_events (
     user_id INTEGER NOT NULL,
     type TEXT NOT NULL,
     word_id INTEGER,
+    prompt_type TEXT,
+    selected_reason TEXT,
+    question_type TEXT,
     sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     responded_at DATETIME,
     response TEXT,

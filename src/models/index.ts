@@ -78,9 +78,11 @@ export interface Word {
     example: string | null;
     example_ar: string | null;
     pronunciation_ar: string | null;
+    pronunciation_latin: string | null;
     level: string | null;
     added_by: number;
     created_at: string;
+    updated_at?: string | null;
 }
 
 export interface WordAudio {

@@ -8,6 +8,7 @@ import {
     markForgottenForTrainingPriority,
     recordNotificationResponse,
 } from '../services/smartNotificationService';
+import { updateWordLearningAfterAnswer } from '../services/adaptiveReview';
 import { replaceWithText } from './wordPanel';
 
 export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
@@ -25,7 +26,8 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
         await replaceWithText(
             ctx,
             `🇩🇪 ${word.german}\n🇮🇶 ${word.arabic}` +
-            (word.pronunciation_ar ? `\n🗣 ${word.pronunciation_ar}` : '') +
+            (word.pronunciation_latin ? `\n🗣 Latin: ${word.pronunciation_latin}` : '') +
+            (word.pronunciation_ar ? `\n🗣 عربي: ${word.pronunciation_ar}` : '') +
             (word.example ? `\n\nمثال:\n${word.example}` : '') +
             `\n\nهل كنت تعرفها؟`,
             new InlineKeyboard()
@@ -40,7 +42,20 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
         const eventId = Number(ctx.match[1]);
         await recordNotificationResponse(ctx.db, eventId, 'known');
         const userId = await getEventUserId(ctx, eventId);
-        if (userId) await addXp(ctx.db, userId, 1, 'notification_recall_known');
+        const word = await getNotificationEventWord(ctx.db, eventId);
+        if (userId) {
+            await addXp(ctx.db, userId, 1, 'notification_recall_known');
+            if (word) {
+                await updateWordLearningAfterAnswer(ctx.db, {
+                    userId,
+                    wordId: word.word_id,
+                    questionType: 'notification_meaning',
+                    isCorrect: true,
+                    grade: 'correct',
+                    source: 'notification',
+                });
+            }
+        }
         await ctx.answerCallbackQuery('ممتاز');
         await replaceWithText(ctx, 'ممتاز ✅ ثبتها بمراجعة قصيرة: /learn', notificationDoneKeyboard());
     });
@@ -48,6 +63,18 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery(/^notif_forgot_(\d+)$/, async (ctx) => {
         const eventId = Number(ctx.match[1]);
         await recordNotificationResponse(ctx.db, eventId, 'forgotten');
+        const word = await getNotificationEventWord(ctx.db, eventId);
+        const userId = await getEventUserId(ctx, eventId);
+        if (userId && word) {
+            await updateWordLearningAfterAnswer(ctx.db, {
+                userId,
+                wordId: word.word_id,
+                questionType: 'notification_meaning',
+                isCorrect: false,
+                grade: 'wrong',
+                source: 'notification',
+            });
+        }
         await markForgottenForTrainingPriority(ctx.db, eventId);
         await ctx.answerCallbackQuery('تم تسجيلها');
         await replaceWithText(ctx, 'تمام، هاي فرصة ذهبية للتثبيت. راجعها الآن: /learn', notificationDoneKeyboard());
