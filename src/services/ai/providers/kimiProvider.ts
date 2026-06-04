@@ -1,6 +1,7 @@
 import type { Env } from '../../../models';
 import type { AiProvider } from '../aiTypes';
-import { classifyHttpStatus } from '../aiErrors';
+import { classifyHttpStatus, readSafeErrorMessage } from '../aiErrors';
+import { delay, fetchWithTimeout, retryDelayMs } from './providerUtils';
 
 export const kimiProvider: AiProvider = {
     name: 'kimi',
@@ -9,23 +10,14 @@ export const kimiProvider: AiProvider = {
         if (!key) return { ok: false, errorType: 'SKIPPED_NO_KEY', model: getKimiModel(env) };
         const model = getKimiModel(env);
         try {
-            const response = await fetch('https://api.moonshot.ai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${key}`,
-                },
-                body: JSON.stringify({
-                    model,
-                    temperature: 0.2,
-                    max_tokens: options.maxTokens ?? 256,
-                    messages: [{ role: 'user', content: prompt }],
-                    ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
-                }),
-            });
+            let response = await requestKimi(key, model, prompt, options.maxTokens);
+            if (response.status === 429) {
+                await delay(retryDelayMs());
+                response = await requestKimi(key, model, prompt, options.maxTokens);
+            }
             if (!response.ok) {
-                await readSafeError(response);
-                return { ok: false, errorType: classifyHttpStatus(response.status), status: response.status, model };
+                const safeMessage = await readSafeErrorMessage(response);
+                return { ok: false, errorType: classifyHttpStatus(response.status), status: response.status, safeMessage, model };
             }
             const json = await response.json() as unknown;
             const text = extractOpenAiCompatibleText(json);
@@ -36,6 +28,25 @@ export const kimiProvider: AiProvider = {
         }
     },
 };
+
+function requestKimi(key: string, model: string, prompt: string, maxTokens?: number): Promise<Response> {
+    return fetchWithTimeout('https://api.moonshot.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+            model,
+            messages: [
+                { role: 'system', content: 'You are a concise German learning assistant. Follow the user instruction exactly.' },
+                { role: 'user', content: prompt },
+            ],
+            temperature: 0.2,
+            max_tokens: maxTokens ?? 300,
+        }),
+    });
+}
 
 export function getKimiModel(env: Env): string {
     return env.KIMI_MODEL || 'moonshot-v1-8k';
@@ -48,12 +59,4 @@ function firstKey(value?: string): string | null {
 export function extractOpenAiCompatibleText(json: unknown): string {
     const value = json as { choices?: Array<{ message?: { content?: string } }> };
     return value.choices?.[0]?.message?.content ?? '';
-}
-
-async function readSafeError(response: Response): Promise<void> {
-    try {
-        await response.text();
-    } catch {
-        // Keep diagnostics classified only.
-    }
 }

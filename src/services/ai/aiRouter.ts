@@ -82,7 +82,7 @@ export async function runAiTask<T>(
 }
 
 export function orderedProviders(env: Env): AiProvider[] {
-    const order = (env.AI_PROVIDER_ORDER || 'gemini,kimi,groqCloud')
+    const order = (env.AI_PROVIDER_ORDER || 'groqCloud,gemini,kimi')
         .split(',')
         .map(name => name.trim())
         .filter((name): name is AiProviderName => name === 'gemini' || name === 'kimi' || name === 'groqCloud');

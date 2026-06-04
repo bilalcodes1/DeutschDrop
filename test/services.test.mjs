@@ -760,7 +760,7 @@ test('AI rate limit and GroqCloud bad request diagnostics are safe', () => {
     assert.match(debugSource, /safe_message/);
     assert.match(errorsSource, /slice\(0, 200\)/);
     assert.match(errorsSource, /Bearer \[redacted\]/);
-    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "gemini,kimi,groqCloud"/);
+    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "groqCloud,gemini,kimi"/);
     assert.match(wranglerSource, /GROK_MODEL = "llama-3\.1-8b-instant"/);
 });
 
@@ -771,11 +771,38 @@ test('AI configuration uses GroqCloud endpoint only', () => {
     const kimiSource = fs.readFileSync(new URL('../src/services/ai/providers/kimiProvider.ts', import.meta.url), 'utf8');
     const allAiSource = routerSource + debugSource + groqCloudSource;
 
-    assert.match(routerSource, /gemini,kimi,groqCloud/);
+    assert.match(routerSource, /groqCloud,gemini,kimi/);
     assert.match(routerSource, /name === 'groqCloud'/);
     assert.match(groqCloudSource, /api\.groq\.com\/openai\/v1\/chat\/completions/);
     assert.match(groqCloudSource, /extractOpenAiCompatibleText/);
     assert.match(kimiSource, /choices\?\.\[0\]\?\.message\?\.content/);
     assert.match(debugSource, /GroqCloud/);
     assert.doesNotMatch(allAiSource, /api\.x\.ai/);
+});
+
+test('Kimi rate limit debug skips second test and retries once', () => {
+    const kimiSource = fs.readFileSync(new URL('../src/services/ai/providers/kimiProvider.ts', import.meta.url), 'utf8');
+    const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
+    const utilsSource = fs.readFileSync(new URL('../src/services/ai/providers/providerUtils.ts', import.meta.url), 'utf8');
+
+    assert.match(kimiSource, /https:\/\/api\.moonshot\.ai\/v1\/chat\/completions/);
+    assert.match(kimiSource, /Authorization: `Bearer \$\{key\}`/);
+    assert.match(kimiSource, /role: 'system'/);
+    assert.match(kimiSource, /role: 'user', content: prompt/);
+    assert.match(kimiSource, /max_tokens: maxTokens \?\? 300/);
+    assert.match(kimiSource, /if \(response\.status === 429\)/);
+    assert.equal((kimiSource.match(/requestKimi\(key, model, prompt, options\.maxTokens\)/g) ?? []).length, 2);
+    assert.match(debugSource, /SKIPPED_AFTER_RATE_LIMIT/);
+    assert.match(debugSource, /raw\.errorType === 'RATE_LIMIT'/);
+    assert.match(utilsSource, /timeoutMs = 10000/);
+});
+
+test('AI router starts with GroqCloud and can avoid Kimi when GroqCloud succeeds', () => {
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+
+    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "groqCloud,gemini,kimi"/);
+    assert.match(routerSource, /groqCloud: groqCloudProvider/);
+    assert.match(routerSource, /return \{ status: 'ok', result, provider: provider\.name/);
+    assert.ok(routerSource.indexOf("return { status: 'ok', result, provider: provider.name") < routerSource.indexOf("return { status: 'AI_UNAVAILABLE' }"));
 });

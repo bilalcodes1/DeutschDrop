@@ -12,7 +12,7 @@ interface ProviderDebugResult {
     model: string;
     endpoint_type: 'gemini_generateContent' | 'openai_chat_completions' | 'groq_openai_compatible';
     raw_text_test_status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY';
-    json_test_status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY';
+    json_test_status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY' | 'SKIPPED_AFTER_RATE_LIMIT';
     error_type?: AiErrorType;
     status_code?: number;
     safe_message?: string;
@@ -40,6 +40,7 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
         }
 
         const raw = await provider.run(env, 'Reply with OK', { jsonMode: false, maxTokens: 32 });
+        const skipJsonAfterRateLimit = raw.errorType === 'RATE_LIMIT';
         const json = raw.ok
             ? await provider.run(env, debugPrompt(provider.name), { jsonMode: true, maxTokens: 128 })
             : null;
@@ -53,7 +54,7 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
             model: raw.model || json?.model || getProviderModel(env, provider.name),
             endpoint_type: endpointType(provider.name),
             raw_text_test_status: raw.ok && (raw.text ?? '').trim().includes('OK') ? 'OK' : 'FAILED',
-            json_test_status: jsonOk ? 'OK' : 'FAILED',
+            json_test_status: skipJsonAfterRateLimit ? 'SKIPPED_AFTER_RATE_LIMIT' : jsonOk ? 'OK' : 'FAILED',
             ...(error.error_type ? { error_type: error.error_type } : {}),
             ...(error.status_code ? { status_code: error.status_code } : {}),
             ...(error.safe_message ? { safe_message: error.safe_message } : {}),
@@ -62,7 +63,7 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
 
     return {
         aiEnabled: env.AI_ENABLED === 'true',
-        providerOrder: env.AI_PROVIDER_ORDER || 'gemini,kimi,groqCloud',
+        providerOrder: env.AI_PROVIDER_ORDER || 'groqCloud,gemini,kimi',
         providers,
     };
 }

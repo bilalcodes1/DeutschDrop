@@ -1,6 +1,7 @@
 import type { Env } from '../../../models';
 import type { AiProvider } from '../aiTypes';
 import { classifyHttpStatus } from '../aiErrors';
+import { fetchWithTimeout } from './providerUtils';
 
 export const geminiProvider: AiProvider = {
     name: 'gemini',
@@ -9,7 +10,7 @@ export const geminiProvider: AiProvider = {
         if (!key) return { ok: false, errorType: 'SKIPPED_NO_KEY', model: getGeminiModel(env) };
         const model = getGeminiModel(env);
         try {
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+            const response = await fetchWithTimeout(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

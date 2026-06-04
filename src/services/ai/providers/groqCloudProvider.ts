@@ -2,6 +2,7 @@ import type { Env } from '../../../models';
 import type { AiProvider } from '../aiTypes';
 import { classifyHttpStatus, readSafeErrorMessage } from '../aiErrors';
 import { extractOpenAiCompatibleText } from './kimiProvider';
+import { fetchWithTimeout } from './providerUtils';
 
 export const groqCloudProvider: AiProvider = {
     name: 'groqCloud',
@@ -10,7 +11,7 @@ export const groqCloudProvider: AiProvider = {
         if (!key) return { ok: false, errorType: 'SKIPPED_NO_KEY', model: getGroqCloudModel(env) };
         const model = getGroqCloudModel(env);
         try {
-            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            const response = await fetchWithTimeout('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
