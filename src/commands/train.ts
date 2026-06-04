@@ -123,7 +123,11 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
         if (!user || ctx.message.text.startsWith('/')) return next();
         const session = await getBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train');
         const current = session?.data.questions[session.data.currentIndex];
-        if (!session || !current || current.options.length > 0) return next();
+        if (!session || !current) return next();
+        if (current.options.length > 0) {
+            await ctx.reply('🏋️ عندك تدريب فعال. استخدم أزرار الإجابة الحالية أو اضغط 🏠 الرئيسية لإنهاء الجلسة.');
+            return;
+        }
         await handleTypedTrainingAnswer(ctx, current, ctx.message.text);
     });
 }
@@ -180,6 +184,7 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
         return buildTrainingQuestion(words, w, mode, i);
     });
 
+    await clearConflictingTextSessions(ctx, user.user_id);
     await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', {
         questions,
         currentIndex: 0,
@@ -189,6 +194,12 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
     });
 
     await showTrainingQuestion(ctx, user.user_id);
+}
+
+async function clearConflictingTextSessions(ctx: BotContext, userId: number): Promise<void> {
+    await deleteBotSession(ctx.db, userId, 'word_edit');
+    await deleteBotSession(ctx.db, userId, 'add_word');
+    await deleteBotSession(ctx.db, userId, 'word_search');
 }
 
 async function startReviewPlanTraining(ctx: BotContext, forcedPlanId?: number): Promise<void> {

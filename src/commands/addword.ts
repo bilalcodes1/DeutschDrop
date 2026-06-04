@@ -27,8 +27,11 @@ import { navigationKeyboard, replaceWithText, showWordDetailPanel } from './word
 
 interface AddWordSessionData {
     german: string | null;
-    wordId?: number;
-    step: 'german' | 'arabic' | 'edit';
+    step: 'german' | 'arabic';
+}
+
+interface WordEditSessionData {
+    wordId: number;
 }
 
 interface WordSelectionSession {
@@ -72,6 +75,14 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
     bot.on('message:text', async (ctx, next) => {
         const telegramId = ctx.from?.id ?? 0;
         const user = await getUserByTelegramId(ctx.db, telegramId);
+        if (user && await getBotSession(ctx.db, user.user_id, 'train')) {
+            return next();
+        }
+        if (user && await getBotSession(ctx.db, user.user_id, 'challenge')) {
+            await ctx.reply('⚔️ عندك تحدي فعال. استخدم أزرار التحدي الحالية أو ارجع للرئيسية.');
+            return;
+        }
+
         const searchSession = user ? await getBotSession<WordSearchSession>(ctx.db, user.user_id, 'word_search') : null;
         if (user && searchSession?.data.awaiting) {
             const query = ctx.message.text.trim();
@@ -81,8 +92,9 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         }
 
         const pending = user ? await getBotSession<AddWordSessionData>(ctx.db, user.user_id, 'add_word') : null;
+        const editSession = user ? await getBotSession<WordEditSessionData>(ctx.db, user.user_id, 'word_edit') : null;
 
-        if (!pending) {
+        if (!pending && !editSession) {
             // Also check for inline format: "Word = معنى"
             const inlineMatch = ctx.message.text.match(/^(.+?)\s*=\s*(.+)$/);
             if (inlineMatch) {
@@ -96,7 +108,16 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
 
         const text = ctx.message.text.trim();
 
-        if (pending.data.step === 'german') {
+        if (editSession) {
+            if (!user) {
+                await ctx.reply('يرجى استخدام /start أولاً.');
+                return;
+            }
+            await handleWordEditText(ctx, user.user_id, editSession.data.wordId, text);
+            return;
+        }
+
+        if (pending?.data.step === 'german') {
             if (!user) {
                 await ctx.reply('يرجى استخدام /start أولاً.');
                 await next();
@@ -121,7 +142,7 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
                 30
             );
             await ctx.reply(`تم! الآن أرسل المعنى العربي لـ *${text}*:`, { parse_mode: 'Markdown' });
-        } else if (pending.data.step === 'arabic' && pending.data.german) {
+        } else if (pending?.data.step === 'arabic' && pending.data.german) {
             if (!user) {
                 await ctx.reply('يرجى استخدام /start أولاً.');
                 return;
@@ -142,40 +163,6 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
                 if ((error as Error).message === DUPLICATE_WORD_ERROR) {
                     await ctx.reply('⚠️ هذه الكلمة موجودة مسبقاً في بنك كلماتك.', { reply_markup: mainMenuKeyboard() });
                     await deleteBotSession(ctx.db, user.user_id, 'add_word');
-                    return;
-                }
-                throw error;
-            }
-
-        } else if (pending.data.step === 'edit' && pending.data.wordId) {
-            if (!user) {
-                await ctx.reply('يرجى استخدام /start أولاً.');
-                return;
-            }
-
-            const parsed = parseWordInput(text);
-            if (!parsed) {
-                await ctx.reply('أرسل التعديل بهذه الصيغة:\nHaus = بيت\nأو:\nHaus,بيت,Das Haus ist groß.');
-                return;
-            }
-
-            try {
-                const updated = await updateWordForUser(
-                    ctx.db,
-                    user.user_id,
-                    pending.data.wordId,
-                    parsed.german,
-                    parsed.arabic,
-                    parsed.example
-                );
-                await deleteBotSession(ctx.db, user.user_id, 'add_word');
-                await ctx.reply(
-                    updated ? `✅ تم تعديل الكلمة.\n\n🇩🇪 ${parsed.german}\n🇦🇪 ${parsed.arabic}` : '⚠️ لم أجد هذه الكلمة في بنك كلماتك.',
-                    { reply_markup: mainMenuKeyboard() }
-                );
-            } catch (error) {
-                if ((error as Error).message === DUPLICATE_WORD_ERROR) {
-                    await ctx.reply('⚠️ لا يمكن التعديل: الكلمة الألمانية موجودة مسبقاً في بنك كلماتك.');
                     return;
                 }
                 throw error;
@@ -356,6 +343,8 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
 
     bot.callbackQuery(/^word_detail_(\d+)$/, async (ctx) => {
         const wordId = parseInt(ctx.match[1], 10);
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (user) await deleteBotSession(ctx.db, user.user_id, 'word_edit');
         await ctx.answerCallbackQuery();
         await showWordDetailPanel(ctx, wordId);
     });
@@ -383,18 +372,16 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
             return;
         }
 
-        await saveBotSession<AddWordSessionData>(
-            ctx.db,
-            user.user_id,
-            'add_word',
-            { german: null, wordId, step: 'edit' },
-            30
-        );
-        await ctx.editMessageText(
-            '✏️ أرسل التعديل بهذه الصيغة:\n\nHaus = بيت\n\nأو:\nHaus,بيت,Das Haus ist groß.',
-            { reply_markup: navigationKeyboard(`word_detail_${wordId}`) }
-        );
+        await showEditWordPrompt(ctx, user.user_id, wordId);
         await ctx.answerCallbackQuery();
+    });
+
+    bot.callbackQuery(/^cancel_word_edit_(\d+)$/, async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        const wordId = Number(ctx.match[1]);
+        if (user) await deleteBotSession(ctx.db, user.user_id, 'word_edit');
+        await ctx.answerCallbackQuery('تم إلغاء التعديل');
+        await showWordDetailPanel(ctx, wordId, 'تم إلغاء التعديل.');
     });
 
     bot.callbackQuery('suggest_peer_words', async (ctx) => {
@@ -422,6 +409,73 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         });
         await ctx.answerCallbackQuery();
     });
+}
+
+async function showEditWordPrompt(ctx: BotContext, userId: number, wordId: number, error?: string): Promise<void> {
+    const word = await getWordById(ctx.db, wordId);
+    if (!word || word.added_by !== userId) {
+        await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة في بنك كلماتك.', navigationKeyboard('list_words'));
+        return;
+    }
+
+    await saveBotSession<WordEditSessionData>(ctx.db, userId, 'word_edit', { wordId }, 30);
+    await replaceWithText(
+        ctx,
+        formatEditWordPrompt(word, error),
+        editWordKeyboard(wordId),
+        'Markdown'
+    );
+}
+
+function formatEditWordPrompt(word: { german: string; arabic: string; example: string | null }, error?: string): string {
+    const copyLine = word.example
+        ? `${word.german},${word.arabic},${word.example}`
+        : `${word.german} = ${word.arabic}`;
+    return (error ? `⚠️ ${error}\n\n` : '') +
+        `✏️ *تعديل الكلمة*\n\n` +
+        `انسخ السطر وعدّله ثم أرسله:\n\n` +
+        `${copyLine}\n\n` +
+        `الألماني الحالي: ${word.german}\n` +
+        `العربي الحالي: ${word.arabic}` +
+        (word.example ? `\nالمثال الحالي: ${word.example}` : '');
+}
+
+function editWordKeyboard(wordId: number): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('❌ إلغاء التعديل', `cancel_word_edit_${wordId}`).row()
+        .text('⬅️ رجوع', `word_detail_${wordId}`)
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+async function handleWordEditText(ctx: BotContext, userId: number, wordId: number, text: string): Promise<void> {
+    const word = await getWordById(ctx.db, wordId);
+    if (!word || word.added_by !== userId) {
+        await deleteBotSession(ctx.db, userId, 'word_edit');
+        await ctx.reply('⚠️ لم أجد هذه الكلمة في بنك كلماتك.', { reply_markup: mainMenuKeyboard() });
+        return;
+    }
+
+    const parsed = parseWordInput(text);
+    if (!parsed) {
+        await showEditWordPrompt(ctx, userId, wordId, 'الصيغة غير صحيحة. عدّل السطر الحالي ثم أرسله مرة ثانية.');
+        return;
+    }
+
+    try {
+        const updated = await updateWordForUser(ctx.db, userId, wordId, parsed.german, parsed.arabic, parsed.example);
+        if (!updated) {
+            await showEditWordPrompt(ctx, userId, wordId, 'لم أجد هذه الكلمة في بنك كلماتك.');
+            return;
+        }
+        await deleteBotSession(ctx.db, userId, 'word_edit');
+        await showWordDetailPanel(ctx, wordId, '✅ تم تعديل الكلمة.');
+    } catch (error) {
+        if ((error as Error).message === DUPLICATE_WORD_ERROR) {
+            await showEditWordPrompt(ctx, userId, wordId, 'لا يمكن التعديل: الكلمة الألمانية موجودة مسبقاً في بنك كلماتك.');
+            return;
+        }
+        throw error;
+    }
 }
 
 async function addWordInline(ctx: BotContext, german: string, arabic: string): Promise<void> {

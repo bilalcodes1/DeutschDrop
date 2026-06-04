@@ -3,6 +3,7 @@ import type { BotContext } from '../bot/context';
 import { getActiveAnnouncement } from '../repositories/announcementRepository';
 import { getActiveSupportStatus } from '../repositories/supportRepository';
 import { getUserByTelegramId, getUserSettings } from '../repositories/userRepository';
+import { deleteBotSession } from '../repositories/sessionRepository';
 import { isAdminTelegramId } from '../services/adminAccess';
 import { formatSupportRemaining, getUserRoleBadge } from '../services/roleUi';
 import { replaceWithText } from './wordPanel';
@@ -14,6 +15,7 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
 
     // Handle menu callbacks that are not owned by feature modules.
     bot.callbackQuery('menu_train', async (ctx) => {
+        await clearTextInteractionSessions(ctx);
         await replaceWithText(
             ctx,
             trainMenuText(),
@@ -24,6 +26,7 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
     });
 
     bot.callbackQuery('menu_words', async (ctx) => {
+        await clearTrainingAndEditSessions(ctx);
         await replaceWithText(
             ctx,
             '📂 *كلماتي*\n\nاختر إحدى الخيارات:',
@@ -34,6 +37,7 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
     });
 
     bot.callbackQuery('menu_more', async (ctx) => {
+        await clearTrainingAndEditSessions(ctx);
         await replaceWithText(ctx, '⚙️ *المزيد*\n\nكل الأدوات المتقدمة هنا:', moreMenuKeyboard(isAdminTelegramId(ctx.env, ctx.from?.id)), 'Markdown');
         await ctx.answerCallbackQuery();
     });
@@ -41,6 +45,7 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
     // Back to main menu
     bot.callbackQuery('menu_main', async (ctx) => {
         await ctx.answerCallbackQuery();
+        await clearTrainingAndEditSessions(ctx);
         await showMainMenu(ctx);
     });
 }
@@ -149,4 +154,22 @@ function trainMenuText(): string {
     return `🏋️ *التدريب*\n\n` +
         `اختر نوع التدريب:\n\n` +
         `الافتراضي الأفضل هو 🎲 مختلط.`;
+}
+
+async function clearTrainingAndEditSessions(ctx: BotContext): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (!user) return;
+    await deleteBotSession(ctx.db, user.user_id, 'word_edit');
+    await deleteBotSession(ctx.db, user.user_id, 'add_word');
+    await deleteBotSession(ctx.db, user.user_id, 'word_search');
+    await deleteBotSession(ctx.db, user.user_id, 'train');
+    await deleteBotSession(ctx.db, user.user_id, 'train_explain');
+}
+
+async function clearTextInteractionSessions(ctx: BotContext): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (!user) return;
+    await deleteBotSession(ctx.db, user.user_id, 'word_edit');
+    await deleteBotSession(ctx.db, user.user_id, 'add_word');
+    await deleteBotSession(ctx.db, user.user_id, 'word_search');
 }

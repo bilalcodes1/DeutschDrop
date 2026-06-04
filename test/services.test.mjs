@@ -615,6 +615,74 @@ test('training supports typing missing-letter hint and mixed question types', ()
     assert.match(trainSource, /train_mixed/);
 });
 
+test('training text answers have priority over stale word edit and support flows', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const supportSource = fs.readFileSync(new URL('../src/commands/support.ts', import.meta.url), 'utf8');
+    const startSource = fs.readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf8');
+
+    assert.match(addWordSource, /getBotSession\(ctx\.db, user\.user_id, 'train'\)/);
+    assert.match(addWordSource, /return next\(\)/);
+    assert.match(addWordSource, /getBotSession\(ctx\.db, user\.user_id, 'challenge'\)/);
+    assert.match(supportSource, /getBotSession\(ctx\.db, user\.user_id, 'train'\)/);
+    assert.match(startSource, /getBotSession\(ctx\.db, user\.user_id, 'train'\)/);
+    assert.match(trainSource, /if \(current\.options\.length > 0\)/);
+    assert.match(trainSource, /استخدم أزرار الإجابة الحالية/);
+    assert.match(trainSource, /handleTypedTrainingAnswer\(ctx, current, ctx\.message\.text\)/);
+    assert.doesNotMatch(trainSource, /return next\(\);\n\s*await handleTypedTrainingAnswer/);
+});
+
+test('starting training clears stale edit add and search sessions', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /clearConflictingTextSessions/);
+    assert.match(trainSource, /deleteBotSession\(ctx\.db, userId, 'word_edit'\)/);
+    assert.match(trainSource, /deleteBotSession\(ctx\.db, userId, 'add_word'\)/);
+    assert.match(trainSource, /deleteBotSession\(ctx\.db, userId, 'word_search'\)/);
+});
+
+test('word edit uses a dedicated session and shows current word values', () => {
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const sessionSource = fs.readFileSync(new URL('../src/repositories/sessionRepository.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0016_word_edit_session_priority.sql', import.meta.url), 'utf8');
+
+    assert.match(sessionSource, /'word_edit'/);
+    assert.match(migrationSource, /word_edit/);
+    assert.match(addWordSource, /interface WordEditSessionData/);
+    assert.match(addWordSource, /saveBotSession<WordEditSessionData>\(ctx\.db, userId, 'word_edit', \{ wordId \}/);
+    assert.match(addWordSource, /formatEditWordPrompt/);
+    assert.match(addWordSource, /الألماني الحالي: \$\{word\.german\}/);
+    assert.match(addWordSource, /العربي الحالي: \$\{word\.arabic\}/);
+    assert.match(addWordSource, /المثال الحالي: \$\{word\.example\}/);
+    assert.match(addWordSource, /\$\{word\.german\} = \$\{word\.arabic\}/);
+    assert.match(addWordSource, /\$\{word\.german\},\$\{word\.arabic\},\$\{word\.example\}/);
+});
+
+test('word edit updates the same word id and invalid input repeats current values', () => {
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(addWordSource, /handleWordEditText\(ctx, user\.user_id, editSession\.data\.wordId, text\)/);
+    assert.match(addWordSource, /const word = await getWordById\(ctx\.db, wordId\)/);
+    assert.match(addWordSource, /word\.added_by !== userId/);
+    assert.match(addWordSource, /updateWordForUser\(ctx\.db, userId, wordId/);
+    assert.match(addWordSource, /showWordDetailPanel\(ctx, wordId, '✅ تم تعديل الكلمة\.'\)/);
+    assert.match(addWordSource, /showEditWordPrompt\(ctx, userId, wordId, 'الصيغة غير صحيحة/);
+    assert.match(repositorySource, /WHERE word_id = \? AND added_by = \?/);
+});
+
+test('cancel edit and navigation clear word edit sessions', () => {
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+
+    assert.match(addWordSource, /cancel_word_edit_/);
+    assert.match(addWordSource, /deleteBotSession\(ctx\.db, user\.user_id, 'word_edit'\)/);
+    assert.match(addWordSource, /word_detail_/);
+    assert.match(menuSource, /clearTrainingAndEditSessions/);
+    assert.match(menuSource, /deleteBotSession\(ctx\.db, user\.user_id, 'word_edit'\)/);
+    assert.match(menuSource, /deleteBotSession\(ctx\.db, user\.user_id, 'train'\)/);
+});
+
 test('period leaderboards use xp_events and champion snapshots', () => {
     const xpSource = fs.readFileSync(new URL('../src/services/xpLevels.ts', import.meta.url), 'utf8');
     const leaderboardSource = fs.readFileSync(new URL('../src/commands/leaderboard.ts', import.meta.url), 'utf8');

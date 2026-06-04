@@ -37,6 +37,8 @@ export function registerStartCommand(bot: Bot<BotContext>): void {
     bot.on('message:text', async (ctx, next) => {
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) return next();
+        if (await getBotSession(ctx.db, user.user_id, 'train')) return next();
+        if (await getBotSession(ctx.db, user.user_id, 'challenge')) return next();
 
         const registerSession = await getBotSession<NameSessionData>(ctx.db, user.user_id, 'register');
         const renameSession = await getBotSession<NameSessionData>(ctx.db, user.user_id, 'rename');

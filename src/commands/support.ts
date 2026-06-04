@@ -165,6 +165,8 @@ export function registerSupportCommand(bot: Bot<BotContext>): void {
     bot.on(['message:text', 'message:photo'], async (ctx, next) => {
         const user = await getCurrentUser(ctx, false);
         if (!user || user.is_banned) return next();
+        if (await getBotSession(ctx.db, user.user_id, 'train')) return next();
+        if (await getBotSession(ctx.db, user.user_id, 'challenge')) return next();
 
         const session = await getBotSession<SupportProofSession>(ctx.db, user.user_id, 'support_proof');
         if (!session) return next();
