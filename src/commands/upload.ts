@@ -1,12 +1,22 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { getUserByTelegramId } from '../repositories/userRepository';
-import { createWordAndAssignToUser, createUploadedList } from '../repositories/wordRepository';
+import {
+    createWordAndAssignToUser,
+    createUploadedList,
+    searchDuplicateWordForUser,
+    updateExistingWordFieldsForUser,
+} from '../repositories/wordRepository';
+import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { addXp } from '../services/xpLevels';
 import { parseWordCsv, type ParsedWordRow } from '../services/csvParser';
 import { checkAchievements, unlockAchievement } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
 import { mainMenuKeyboard } from './menu';
+
+interface CsvUpdateSession {
+    duplicates: ParsedWordRow[];
+}
 
 const CSV_UPLOAD_INSTRUCTIONS =
     'ارسل ملف CSV فقط بالصيغة التالية:\n' +
@@ -35,6 +45,31 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
             `📤 *رفع ملف CSV*\n\n${CSV_UPLOAD_INSTRUCTIONS}`,
             { parse_mode: 'Markdown' }
         );
+    });
+
+    bot.callbackQuery('upload_update_existing', async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) {
+            await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
+            return;
+        }
+
+        const session = await getBotSession<CsvUpdateSession>(ctx.db, user.user_id, 'csv_update');
+        if (!session || session.data.duplicates.length === 0) {
+            await ctx.answerCallbackQuery();
+            await ctx.editMessageText('لا توجد كلمات مكررة جاهزة للتحديث.', { reply_markup: mainMenuKeyboard() });
+            return;
+        }
+
+        let updated = 0;
+        for (const word of session.data.duplicates) {
+            if (await updateExistingWordFieldsForUser(ctx.db, user.user_id, word.german, word.arabic, word.example)) {
+                updated++;
+            }
+        }
+        await deleteBotSession(ctx.db, user.user_id, 'csv_update');
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(`تم تحديث ${updated} كلمة ✅`, { reply_markup: mainMenuKeyboard() });
     });
 
     // Handle document uploads
@@ -73,10 +108,16 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
             await checkAchievements(ctx, user.user_id);
         }
 
-        await ctx.reply(
-            `📊 *ملخص الرفع*\n\n✅ ${result.imported} كلمة مستوردة\n⚠️ ${result.duplicates} تكرار (تم تخطيهم)\n❌ ${result.errors} أخطاء\n\nتم رفع الكلمات ✅ يمكنك تعيين رمز تعليمي لكل كلمة من 📂 إدارة الكلمات.`,
-            { parse_mode: 'Markdown', reply_markup: mainMenuKeyboard() }
-        );
+        if (result.duplicateRows.length > 0) {
+            await saveBotSession<CsvUpdateSession>(ctx.db, user.user_id, 'csv_update', { duplicates: result.duplicateRows }, 60);
+        } else {
+            await deleteBotSession(ctx.db, user.user_id, 'csv_update');
+        }
+
+        await ctx.reply(formatUploadSummary(result), {
+            parse_mode: 'Markdown',
+            reply_markup: uploadSummaryKeyboard(result.duplicateRows.length > 0),
+        });
     });
 }
 
@@ -89,6 +130,8 @@ interface ParseResult {
     imported: number;
     duplicates: number;
     errors: number;
+    duplicateExamples: string[];
+    duplicateRows: ParsedWordRow[];
 }
 
 async function parseCsvAndImport(
@@ -96,7 +139,6 @@ async function parseCsvAndImport(
     content: string,
     userId: number
 ): Promise<ParseResult> {
-    const result: ParseResult = { imported: 0, duplicates: 0, errors: 0 };
     const parsed = parseWordCsv(content);
     return importWords(db, parsed.words, parsed.errors, userId);
 }
@@ -107,7 +149,7 @@ async function importWords(
     initialErrors: number,
     userId: number
 ): Promise<ParseResult> {
-    const result: ParseResult = { imported: 0, duplicates: 0, errors: initialErrors };
+    const result: ParseResult = { imported: 0, duplicates: 0, errors: initialErrors, duplicateExamples: [], duplicateRows: [] };
 
     // Create a list for this upload
     const listId = await createUploadedList(db, userId, `Imported ${new Date().toLocaleDateString()}`);
@@ -115,6 +157,14 @@ async function importWords(
     // Import words
     for (const w of words) {
         try {
+            const duplicate = await searchDuplicateWordForUser(db, userId, w.german);
+            if (duplicate) {
+                result.duplicates++;
+                result.duplicateRows.push(w);
+                if (result.duplicateExamples.length < 5) result.duplicateExamples.push(duplicate.german);
+                continue;
+            }
+
             await createWordAndAssignToUser(db, w.german, w.arabic, w.example, userId, listId);
             result.imported++;
             await addXp(db, userId, 5, 'new_word');
@@ -124,4 +174,32 @@ async function importWords(
     }
 
     return result;
+}
+
+function formatUploadSummary(result: ParseResult): string {
+    let text =
+        `📊 *ملخص الرفع*\n\n` +
+        `✅ مستوردة: *${result.imported}*\n` +
+        `⚠️ موجودة مسبقاً: *${result.duplicates}*\n` +
+        `❌ أخطاء: *${result.errors}*`;
+
+    if (result.duplicateExamples.length > 0) {
+        text += '\n\nأمثلة على كلمات موجودة مسبقاً:\n' +
+            result.duplicateExamples.map(word => `- ${word}`).join('\n');
+    }
+
+    if (result.imported === 0 && result.duplicates > 0) {
+        text += '\n\nلم تتم إضافة كلمات جديدة لأن هذه الكلمات موجودة مسبقاً في حسابك.';
+    } else {
+        text += '\n\nتم رفع الكلمات ✅ يمكنك تعيين رمز تعليمي لكل كلمة من 📂 إدارة الكلمات.';
+    }
+
+    return text;
+}
+
+function uploadSummaryKeyboard(hasDuplicates: boolean): InlineKeyboard {
+    const keyboard = new InlineKeyboard();
+    if (hasDuplicates) keyboard.text('🔄 تحديث الكلمات الموجودة', 'upload_update_existing').row();
+    keyboard.text('🏠 الرئيسية', 'menu_main');
+    return keyboard;
 }

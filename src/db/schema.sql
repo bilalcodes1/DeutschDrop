@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS competition_leaderboard_snapshot (
 CREATE TABLE IF NOT EXISTS bot_sessions (
     session_id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('learn', 'train', 'add_word', 'challenge', 'register', 'rename', 'support_proof', 'admin_broadcast', 'admin_announcement')),
+    type TEXT NOT NULL CHECK (type IN ('learn', 'train', 'add_word', 'challenge', 'register', 'rename', 'support_proof', 'admin_broadcast', 'admin_announcement', 'csv_update', 'word_selection')),
     data TEXT NOT NULL,
     expires_at DATETIME NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -324,6 +324,15 @@ CREATE TABLE IF NOT EXISTS bot_announcements (
     FOREIGN KEY (created_by_admin_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+-- 26. notification_logs
+CREATE TABLE IF NOT EXISTS notification_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 -- 20. job_runs (Cron job state tracking)
 CREATE TABLE IF NOT EXISTS job_runs (
     job_name TEXT PRIMARY KEY,
@@ -357,6 +366,7 @@ CREATE INDEX IF NOT EXISTS idx_support_proofs_user_id ON support_proofs(user_id)
 CREATE INDEX IF NOT EXISTS idx_support_proofs_status ON support_proofs(status);
 CREATE INDEX IF NOT EXISTS idx_user_support_status_active ON user_support_status(is_supporter, supporter_until);
 CREATE INDEX IF NOT EXISTS idx_bot_announcements_active ON bot_announcements(is_active, updated_at);
+CREATE INDEX IF NOT EXISTS idx_notification_logs_user_type_time ON notification_logs(user_id, type, sent_at);
 
 -- =====================================================
 -- Seed: Default achievement definitions

@@ -3,6 +3,7 @@ import type { BotContext } from '../bot/context';
 import { getActiveAnnouncement } from '../repositories/announcementRepository';
 import { getActiveSupportStatus } from '../repositories/supportRepository';
 import { getUserByTelegramId } from '../repositories/userRepository';
+import { isAdminTelegramId } from '../services/adminAccess';
 import { formatSupportRemaining, getUserRoleBadge } from '../services/roleUi';
 import { replaceWithText } from './wordPanel';
 
@@ -40,11 +41,12 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
 }
 
 export async function showMainMenu(ctx: BotContext): Promise<void> {
-    await replaceWithText(ctx, await mainMenuText(ctx), mainMenuKeyboard(), 'Markdown');
+    const isAdmin = isAdminTelegramId(ctx.env, ctx.from?.id);
+    await replaceWithText(ctx, await mainMenuText(ctx), mainMenuKeyboard(isAdmin), 'Markdown');
 }
 
-export function mainMenuKeyboard(): InlineKeyboard {
-    return new InlineKeyboard()
+export function mainMenuKeyboard(isAdmin: boolean = false): InlineKeyboard {
+    const keyboard = new InlineKeyboard()
         .text('📚 تعلم', 'menu_learn')
         .text('🏋️ تدريب', 'menu_train').row()
         .text('⚔️ تحدي', 'menu_challenge')
@@ -52,7 +54,11 @@ export function mainMenuKeyboard(): InlineKeyboard {
         .text('👤 ملفي الشخصي', 'menu_profile')
         .text('🏆 الترتيب', 'menu_leaderboard').row()
         .text('📊 الإحصائيات', 'menu_stats').row()
-        .text('💙 دعم المشروع', 'menu_support').row()
+        .text('💙 دعم المشروع', 'menu_support').row();
+
+    if (isAdmin) keyboard.text('🛠 لوحة الأدمن', 'admin_panel').row();
+
+    return keyboard
         .text('⚙️ الإعدادات', 'menu_settings')
         .text('🏠 الرئيسية', 'menu_main');
 }
@@ -92,6 +98,7 @@ function wordsMenuKeyboard(): InlineKeyboard {
         .text('📤 رفع CSV', 'upload_csv').row()
         .text('📋 عرض الكلمات', 'list_words')
         .text('📌 الكلمات الصعبة', 'hard_words').row()
+        .text('☑️ تحديد الكلمات', 'select_words_0').row()
         .text('💡 اقتراحات', 'suggest_peer_words').row()
         .text('⬅️ رجوع', 'menu_main');
 }

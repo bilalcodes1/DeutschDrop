@@ -4,6 +4,14 @@ import type { Word, UserUploadedList, ListWord } from '../models';
 
 export const DUPLICATE_WORD_ERROR = 'duplicate_word';
 
+export function normalizeGermanForCompare(value: string): string {
+    return value
+        .replace(/^\uFEFF/, '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLocaleLowerCase('de-DE');
+}
+
 export async function getWordById(
     db: D1Database,
     wordId: number
@@ -77,8 +85,40 @@ export async function searchDuplicateWordForUser(
     german: string,
     excludeWordId?: number
 ): Promise<Word | null> {
-    const params: unknown[] = [userId, german.trim()];
-    let sql = 'SELECT * FROM words WHERE added_by = ? AND LOWER(german) = LOWER(?)';
+    const words = await queryAll<Word>(db, 'SELECT * FROM words WHERE added_by = ?', [userId]);
+    const key = normalizeGermanForCompare(german);
+    return words.find(word =>
+        normalizeGermanForCompare(word.german) === key &&
+        (excludeWordId === undefined || word.word_id !== excludeWordId)
+    ) ?? null;
+}
+
+export async function updateExistingWordFieldsForUser(
+    db: D1Database,
+    userId: number,
+    german: string,
+    arabic: string,
+    example: string | null
+): Promise<boolean> {
+    const existing = await searchDuplicateWordForUser(db, userId, german);
+    if (!existing) return false;
+
+    const result = await run(
+        db,
+        'UPDATE words SET arabic = ?, example = ? WHERE word_id = ? AND added_by = ?',
+        [arabic, example, existing.word_id, userId]
+    );
+    return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
+}
+
+export async function searchDuplicateWordForUserSql(
+    db: D1Database,
+    userId: number,
+    german: string,
+    excludeWordId?: number
+): Promise<Word | null> {
+    const params: unknown[] = [userId, normalizeGermanForCompare(german)];
+    let sql = 'SELECT * FROM words WHERE added_by = ? AND LOWER(TRIM(german)) = ?';
     if (excludeWordId !== undefined) {
         sql += ' AND word_id != ?';
         params.push(excludeWordId);
@@ -133,6 +173,7 @@ export async function deleteWordForUser(
 
     await runBatch(db, [
         { sql: 'DELETE FROM list_words WHERE word_id = ?', params: [wordId] },
+        { sql: 'DELETE FROM word_pictograms WHERE word_id = ?', params: [wordId] },
         { sql: 'DELETE FROM word_audio WHERE word_id = ?', params: [wordId] },
         { sql: 'DELETE FROM reviews WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
         { sql: 'DELETE FROM user_words WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
@@ -140,6 +181,19 @@ export async function deleteWordForUser(
     ]);
 
     return true;
+}
+
+export async function deleteWordsForUser(db: D1Database, userId: number, wordIds: number[]): Promise<number> {
+    let deleted = 0;
+    for (const wordId of wordIds) {
+        if (await deleteWordForUser(db, userId, wordId)) deleted++;
+    }
+    return deleted;
+}
+
+export async function deleteAllWordsForUser(db: D1Database, userId: number): Promise<number> {
+    const words = await getWordsByUser(db, userId);
+    return deleteWordsForUser(db, userId, words.map(word => word.word_id));
 }
 
 export async function getPeerWordSuggestions(

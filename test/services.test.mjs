@@ -27,6 +27,15 @@ test('parseWordCsv handles equals format and invalid rows', () => {
     ]);
 });
 
+test('parseWordCsv handles BOM headers and collapses spaces', () => {
+    const parsed = parseWordCsv('\uFEFFGerman,Arabic,Example\n  Auto  ,  سيارة  ,  Ich   habe   ein Auto.  ');
+
+    assert.equal(parsed.errors, 0);
+    assert.deepEqual(parsed.words, [
+        { german: 'Auto', arabic: 'سيارة', example: 'Ich habe ein Auto.' },
+    ]);
+});
+
 test('calculateNextReview advances correct answers and caps hard failures', () => {
     const correct = calculateNextReview(
         { easeFactor: 2.5, interval: 0, repetitions: 0, correctCount: 0, wrongCount: 0 },
@@ -172,7 +181,8 @@ test('leaderboard uses display_name and orders by XP', () => {
 
 test('word duplicate checks remain scoped per user', () => {
     const source = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
-    assert.match(source, /SELECT \* FROM words WHERE added_by = \? AND LOWER\(german\) = LOWER\(\?\)/);
+    assert.match(source, /SELECT \* FROM words WHERE added_by = \?/);
+    assert.match(source, /normalizeGermanForCompare\(word\.german\) === key/);
     assert.match(source, /createWordAndAssignToUser/);
 });
 
@@ -182,6 +192,16 @@ test('main menu exposes the requested public navigation buttons', () => {
         assert.match(source, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(source, /menu_main/);
+});
+
+test('admin main menu button is shown only for admins', () => {
+    const source = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+
+    assert.match(source, /mainMenuKeyboard\(isAdmin: boolean = false\)/);
+    assert.match(source, /isAdminTelegramId\(ctx\.env, ctx\.from\?\.id\)/);
+    assert.match(source, /if \(isAdmin\) keyboard\.text\('🛠 لوحة الأدمن', 'admin_panel'\)/);
+    assert.match(wranglerSource, /ADMIN_TELEGRAM_IDS = "8590766269,8014388174"/);
 });
 
 test('word panel shows review status and pictogram-specific actions', () => {
@@ -357,6 +377,53 @@ test('admin can create broadcast and non-admin is denied', () => {
     assert.match(adminSource, /if \(!await requireAdmin\(ctx\)\) return/);
     assert.match(adminSource, /غير مصرح لك باستخدام هذا الأمر/);
     assert.match(adminSource, /✅ إرسال للجميع/);
+});
+
+test('/admin panel exposes broadcast and announcement pinning', () => {
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    assert.match(adminSource, /bot\.command\('admin'/);
+    assert.match(adminSource, /📢 إرسال تبليغ/);
+    assert.match(adminSource, /📌 تثبيت رسالة داخل البوت/);
+    assert.match(adminSource, /admin_announcement_start/);
+    assert.match(adminSource, /requireAdmin\(ctx\)/);
+});
+
+test('CSV duplicate logic is scoped to user and supports update existing', () => {
+    const wordSource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+    const uploadSource = fs.readFileSync(new URL('../src/commands/upload.ts', import.meta.url), 'utf8');
+
+    assert.match(wordSource, /normalizeGermanForCompare/);
+    assert.match(wordSource, /SELECT \* FROM words WHERE added_by = \?/);
+    assert.match(uploadSource, /duplicateRows/);
+    assert.match(uploadSource, /upload_update_existing/);
+    assert.match(uploadSource, /updateExistingWordFieldsForUser/);
+    assert.match(uploadSource, /لم تتم إضافة كلمات جديدة/);
+});
+
+test('word selection bulk delete is limited to current user', () => {
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const wordSource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+
+    for (const callback of ['select_words', 'word_select_all', 'word_delete_selected', 'word_delete_all']) {
+        assert.match(addWordSource, new RegExp(callback));
+    }
+    assert.match(addWordSource, /saveBotSession<WordSelectionSession>/);
+    assert.match(wordSource, /deleteWordsForUser/);
+    assert.match(wordSource, /deleteAllWordsForUser/);
+    assert.match(wordSource, /deleteWordForUser\(db, userId, wordId\)/);
+});
+
+test('smart notifications include due word content and six hour cooldown', () => {
+    const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0011_admin_menu_csv_bulk_delete_smart_notifications.sql', import.meta.url), 'utf8');
+
+    assert.match(indexSource, /sendSmartReviewNotification/);
+    assert.match(indexSource, /notificationCooldownActive/);
+    assert.match(indexSource, /datetime\("now", "-6 hours"\)/);
+    assert.match(indexSource, /SELECT w\.german, w\.arabic/);
+    assert.match(indexSource, /ابدأ رحلتك مع DeutschDrop/);
+    assert.match(indexSource, /جرّب تدريب سريع/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS notification_logs/);
 });
 
 test('active announcement is rendered in main menu and can be cleared', () => {

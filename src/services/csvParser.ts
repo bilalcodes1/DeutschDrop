@@ -14,7 +14,7 @@ export function parseWordCsv(content: string): CsvParseResult {
     const result: CsvParseResult = { words: [], errors: 0 };
     if (rows.length === 0) return result;
 
-    const first = rows[0].map(cell => cell.trim().toLowerCase());
+    const first = rows[0].map(cell => cleanCell(cell).toLowerCase());
     const hasHeader = first.includes('german') || first.includes('arabic') || first.includes('deutsch');
     const dataRows = hasHeader ? rows.slice(1) : rows;
 
@@ -22,9 +22,9 @@ export function parseWordCsv(content: string): CsvParseResult {
         if (row.length === 0 || row.every(cell => !cell.trim())) continue;
 
         const simplePair = row.length === 1 ? parseEqualsPair(row[0]) : null;
-        const german = simplePair?.german ?? row[0]?.trim();
-        const arabic = simplePair?.arabic ?? row[1]?.trim();
-        const example = simplePair ? null : row[2]?.trim() || null;
+        const german = simplePair?.german ?? cleanCell(row[0] ?? '');
+        const arabic = simplePair?.arabic ?? cleanCell(row[1] ?? '');
+        const example = simplePair ? null : cleanCell(row[2] ?? '') || null;
 
         if (!german || !arabic) {
             result.errors++;
@@ -42,9 +42,13 @@ function parseEqualsPair(line: string): { german: string; arabic: string } | nul
     if (separatorIndex === -1) return null;
 
     return {
-        german: line.slice(0, separatorIndex).trim(),
-        arabic: line.slice(separatorIndex + 1).trim(),
+        german: cleanCell(line.slice(0, separatorIndex)),
+        arabic: cleanCell(line.slice(separatorIndex + 1)),
     };
+}
+
+function cleanCell(value: string): string {
+    return value.replace(/^\uFEFF/, '').trim().replace(/\s+/g, ' ');
 }
 
 function parseDelimitedRows(content: string): string[][] {
