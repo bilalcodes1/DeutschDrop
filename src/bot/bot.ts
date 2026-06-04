@@ -18,6 +18,7 @@ import { registerPictogramCommand } from '../commands/pictograms';
 import { registerProfileCommand } from '../commands/profile';
 import { registerAdminCommand } from '../commands/admin';
 import { registerSmartNotificationCommand } from '../commands/smartNotifications';
+import { registerAiCoachCommand } from '../commands/aiCoach';
 import { getUserByTelegramId, isRegisteredUser } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 
@@ -84,6 +85,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerProfileCommand(bot);
     registerAdminCommand(bot);
     registerSmartNotificationCommand(bot);
+    registerAiCoachCommand(bot);
 
     // Error handler
     bot.catch((err) => {

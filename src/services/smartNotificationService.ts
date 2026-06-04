@@ -9,6 +9,7 @@ export interface SmartWord {
     german: string;
     arabic: string;
     example: string | null;
+    pronunciation_ar: string | null;
     image_url?: string | null;
 }
 
@@ -103,7 +104,7 @@ export async function sendSmartNotification(env: Env, user: UserForNotification)
 
 export async function getNotificationEventWord(db: D1Database, eventId: number): Promise<SmartWord | null> {
     return db.prepare(
-        `SELECT w.word_id, w.german, w.arabic, w.example
+        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar
          FROM notification_events ne
          INNER JOIN words w ON w.word_id = ne.word_id
          WHERE ne.id = ?`
@@ -204,7 +205,7 @@ async function countDueWords(db: D1Database, userId: number): Promise<number> {
 
 async function selectDueWord(db: D1Database, userId: number): Promise<SmartWord | null> {
     return db.prepare(
-        `SELECT w.word_id, w.german, w.arabic, w.example
+        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar
          FROM words w
          INNER JOIN user_words uw ON uw.word_id = w.word_id
          WHERE uw.user_id = ?
@@ -222,7 +223,7 @@ async function selectDueWord(db: D1Database, userId: number): Promise<SmartWord 
 
 async function selectHardWord(db: D1Database, userId: number): Promise<SmartWord | null> {
     return db.prepare(
-        `SELECT w.word_id, w.german, w.arabic, w.example
+        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar
          FROM words w
          INNER JOIN user_words uw ON uw.word_id = w.word_id
          WHERE uw.user_id = ?
@@ -240,7 +241,7 @@ async function selectHardWord(db: D1Database, userId: number): Promise<SmartWord
 
 async function selectExampleWord(db: D1Database, userId: number): Promise<SmartWord | null> {
     return db.prepare(
-        `SELECT word_id, german, arabic, example FROM words
+        `SELECT word_id, german, arabic, example, pronunciation_ar FROM words
          WHERE added_by = ? AND example IS NOT NULL AND TRIM(example) != ''
          ORDER BY RANDOM() LIMIT 1`
     ).bind(userId).first<SmartWord>();
@@ -248,7 +249,7 @@ async function selectExampleWord(db: D1Database, userId: number): Promise<SmartW
 
 async function selectPictogramWord(db: D1Database, userId: number): Promise<SmartWord | null> {
     return db.prepare(
-        `SELECT w.word_id, w.german, w.arabic, w.example, wp.image_url
+        `SELECT w.word_id, w.german, w.arabic, w.example, w.pronunciation_ar, wp.image_url
          FROM words w
          INNER JOIN word_pictograms wp ON wp.word_id = w.word_id
          WHERE w.added_by = ?
@@ -257,7 +258,7 @@ async function selectPictogramWord(db: D1Database, userId: number): Promise<Smar
 }
 
 async function selectAnyWord(db: D1Database, userId: number): Promise<SmartWord | null> {
-    return db.prepare('SELECT word_id, german, arabic, example FROM words WHERE added_by = ? ORDER BY RANDOM() LIMIT 1').bind(userId).first<SmartWord>();
+    return db.prepare('SELECT word_id, german, arabic, example, pronunciation_ar FROM words WHERE added_by = ? ORDER BY RANDOM() LIMIT 1').bind(userId).first<SmartWord>();
 }
 
 async function createNotificationEvent(db: D1Database, userId: number, type: SmartNotificationType, wordId: number | null): Promise<number> {

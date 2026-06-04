@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { getUserByTelegramId } from '../repositories/userRepository';
-import { getWordsForUserWithStatus } from '../repositories/wordRepository';
+import { getWordById, getWordsForUserWithStatus } from '../repositories/wordRepository';
 import { recordReview } from '../repositories/srsRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { isHardWord, selectTrainingWords } from '../services/srs';
@@ -10,6 +10,7 @@ import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
+import type { TrainExplainSession } from './aiCoach';
 
 interface TrainingQuestion {
     word_id: number;
@@ -51,8 +52,13 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
     // Handle answer callbacks
     bot.callbackQuery(/^train_ans_(\d+)_(\d+)_(correct|wrong)$/, async (ctx) => {
         const wordId = parseInt(ctx.match[1], 10);
+        const optionIndex = parseInt(ctx.match[2], 10);
         const isCorrect = ctx.match[3] === 'correct';
-        await handleTrainAnswer(ctx, wordId, isCorrect);
+        await handleTrainAnswer(ctx, wordId, optionIndex, isCorrect);
+    });
+
+    bot.callbackQuery('train_continue', async (ctx) => {
+        await continueTraining(ctx);
     });
 }
 
@@ -160,7 +166,7 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
     );
 }
 
-async function handleTrainAnswer(ctx: BotContext, wordId: number, isCorrect: boolean): Promise<void> {
+async function handleTrainAnswer(ctx: BotContext, wordId: number, optionIndex: number, isCorrect: boolean): Promise<void> {
     const telegramId = ctx.from?.id ?? 0;
     const user = await getUserByTelegramId(ctx.db, telegramId);
 
@@ -193,14 +199,57 @@ async function handleTrainAnswer(ctx: BotContext, wordId: number, isCorrect: boo
     await recordReview(ctx.db, user.user_id, wordId, isCorrect, null, null);
     await checkAchievements(ctx, user.user_id);
 
-    // Move to next question
-    session.data.currentIndex++;
-    session.data.startTime = Date.now();
-    await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', session.data);
-    if (session.data.currentIndex >= session.data.questions.length) {
-        await incrementDailyTask(ctx, user.user_id, 'complete_training');
+    if (!isCorrect) {
+        const word = await getWordById(ctx.db, wordId);
+        if (word) {
+            await saveBotSession<TrainExplainSession>(ctx.db, user.user_id, 'train_explain', {
+                wordId,
+                questionType: current.direction,
+                german: word.german,
+                arabic: word.arabic,
+                userAnswer: current.options[optionIndex] ?? '',
+                correctAnswer: current.answer,
+                example: word.example,
+            }, 30);
+        }
+        await replaceWithText(
+            ctx,
+            `❌ خطأ\n\nالصحيح: *${current.answer}*`,
+            new InlineKeyboard()
+                .text('🤖 اشرح لي', 'train_explain').row()
+                .text('🏋️ أكمل التدريب', 'train_continue').row()
+                .text('🏠 الرئيسية', 'menu_main'),
+            'Markdown'
+        );
+        return;
     }
-    await showTrainingQuestion(ctx, user.user_id);
+
+    await advanceTraining(ctx, user.user_id, session.data);
+}
+
+async function continueTraining(ctx: BotContext): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (!user) {
+        await ctx.answerCallbackQuery('خطأ: المستخدم غير موجود');
+        return;
+    }
+    const session = await getBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train');
+    if (!session) {
+        await replaceWithText(ctx, 'انتهت جلسة التدريب.', mainMenuKeyboard());
+        return;
+    }
+    await deleteBotSession(ctx.db, user.user_id, 'train_explain');
+    await advanceTraining(ctx, user.user_id, session.data);
+}
+
+async function advanceTraining(ctx: BotContext, userId: number, data: TrainingSessionData): Promise<void> {
+    data.currentIndex++;
+    data.startTime = Date.now();
+    await saveBotSession<TrainingSessionData>(ctx.db, userId, 'train', data);
+    if (data.currentIndex >= data.questions.length) {
+        await incrementDailyTask(ctx, userId, 'complete_training');
+    }
+    await showTrainingQuestion(ctx, userId);
 }
 
 function buildDistractors(

@@ -213,6 +213,30 @@ export async function updateWordForUser(
     return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
 }
 
+export async function updateWordAiFieldsForUser(
+    db: D1Database,
+    userId: number,
+    wordId: number,
+    fields: { example?: string | null; example_ar?: string | null; pronunciation_ar?: string | null; level?: string | null }
+): Promise<boolean> {
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (fields.example !== undefined) { updates.push('example = ?'); values.push(fields.example); }
+    if (fields.example_ar !== undefined) { updates.push('example_ar = ?'); values.push(fields.example_ar); }
+    if (fields.pronunciation_ar !== undefined) { updates.push('pronunciation_ar = ?'); values.push(fields.pronunciation_ar); }
+    if (fields.level !== undefined) { updates.push('level = ?'); values.push(fields.level); }
+    if (updates.length === 0) return false;
+
+    values.push(wordId, userId);
+    const result = await run(
+        db,
+        `UPDATE words SET ${updates.join(', ')} WHERE word_id = ? AND added_by = ?`,
+        values
+    );
+    return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
+}
+
 export async function deleteWordForUser(
     db: D1Database,
     userId: number,

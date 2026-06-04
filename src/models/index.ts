@@ -6,6 +6,14 @@ export interface Env {
     DB: D1Database;
     TELEGRAM_BOT_TOKEN: string;
     ADMIN_TELEGRAM_IDS?: string;
+    AI_ENABLED?: string;
+    AI_PROVIDER_ORDER?: string;
+    GEMINI_API_KEYS?: string;
+    KIMI_API_KEYS?: string;
+    GROK_API_KEYS?: string;
+    GEMINI_MODEL?: string;
+    KIMI_MODEL?: string;
+    GROK_MODEL?: string;
 }
 
 export interface User {
@@ -48,6 +56,9 @@ export interface Word {
     german: string;
     arabic: string;
     example: string | null;
+    example_ar: string | null;
+    pronunciation_ar: string | null;
+    level: string | null;
     added_by: number;
     created_at: string;
 }

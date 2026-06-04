@@ -10,7 +10,7 @@ import { incrementDailyTask } from '../services/dailyTasks';
 import { replaceWithText } from './wordPanel';
 
 interface LearnSessionData {
-    words: Array<{ word_id: number; german: string; arabic: string; example: string | null; status: string; ease_factor: number; interval: number; repetitions: number; correct_count: number; wrong_count: number }>;
+    words: Array<{ word_id: number; german: string; arabic: string; example: string | null; pronunciation_ar: string | null; status: string; ease_factor: number; interval: number; repetitions: number; correct_count: number; wrong_count: number }>;
     currentIndex: number;
     startTime: number;
 }
@@ -97,6 +97,7 @@ async function showWord(ctx: BotContext, userId: number): Promise<void> {
     const text = `📚 *مراجعة* (${progress})\n\n` +
         `🇩🇪 *${word.german}*\n\n` +
         `🇦🇪 ${word.arabic}` +
+        (word.pronunciation_ar ? `\n🗣 ${word.pronunciation_ar}` : '') +
         (word.example ? `\n\n💬 مثال: _${word.example}_` : '');
 
     const keyboard = new InlineKeyboard()

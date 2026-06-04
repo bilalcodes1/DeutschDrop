@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS words (
     german TEXT NOT NULL,
     arabic TEXT NOT NULL,
     example TEXT,
+    example_ar TEXT DEFAULT NULL,
+    pronunciation_ar TEXT DEFAULT NULL,
+    level TEXT DEFAULT NULL,
     added_by INTEGER NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (added_by) REFERENCES users(user_id) ON DELETE CASCADE
@@ -214,7 +217,7 @@ CREATE TABLE IF NOT EXISTS competition_leaderboard_snapshot (
 CREATE TABLE IF NOT EXISTS bot_sessions (
     session_id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('learn', 'train', 'add_word', 'challenge', 'register', 'rename', 'support_proof', 'admin_broadcast', 'admin_announcement', 'csv_update', 'word_selection', 'word_search')),
+    type TEXT NOT NULL CHECK (type IN ('learn', 'train', 'add_word', 'challenge', 'register', 'rename', 'support_proof', 'admin_broadcast', 'admin_announcement', 'csv_update', 'word_selection', 'word_search', 'ai_word', 'train_explain')),
     data TEXT NOT NULL,
     expires_at DATETIME NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -349,6 +352,31 @@ CREATE TABLE IF NOT EXISTS notification_events (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE SET NULL
+);
+
+-- 28. ai_cache
+CREATE TABLE IF NOT EXISTS ai_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_type TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(task_type, input_hash)
+);
+
+-- 29. ai_usage
+CREATE TABLE IF NOT EXISTS ai_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    usage_date TEXT NOT NULL,
+    task_type TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, usage_date, task_type),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
 -- 20. job_runs (Cron job state tracking)

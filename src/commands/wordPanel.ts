@@ -23,7 +23,7 @@ export async function showWordDetailPanel(ctx: BotContext, wordId: number, notic
         ? await ctx.db.prepare('SELECT status FROM user_words WHERE user_id = ? AND word_id = ?').bind(user.user_id, word.word_id).first<{ status: string }>()
         : null;
     const text = (notice ? `${notice}\n\n` : '') + formatWordDetail(word, Boolean(pictogram), progress?.status ?? 'new');
-    await replaceWithText(ctx, text, wordDetailKeyboard(word.word_id, Boolean(pictogram)), 'Markdown');
+    await replaceWithText(ctx, text, wordDetailKeyboard(word, Boolean(pictogram)), 'Markdown');
 }
 
 export async function replaceWithText(
@@ -63,12 +63,24 @@ function formatWordDetail(word: Word, hasPictogram: boolean, reviewStatus: strin
         `🇩🇪 *${word.german}*\n` +
         `🇮🇶 ${word.arabic}` +
         (word.example ? `\n💬 _${word.example}_` : '') +
+        (word.example_ar ? `\n🇮🇶 _${word.example_ar}_` : '') +
+        (word.pronunciation_ar ? `\n🗣 اللفظ: ${word.pronunciation_ar}` : '') +
+        (word.level ? `\n📊 المستوى: ${word.level}` : '') +
         `\n\n🖼 الرمز التعليمي: ${hasPictogram ? 'محفوظ ✅' : 'غير معين'}` +
         `\n🔁 حالة المراجعة: ${reviewStatusLabel(reviewStatus)}`;
 }
 
-function wordDetailKeyboard(wordId: number, hasPictogram: boolean): InlineKeyboard {
+function wordDetailKeyboard(word: Word, hasPictogram: boolean): InlineKeyboard {
+    const wordId = word.word_id;
     const keyboard = new InlineKeyboard();
+    if (!word.example || !word.pronunciation_ar) {
+        keyboard.text('✨ تحسين بالذكاء الاصطناعي', `ai_improve_${wordId}`).row();
+    }
+    if (word.example && !word.pronunciation_ar) {
+        keyboard.text('🗣 توليد اللفظ', `ai_pron_${wordId}`).row();
+    }
+    keyboard.text('📊 تحديد المستوى', `ai_level_${wordId}`).row();
+
     if (hasPictogram) {
         keyboard
             .text('🖼 عرض الرمز', `pictogram_view_${wordId}`)

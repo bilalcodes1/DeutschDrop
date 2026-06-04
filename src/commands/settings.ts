@@ -210,6 +210,7 @@ function settingsNavigationKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
         .text('🎯 تغيير الهدف', 'set_goal')
         .text('🔔 الإشعارات', 'set_notifications').row()
+        .text('🤖 الذكاء الاصطناعي', 'ai_settings').row()
         .text('⬅️ رجوع للقائمة', 'menu_main');
 }
 

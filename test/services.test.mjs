@@ -561,3 +561,107 @@ test('banned users are blocked before support proofs', () => {
     assert.match(botSource, /user\?\.is_banned/);
     assert.match(supportSource, /user\.is_banned\) return next\(\)/);
 });
+
+test('optional AI coach is disabled safely and uses provider fallback', () => {
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+
+    assert.match(wranglerSource, /AI_ENABLED = "false"/);
+    assert.match(routerSource, /env\.AI_ENABLED !== 'true'/);
+    assert.match(routerSource, /AI_DISABLED/);
+    assert.match(routerSource, /AI_UNAVAILABLE/);
+    assert.match(routerSource, /geminiProvider/);
+    assert.match(routerSource, /kimiProvider/);
+    assert.match(routerSource, /grokProvider/);
+    assert.match(routerSource, /for \(const provider of orderedProviders\(env\)\)/);
+});
+
+test('AI router checks cache before rate limits and caches successful JSON', () => {
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const cacheSource = fs.readFileSync(new URL('../src/services/ai/aiCache.ts', import.meta.url), 'utf8');
+    const usageSource = fs.readFileSync(new URL('../src/services/ai/aiUsage.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0014_ai_coach.sql', import.meta.url), 'utf8');
+
+    assert.ok(routerSource.indexOf('getCachedAiResult') < routerSource.indexOf('canUseAiTask'));
+    assert.match(routerSource, /setCachedAiResult/);
+    assert.match(routerSource, /incrementAiUsage/);
+    assert.match(cacheSource, /SHA-256/);
+    assert.match(migrationSource, /UNIQUE\(task_type, input_hash\)/);
+    assert.match(usageSource, /generate_example_and_pronunciation:\s*20/);
+    assert.match(usageSource, /generate_pronunciation:\s*30/);
+    assert.match(usageSource, /explain_answer:\s*30/);
+    assert.match(usageSource, /classify_level:\s*30/);
+});
+
+test('AI prompts require strict JSON and Iraqi Arabic learning output', () => {
+    const promptsSource = fs.readFileSync(new URL('../src/services/ai/prompts.ts', import.meta.url), 'utf8');
+
+    assert.match(promptsSource, /رجّع JSON فقط/);
+    assert.match(promptsSource, /الشرح يكون عربي عراقي بسيط/);
+    assert.match(promptsSource, /"example_de"/);
+    assert.match(promptsSource, /"pronunciation_ar"/);
+    assert.match(promptsSource, /"short_explanation"/);
+    assert.match(promptsSource, /"level"/);
+});
+
+test('AI coach saves word changes only after user confirmation', () => {
+    const aiSource = fs.readFileSync(new URL('../src/commands/aiCoach.ts', import.meta.url), 'utf8');
+    const panelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(panelSource, /✨ تحسين بالذكاء الاصطناعي/);
+    assert.match(panelSource, /🗣 توليد اللفظ/);
+    assert.match(panelSource, /📊 تحديد المستوى/);
+    assert.match(aiSource, /ai_save_suggestion_/);
+    assert.match(aiSource, /ai_save_pron_/);
+    assert.match(aiSource, /ai_save_level_/);
+    assert.match(aiSource, /saveBotSession<AiWordSession>/);
+    assert.match(repoSource, /updateWordAiFieldsForUser/);
+});
+
+test('AI payloads avoid Telegram identity and private user data', () => {
+    const aiSource = fs.readFileSync(new URL('../src/commands/aiCoach.ts', import.meta.url), 'utf8');
+    const runCalls = [...aiSource.matchAll(/runAiTask<[\s\S]*?\{ userId: [\s\S]*?\}/g)].map(match => match[0]).join('\n');
+
+    assert.doesNotMatch(runCalls, /telegram_id|telegram_user_id|username|display_name|support_proof|payment|file_id/i);
+    assert.match(runCalls, /german/);
+    assert.match(runCalls, /arabic/);
+    assert.match(runCalls, /correctAnswer/);
+});
+
+test('AI pronunciation is displayed in learn, notifications, and word detail', () => {
+    const panelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
+    const learnSource = fs.readFileSync(new URL('../src/commands/learn.ts', import.meta.url), 'utf8');
+    const notifSource = fs.readFileSync(new URL('../src/commands/smartNotifications.ts', import.meta.url), 'utf8');
+    const smartServiceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+
+    assert.match(panelSource, /pronunciation_ar/);
+    assert.match(learnSource, /pronunciation_ar/);
+    assert.match(notifSource, /pronunciation_ar/);
+    assert.match(smartServiceSource, /w\.pronunciation_ar/);
+});
+
+test('training wrong answer stores explain context and handles missing context', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const aiSource = fs.readFileSync(new URL('../src/commands/aiCoach.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /train_explain/);
+    assert.match(trainSource, /correctAnswer/);
+    assert.match(trainSource, /userAnswer/);
+    assert.match(aiSource, /لا يوجد سؤال لشرحه حالياً/);
+    assert.match(aiSource, /explain_answer/);
+});
+
+test('AI migration adds cache usage and word metadata columns', () => {
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0014_ai_coach.sql', import.meta.url), 'utf8');
+    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS ai_cache/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS ai_usage/);
+    assert.match(migrationSource, /ALTER TABLE words ADD COLUMN example_ar/);
+    assert.match(migrationSource, /ALTER TABLE words ADD COLUMN pronunciation_ar/);
+    assert.match(migrationSource, /ALTER TABLE words ADD COLUMN level/);
+    assert.match(schemaSource, /example_ar TEXT DEFAULT NULL/);
+    assert.match(schemaSource, /pronunciation_ar TEXT DEFAULT NULL/);
+    assert.match(schemaSource, /level TEXT DEFAULT NULL/);
+});

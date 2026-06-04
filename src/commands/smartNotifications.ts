@@ -23,6 +23,7 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
         await replaceWithText(
             ctx,
             `🇩🇪 ${word.german}\n🇮🇶 ${word.arabic}` +
+            (word.pronunciation_ar ? `\n🗣 ${word.pronunciation_ar}` : '') +
             (word.example ? `\n\nمثال:\n${word.example}` : '') +
             `\n\nهل كنت تعرفها؟`,
             new InlineKeyboard()
