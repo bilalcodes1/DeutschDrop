@@ -48,6 +48,20 @@ export function buildPrompt(taskType: AiTaskType, input: AiTaskInput): string {
             `الإخراج JSON فقط:\n{"short_explanation":"...","correct_answer":"...","extra_example_de":"...","extra_example_ar":"..."}`;
     }
 
+    if (taskType === 'grade_training_answer') {
+        return `${RULES}\n\nالمهمة: قيّم جواب تدريب كتابي فقط.\n` +
+            `قواعد صارمة:\n` +
+            `- قيّم هل جواب المستخدم يؤدي نفس المعنى المطلوب.\n` +
+            `- لا تكن صارماً في capital letters.\n` +
+            `- لا تعتبر اختلاف الأقواس خطأ إذا المعنى نفسه.\n` +
+            `- لا تقبل جواباً بمعنى مختلف.\n` +
+            `- في الألماني، لا تقبل كلمة مختلفة حتى لو قريبة.\n` +
+            `- في العربي، اقبل الصياغة المرادفة إذا نفس المعنى.\n` +
+            `- short_feedback بالعربي العراقي البسيط، جملة واحدة فقط.\n` +
+            `المدخل: ${safeInput}\n` +
+            `الإخراج JSON فقط:\n{"is_correct":true,"confidence":0.85,"verdict":"correct","short_feedback":"..."}`;
+    }
+
     return `${RULES}\n\nالمهمة: صنّف مستوى الكلمة الألمانية A1/A2/B1 أو Unknown مع سبب قصير بالعربي.\n` +
         `المدخل: ${safeInput}\n` +
         `الإخراج JSON فقط:\n{"level":"A1","reason":"..."}`;

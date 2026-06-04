@@ -9,6 +9,7 @@ import { isHardWord, selectTrainingWords } from '../services/srs';
 import { addXp } from '../services/xpLevels';
 import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
+import { gradeTrainingAnswer } from '../services/trainingAnswerGrader';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
 import type { TrainExplainSession } from './aiCoach';
@@ -343,7 +344,6 @@ async function handleTrainAnswer(ctx: BotContext, questionIndex: number, wordId:
 async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuestion, answerText: string): Promise<void> {
     const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
     if (!user) return;
-    const isCorrect = normalizeAnswer(answerText) === normalizeAnswer(current.answer);
     const session = await getBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train');
     if (!session) return;
 
@@ -352,6 +352,16 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
         return;
     }
 
+    const word = await getWordById(ctx.db, current.word_id);
+    const grade = await gradeTrainingAnswer(ctx, {
+        questionType: current.type,
+        direction: current.direction,
+        correctAnswer: current.answer,
+        userAnswer: answerText,
+        word,
+        userId: user.user_id,
+    });
+    const isCorrect = grade.isCorrect;
     markQuestionAnswered(session.data, current, isCorrect);
 
     if (isCorrect) {
@@ -362,7 +372,6 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
     await checkAchievements(ctx, user.user_id);
 
     if (!isCorrect) {
-        const word = await getWordById(ctx.db, current.word_id);
         if (word) {
             await saveBotSession<TrainExplainSession>(ctx.db, user.user_id, 'train_explain', {
                 wordId: current.word_id,
@@ -375,9 +384,11 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
             }, 30);
         }
         await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', session.data);
+        const prefix = grade.verdict === 'almost' ? '🟡 قريب' : '❌ خطأ';
         await replaceWithText(
             ctx,
-            `❌ خطأ\n\nجوابك: *${answerText.trim()}*\nالصحيح: *${current.answer}*`,
+            `${prefix}\n\nجوابك: *${answerText.trim()}*\nالصحيح: *${current.answer}*` +
+            (grade.feedback ? `\n\n${grade.feedback}` : ''),
             new InlineKeyboard()
                 .text('🤖 اشرح لي', 'train_explain').row()
                 .text('🏋️ أكمل التدريب', 'train_continue').row()
@@ -388,7 +399,11 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
     }
 
     await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', session.data);
-    await replaceWithText(ctx, '✅ صحيح! +2 XP', new InlineKeyboard().text('🏋️ التالي', 'train_continue').text('🏠 الرئيسية', 'menu_main'));
+    await replaceWithText(
+        ctx,
+        '✅ صحيح! +2 XP' + (grade.source !== 'local' && grade.feedback ? `\n${grade.feedback}` : ''),
+        new InlineKeyboard().text('🏋️ التالي', 'train_continue').text('🏠 الرئيسية', 'menu_main')
+    );
 }
 
 async function continueTraining(ctx: BotContext): Promise<void> {

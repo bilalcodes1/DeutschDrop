@@ -256,6 +256,21 @@ test('word list first and last pages hide unavailable navigation', () => {
     assert.match(addWordSource, /word_detail_\$\{word\.word_id\}/);
 });
 
+test('word list handles invalid pages and DB errors with retry navigation', () => {
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(addWordSource, /list_words_retry/);
+    assert.match(addWordSource, /parseSafePage/);
+    assert.match(addWordSource, /Math\.min\(safeRequestedPage, totalPages - 1\)/);
+    assert.match(addWordSource, /catch \(error\)/);
+    assert.match(addWordSource, /word list load failed/);
+    assert.match(addWordSource, /تعذر تحميل الكلمات حالياً/);
+    assert.match(addWordSource, /🔄 إعادة المحاولة/);
+    assert.match(repositorySource, /LIMIT \? OFFSET \?/);
+    assert.match(repositorySource, /WHERE added_by = \?/);
+});
+
 test('word search is scoped to current user and paginated', () => {
     const repositorySource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
@@ -679,6 +694,39 @@ test('training score tracks answered correct wrong counts and duplicate answers'
     assert.match(trainSource, /markQuestionAnswered\(session\.data, current, isCorrect\)/);
     assert.match(trainSource, /Math\.round\(\(correct \/ total\) \* 100\)/);
     assert.doesNotMatch(trainSource, /6\/10|60%/);
+});
+
+test('typed training local grading handles German case and Arabic punctuation safely', () => {
+    const graderSource = fs.readFileSync(new URL('../src/services/trainingAnswerGrader.ts', import.meta.url), 'utf8');
+
+    assert.match(graderSource, /toLocaleLowerCase\('de-DE'\)/);
+    assert.match(graderSource, /replace\(\/ß\/g, 'ss'\)/);
+    assert.match(graderSource, /replace\(\/\[\\u064B-\\u065F\\u0670\]\/g, ''\)/);
+    assert.match(graderSource, /replace\(\/\[أإآٱ\]\/g, 'ا'\)/);
+    assert.match(graderSource, /replace\(\/ى\/g, 'ي'\)/);
+    assert.match(graderSource, /replace\(\/ة\/g, 'ه'\)/);
+    assert.match(graderSource, /correctWithoutParentheses === user/);
+    assert.match(graderSource, /isSingleArabicToken\(correct\) && isSingleArabicToken\(user\)/);
+});
+
+test('typed training uses AI grading only after uncertain local check', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const graderSource = fs.readFileSync(new URL('../src/services/trainingAnswerGrader.ts', import.meta.url), 'utf8');
+    const aiTypes = fs.readFileSync(new URL('../src/services/ai/aiTypes.ts', import.meta.url), 'utf8');
+    const aiUsage = fs.readFileSync(new URL('../src/services/ai/aiUsage.ts', import.meta.url), 'utf8');
+    const prompts = fs.readFileSync(new URL('../src/services/ai/prompts.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /gradeTrainingAnswer/);
+    assert.match(graderSource, /gradeTrainingAnswerLocal/);
+    assert.match(graderSource, /if \(local !== 'uncertain'\)/);
+    assert.match(graderSource, /runAiTask<AiGradeResult>/);
+    assert.match(graderSource, /confidence.*>= 0\.75/s);
+    assert.match(graderSource, /verdict === 'almost'/);
+    assert.match(graderSource, /source: 'fallback'/);
+    assert.match(aiTypes, /grade_training_answer/);
+    assert.match(aiUsage, /grade_training_answer:\s*50/);
+    assert.match(prompts, /قيّم جواب تدريب كتابي/);
+    assert.match(prompts, /لا تكن صارماً في capital letters/);
 });
 
 test('training text answers have priority over stale word edit and support flows', () => {

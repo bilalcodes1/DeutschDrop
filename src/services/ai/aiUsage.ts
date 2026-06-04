@@ -6,6 +6,7 @@ export const AI_DAILY_LIMITS: Record<AiTaskType, number> = {
     generate_pronunciation: 30,
     explain_answer: 30,
     classify_level: 30,
+    grade_training_answer: 50,
 };
 
 export interface AiUsageRow {

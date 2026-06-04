@@ -187,6 +187,16 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         await ctx.answerCallbackQuery();
     });
 
+    bot.callbackQuery('list_words_retry', async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) {
+            await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
+            return;
+        }
+        await showUserWords(ctx, user.user_id, 0);
+        await ctx.answerCallbackQuery();
+    });
+
     bot.callbackQuery(/^list_words_(\d+)$/, async (ctx) => {
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) {
@@ -194,7 +204,7 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
             return;
         }
         await deleteBotSession(ctx.db, user.user_id, 'word_search');
-        await showUserWords(ctx, user.user_id, Number(ctx.match[1]));
+        await showUserWords(ctx, user.user_id, parseSafePage(ctx.match[1]));
         await ctx.answerCallbackQuery();
     });
 
@@ -508,23 +518,35 @@ async function addWordInline(ctx: BotContext, german: string, arabic: string): P
 }
 
 async function showUserWords(ctx: BotContext, userId: number, page: number): Promise<void> {
-    const totalWords = await countWordsByUser(ctx.db, userId);
-    if (totalWords === 0) {
+    const safeRequestedPage = Number.isFinite(page) && page >= 0 ? Math.floor(page) : 0;
+    try {
+        const totalWords = await countWordsByUser(ctx.db, userId);
+        if (totalWords === 0) {
+            await replaceWithText(
+                ctx,
+                '📭 لا توجد كلمات بعد.\nأضف كلمة بهذه الصيغة:\nHaus = بيت\nأو ارفع ملف CSV.',
+                new InlineKeyboard()
+                    .text('📤 رفع CSV', 'upload_csv')
+                    .text('➕ إضافة كلمة', 'add_word').row()
+                    .text('🏠 الرئيسية', 'menu_main')
+            );
+            return;
+        }
+
+        const totalPages = Math.max(1, Math.ceil(totalWords / WORDS_PAGE_SIZE));
+        const safePage = Math.min(safeRequestedPage, totalPages - 1);
+        const visible = await getWordsByUserPaginated(ctx.db, userId, WORDS_PAGE_SIZE, safePage * WORDS_PAGE_SIZE);
+        await replaceWithText(ctx, formatWordsPage('📋 *كلماتي*', visible, safePage, totalPages, totalWords), wordsPageKeyboard(visible, safePage, totalPages, false), 'Markdown');
+    } catch (error) {
+        console.warn('word list load failed', { userId, page: safeRequestedPage, errorType: (error as Error).name ?? 'unknown' });
         await replaceWithText(
             ctx,
-            '📭 لا توجد كلمات بعد.\nأضف كلمة بهذه الصيغة:\nHaus = بيت\nأو ارفع ملف CSV.',
+            'تعذر تحميل الكلمات حالياً. جرّب مرة ثانية.',
             new InlineKeyboard()
-                .text('📤 رفع CSV', 'upload_csv')
-                .text('➕ إضافة كلمة', 'add_word').row()
+                .text('🔄 إعادة المحاولة', 'list_words_retry').row()
                 .text('🏠 الرئيسية', 'menu_main')
         );
-        return;
     }
-
-    const totalPages = Math.max(1, Math.ceil(totalWords / WORDS_PAGE_SIZE));
-    const safePage = Math.min(Math.max(page, 0), totalPages - 1);
-    const visible = await getWordsByUserPaginated(ctx.db, userId, WORDS_PAGE_SIZE, safePage * WORDS_PAGE_SIZE);
-    await replaceWithText(ctx, formatWordsPage('📋 *كلماتي*', visible, safePage, totalPages, totalWords), wordsPageKeyboard(visible, safePage, totalPages, false), 'Markdown');
 }
 
 async function showSearchWords(ctx: BotContext, userId: number, query: string, page: number): Promise<void> {
@@ -616,6 +638,11 @@ function selectionActionsKeyboard(): InlineKeyboard {
         .text('☑️ تحديد', 'select_words_0').row()
         .text('⬅️ رجوع', 'menu_words')
         .text('🏠 الرئيسية', 'menu_main');
+}
+
+function parseSafePage(value: string | undefined): number {
+    const page = Number(value);
+    return Number.isFinite(page) && page >= 0 ? Math.floor(page) : 0;
 }
 
 function wordAddedKeyboard(): InlineKeyboard {
