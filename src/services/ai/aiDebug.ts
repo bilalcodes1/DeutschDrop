@@ -69,7 +69,7 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
 
     return {
         aiEnabled: env.AI_ENABLED === 'true',
-        providerOrder: env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,openrouter,zai,mistral,cohere,gemini',
+        providerOrder: env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,mistral,openrouter,cohere,gemini',
         providers,
     };
 }
@@ -104,7 +104,7 @@ function orderedDebugProviders(env: Env): AiProvider[] {
         cohere: cohereProvider,
     };
     const names = orderedProviders(env).map(provider => provider.name);
-    for (const name of ['cloudflareAi', 'groqCloud', 'openrouter', 'zai', 'mistral', 'cohere', 'gemini'] as AiProviderName[]) {
+    for (const name of ['cloudflareAi', 'groqCloud', 'mistral', 'openrouter', 'cohere', 'gemini', 'zai'] as AiProviderName[]) {
         if (!names.includes(name)) names.push(name);
     }
     return names.map(name => byName[name]);

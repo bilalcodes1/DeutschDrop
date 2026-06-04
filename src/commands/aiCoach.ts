@@ -274,7 +274,7 @@ async function showAiSettings(ctx: BotContext): Promise<void> {
         ctx,
         `🤖 *إعدادات الذكاء الاصطناعي*\n\n` +
         `الحالة: *${enabled ? 'مفعل' : 'متوقف'}*\n` +
-        `المزوّدات: *${ctx.env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,openrouter,zai,mistral,cohere,gemini'}*\n\n` +
+        `المزوّدات: *${ctx.env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,mistral,openrouter,cohere,gemini'}*\n\n` +
         `استخدام اليوم:\n${lines || '-'}`,
         navigationKeyboard('menu_settings'),
         'Markdown'

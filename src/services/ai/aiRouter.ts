@@ -93,7 +93,7 @@ export async function runAiTask<T>(
 }
 
 export function orderedProviders(env: Env): AiProvider[] {
-    const order = (env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,openrouter,zai,mistral,cohere,gemini')
+    const order = (env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,mistral,openrouter,cohere,gemini')
         .split(',')
         .map(name => name.trim())
         .filter(isKnownProviderName);
