@@ -53,7 +53,11 @@ export async function readSafeErrorMessage(response: Response): Promise<string |
 
 function sanitizeErrorMessage(message: string): string {
     return message
+        .replace(/<[^>]*>/g, '<redacted>')
         .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
-        .replace(/[A-Za-z0-9_-]{32,}/g, '[redacted]')
+        .replace(/\b(?:gsk_|sk-|AIza|xai-|ak-)[A-Za-z0-9._-]+/g, '[redacted]')
+        .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[redacted]')
         .slice(0, 200);
 }
+
+export { sanitizeErrorMessage };

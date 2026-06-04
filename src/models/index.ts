@@ -12,10 +12,19 @@ export interface Env {
     GEMINI_API_KEYS?: string;
     KIMI_API_KEYS?: string;
     GROK_API_KEYS?: string;
+    OPENROUTER_API_KEYS?: string;
+    ZAI_API_KEYS?: string;
+    MISTRAL_API_KEYS?: string;
+    COHERE_API_KEYS?: string;
     GEMINI_MODEL?: string;
     KIMI_MODEL?: string;
     GROK_MODEL?: string;
     CLOUDFLARE_AI_MODEL?: string;
+    OPENROUTER_MODEL?: string;
+    ZAI_MODEL?: string;
+    ZAI_BASE_URL?: string;
+    MISTRAL_MODEL?: string;
+    COHERE_MODEL?: string;
 }
 
 export interface User {

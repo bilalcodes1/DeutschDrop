@@ -1,8 +1,8 @@
 import type { Env } from '../../models';
 
 export type AiTaskType = 'generate_example_and_pronunciation' | 'generate_pronunciation' | 'explain_answer' | 'classify_level';
-export type AiProviderName = 'cloudflareAi' | 'gemini' | 'kimi' | 'groqCloud';
-export type AiStatus = 'ok' | 'AI_DISABLED' | 'RATE_LIMITED' | 'AI_PROVIDER_RATE_LIMITED' | 'AI_UNAVAILABLE';
+export type AiProviderName = 'cloudflareAi' | 'groqCloud' | 'openrouter' | 'zai' | 'mistral' | 'cohere' | 'gemini' | 'kimi';
+export type AiStatus = 'ok' | 'AI_DISABLED' | 'RATE_LIMITED' | 'AI_RATE_LIMITED' | 'AI_UNAVAILABLE';
 
 export interface GenerateExampleInput {
     german: string;
@@ -38,7 +38,7 @@ export interface AiTaskResult<T = unknown> {
     model?: string | null;
 }
 
-export type AiProviderErrorType = 'AUTH' | 'RATE_LIMIT' | 'MODEL_NOT_FOUND' | 'BAD_REQUEST' | 'BAD_JSON' | 'NETWORK' | 'UNKNOWN' | 'SKIPPED_NO_KEY';
+export type AiProviderErrorType = 'AUTH' | 'RATE_LIMIT' | 'MODEL_NOT_FOUND' | 'BAD_REQUEST' | 'BAD_JSON' | 'BAD_RESPONSE' | 'NETWORK' | 'UNKNOWN' | 'SKIPPED_NO_KEY' | 'SKIPPED_NO_BINDING';
 
 export interface AiProviderRunOptions {
     jsonMode?: boolean;

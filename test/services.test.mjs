@@ -6,7 +6,7 @@ import { calculateNextReview } from '../dist/services/srs.js';
 import { getLevelFromXp, getProgressToNextLevel } from '../dist/services/xpMath.js';
 import { buildArasaacImageUrl, normalizeArasaacResults, searchEducationalPictograms } from '../dist/services/pictogramSearch.js';
 import { getAdminTelegramIds, isAdminTelegramId } from '../dist/services/adminAccess.js';
-import { classifyHttpStatus } from '../dist/services/ai/aiErrors.js';
+import { classifyHttpStatus, sanitizeErrorMessage } from '../dist/services/ai/aiErrors.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -683,9 +683,9 @@ test('AI debug marks providers without keys as SKIPPED_NO_KEY', () => {
     const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
 
     assert.match(debugSource, /hasProviderKey/);
-    assert.match(debugSource, /raw_text_test_status: 'SKIPPED_NO_KEY'/);
-    assert.match(debugSource, /json_test_status: 'SKIPPED_NO_KEY'/);
-    assert.match(debugSource, /error_type: 'SKIPPED_NO_KEY'/);
+    assert.match(debugSource, /SKIPPED_NO_KEY/);
+    assert.match(debugSource, /SKIPPED_NO_BINDING/);
+    assert.match(debugSource, /SKIPPED_NO_KEY/);
     assert.match(debugSource, /gemini/);
     assert.match(debugSource, /kimi/);
     assert.match(debugSource, /groqCloud/);
@@ -753,7 +753,7 @@ test('AI rate limit and GroqCloud bad request diagnostics are safe', () => {
     const errorsSource = fs.readFileSync(new URL('../src/services/ai/aiErrors.ts', import.meta.url), 'utf8');
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 
-    assert.match(routerSource, /AI_PROVIDER_RATE_LIMITED/);
+    assert.match(routerSource, /AI_RATE_LIMITED/);
     assert.match(routerSource, /rateLimitedProviders\+\+/);
     assert.match(routerSource, /خدمة الذكاء الصناعي وصلت حد الاستخدام حالياً\. جرّب لاحقاً\./);
     assert.match(groqCloudSource, /readSafeErrorMessage\(response\)/);
@@ -761,7 +761,7 @@ test('AI rate limit and GroqCloud bad request diagnostics are safe', () => {
     assert.match(debugSource, /safe_message/);
     assert.match(errorsSource, /slice\(0, 200\)/);
     assert.match(errorsSource, /Bearer \[redacted\]/);
-    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,gemini"/);
+    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,openrouter,zai,mistral,cohere,gemini"/);
     assert.match(wranglerSource, /GROK_MODEL = "llama-3\.1-8b-instant"/);
 });
 
@@ -772,7 +772,7 @@ test('AI configuration uses GroqCloud endpoint only', () => {
     const kimiSource = fs.readFileSync(new URL('../src/services/ai/providers/kimiProvider.ts', import.meta.url), 'utf8');
     const allAiSource = routerSource + debugSource + groqCloudSource;
 
-    assert.match(routerSource, /cloudflareAi,groqCloud,gemini/);
+    assert.match(routerSource, /cloudflareAi,groqCloud,openrouter,zai,mistral,cohere,gemini/);
     assert.match(routerSource, /name === 'groqCloud'/);
     assert.match(groqCloudSource, /api\.groq\.com\/openai\/v1\/chat\/completions/);
     assert.match(groqCloudSource, /extractOpenAiCompatibleText/);
@@ -802,7 +802,7 @@ test('AI router starts with Cloudflare AI and keeps Kimi out of current order', 
     const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 
-    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,gemini"/);
+    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,openrouter,zai,mistral,cohere,gemini"/);
     assert.doesNotMatch(wranglerSource.match(/AI_PROVIDER_ORDER = "([^"]+)"/)?.[1] ?? '', /kimi/);
     assert.match(routerSource, /cloudflareAi: cloudflareAiProvider/);
     assert.match(routerSource, /groqCloud: groqCloudProvider/);
@@ -835,7 +835,77 @@ test('Cloudflare AI fallback order keeps GroqCloud available after bad JSON', ()
 
     assert.match(routerSource, /safeProviderWarn\(provider\.name, 'BAD_JSON'\)/);
     assert.match(routerSource, /continue;/);
-    assert.ok(routerSource.indexOf('cloudflareAi,groqCloud,gemini') >= 0);
+    assert.ok(routerSource.indexOf('cloudflareAi,groqCloud,openrouter,zai,mistral,cohere,gemini') >= 0);
     assert.match(debugSource, /cloudflareAi/);
     assert.match(debugSource, /groqCloud/);
+});
+
+test('new AI providers use the requested endpoints and models', () => {
+    const openRouterSource = fs.readFileSync(new URL('../src/services/ai/providers/openRouterProvider.ts', import.meta.url), 'utf8');
+    const zaiSource = fs.readFileSync(new URL('../src/services/ai/providers/zaiProvider.ts', import.meta.url), 'utf8');
+    const mistralSource = fs.readFileSync(new URL('../src/services/ai/providers/mistralProvider.ts', import.meta.url), 'utf8');
+    const cohereSource = fs.readFileSync(new URL('../src/services/ai/providers/cohereProvider.ts', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+
+    assert.match(openRouterSource, /https:\/\/openrouter\.ai\/api\/v1\/chat\/completions/);
+    assert.match(openRouterSource, /HTTP-Referer/);
+    assert.match(openRouterSource, /X-Title/);
+    assert.match(openRouterSource, /openrouter\/free/);
+    assert.match(zaiSource, /https:\/\/api\.z\.ai\/api\/paas\/v4\/chat\/completions/);
+    assert.match(zaiSource, /env\.ZAI_BASE_URL/);
+    assert.match(zaiSource, /glm-4\.5-air/);
+    assert.match(mistralSource, /https:\/\/api\.mistral\.ai\/v1\/chat\/completions/);
+    assert.match(mistralSource, /mistral-small-latest/);
+    assert.match(cohereSource, /https:\/\/api\.cohere\.com\/v2\/chat/);
+    assert.match(cohereSource, /command-r7b-12-2024/);
+    assert.match(wranglerSource, /OPENROUTER_MODEL = "openrouter\/free"/);
+    assert.match(wranglerSource, /ZAI_MODEL = "glm-4\.5-air"/);
+    assert.match(wranglerSource, /MISTRAL_MODEL = "mistral-small-latest"/);
+    assert.match(wranglerSource, /COHERE_MODEL = "command-r7b-12-2024"/);
+});
+
+test('new AI providers extract text safely from their response structures', () => {
+    const openRouterSource = fs.readFileSync(new URL('../src/services/ai/providers/openRouterProvider.ts', import.meta.url), 'utf8');
+    const zaiSource = fs.readFileSync(new URL('../src/services/ai/providers/zaiProvider.ts', import.meta.url), 'utf8');
+    const mistralSource = fs.readFileSync(new URL('../src/services/ai/providers/mistralProvider.ts', import.meta.url), 'utf8');
+    const cohereSource = fs.readFileSync(new URL('../src/services/ai/providers/cohereProvider.ts', import.meta.url), 'utf8');
+    const kimiSource = fs.readFileSync(new URL('../src/services/ai/providers/kimiProvider.ts', import.meta.url), 'utf8');
+
+    assert.match(openRouterSource, /extractOpenAiCompatibleText/);
+    assert.match(zaiSource, /extractOpenAiCompatibleText/);
+    assert.match(mistralSource, /extractOpenAiCompatibleText/);
+    assert.match(kimiSource, /choices\?\.\[0\]\?\.message\?\.content/);
+    assert.match(cohereSource, /message\?: \{ content\?: string \| Array/);
+    assert.match(cohereSource, /value\.message\.content\.map/);
+    assert.match(cohereSource, /BAD_RESPONSE/);
+});
+
+test('AI router and debug include the expanded provider order without Kimi', () => {
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+    const providerOrder = wranglerSource.match(/AI_PROVIDER_ORDER = "([^"]+)"/)?.[1] ?? '';
+
+    assert.equal(providerOrder, 'cloudflareAi,groqCloud,openrouter,zai,mistral,cohere,gemini');
+    assert.doesNotMatch(providerOrder, /kimi/);
+    assert.match(routerSource, /openrouter: openRouterProvider/);
+    assert.match(routerSource, /zai: zaiProvider/);
+    assert.match(routerSource, /mistral: mistralProvider/);
+    assert.match(routerSource, /cohere: cohereProvider/);
+    assert.match(debugSource, /OpenRouter/);
+    assert.match(debugSource, /Z\.ai/);
+    assert.match(debugSource, /Mistral/);
+    assert.match(debugSource, /Cohere/);
+    assert.match(debugSource, /openrouter_chat_completions/);
+    assert.match(debugSource, /zai_chat_completions/);
+    assert.match(debugSource, /mistral_chat_completions/);
+    assert.match(debugSource, /cohere_chat_v2/);
+});
+
+test('safe AI error messages redact known secret patterns', () => {
+    assert.doesNotMatch(sanitizeErrorMessage('bad gsk_abcdefghijklmnopqrstuvwxyz123456'), /gsk_/);
+    assert.doesNotMatch(sanitizeErrorMessage('bad sk-abcdefghijklmnopqrstuvwxyz123456'), /sk-/);
+    assert.doesNotMatch(sanitizeErrorMessage('bad AIzaabcdefghijklmnopqrstuvwxyz123456'), /AIza/);
+    assert.doesNotMatch(sanitizeErrorMessage('bad <ak-abcdefghijklmnopqrstuvwxyz123456>'), /ak-/);
+    assert.match(sanitizeErrorMessage('bad <ak-abcdefghijklmnopqrstuvwxyz123456>'), /<redacted>/);
 });
