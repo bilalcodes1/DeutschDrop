@@ -17,6 +17,7 @@ export { getAiUsageSummary };
 export const AI_ERROR_MESSAGES: Record<Exclude<AiTaskResult['status'], 'ok'>, string> = {
     AI_DISABLED: 'الذكاء الاصطناعي غير مفعل حالياً.',
     RATE_LIMITED: 'وصلت للحد اليومي لاستخدام الذكاء الصناعي. جرّب لاحقاً.',
+    AI_PROVIDER_RATE_LIMITED: 'خدمة الذكاء الصناعي وصلت حد الاستخدام حالياً. جرّب لاحقاً.',
     AI_UNAVAILABLE: 'خدمة الذكاء الصناعي غير متاحة حالياً. جرّب لاحقاً.',
 };
 
@@ -44,15 +45,19 @@ export async function runAiTask<T>(
     if (!await canUseAiTask(db, options.userId, taskType)) return { status: 'RATE_LIMITED' };
 
     const prompt = buildPrompt(taskType, input);
+    let attemptedProviders = 0;
+    let rateLimitedProviders = 0;
     for (const provider of orderedProviders(env)) {
         if (!hasProviderKey(env, provider.name)) {
             safeProviderWarn(provider.name, 'SKIPPED_NO_KEY');
             continue;
         }
+        attemptedProviders++;
         try {
             const response = await provider.run(env, prompt, { jsonMode: true });
             if (!response.ok) {
-                safeProviderWarn(provider.name, response.errorType ?? 'UNKNOWN', response.status);
+                if (response.errorType === 'RATE_LIMIT') rateLimitedProviders++;
+                safeProviderWarn(provider.name, response.errorType ?? 'UNKNOWN', response.status, response.safeMessage);
                 continue;
             }
             const result = parseJsonResult<T>(response.text ?? '');
@@ -67,6 +72,10 @@ export async function runAiTask<T>(
             safeProviderWarn(provider.name, 'UNKNOWN');
             // Provider fallback is intentional. Do not expose request details or keys.
         }
+    }
+
+    if (attemptedProviders > 0 && attemptedProviders === rateLimitedProviders) {
+        return { status: 'AI_PROVIDER_RATE_LIMITED' };
     }
 
     return { status: 'AI_UNAVAILABLE' };

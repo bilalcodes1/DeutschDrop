@@ -717,6 +717,10 @@ test('AI providers use correct endpoints models and response extraction paths', 
     assert.match(geminiSource, /candidates\?\.\[0\]\?\.content\?\.parts/);
     assert.match(kimiSource, /https:\/\/api\.moonshot\.ai\/v1\/chat\/completions/);
     assert.match(grokSource, /https:\/\/api\.x\.ai\/v1\/chat\/completions/);
+    assert.match(grokSource, /Authorization: `Bearer \$\{key\}`/);
+    assert.match(grokSource, /role: 'system'/);
+    assert.match(grokSource, /role: 'user', content: prompt/);
+    assert.match(grokSource, /max_tokens: options\.maxTokens \?\? 300/);
     assert.match(kimiSource, /choices\?\.\[0\]\?\.message\?\.content/);
     assert.match(grokSource, /extractOpenAiCompatibleText/);
     assert.match(debugSource, /Reply with OK/);
@@ -737,4 +741,22 @@ test('AI router continues after provider errors and can return later provider su
     assert.match(errorsSource, /MODEL_NOT_FOUND/);
     assert.match(errorsSource, /BAD_REQUEST/);
     assert.match(errorsSource, /RATE_LIMIT/);
+});
+
+test('AI rate limit and Grok bad request diagnostics are safe', () => {
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const grokSource = fs.readFileSync(new URL('../src/services/ai/providers/grokProvider.ts', import.meta.url), 'utf8');
+    const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
+    const errorsSource = fs.readFileSync(new URL('../src/services/ai/aiErrors.ts', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+
+    assert.match(routerSource, /AI_PROVIDER_RATE_LIMITED/);
+    assert.match(routerSource, /rateLimitedProviders\+\+/);
+    assert.match(routerSource, /خدمة الذكاء الصناعي وصلت حد الاستخدام حالياً\. جرّب لاحقاً\./);
+    assert.match(grokSource, /readSafeErrorMessage\(response\)/);
+    assert.match(grokSource, /safeMessage/);
+    assert.match(debugSource, /safe_message/);
+    assert.match(errorsSource, /slice\(0, 200\)/);
+    assert.match(errorsSource, /Bearer \[redacted\]/);
+    assert.match(wranglerSource, /GROK_MODEL = "ضع هنا الموديل الصحيح من xAI console"/);
 });

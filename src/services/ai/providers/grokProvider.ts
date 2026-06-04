@@ -1,6 +1,6 @@
 import type { Env } from '../../../models';
 import type { AiProvider } from '../aiTypes';
-import { classifyHttpStatus } from '../aiErrors';
+import { classifyHttpStatus, readSafeErrorMessage } from '../aiErrors';
 import { extractOpenAiCompatibleText } from './kimiProvider';
 
 export const grokProvider: AiProvider = {
@@ -18,15 +18,17 @@ export const grokProvider: AiProvider = {
                 },
                 body: JSON.stringify({
                     model,
+                    messages: [
+                        { role: 'system', content: 'You are a concise German learning assistant. Follow the user instruction exactly.' },
+                        { role: 'user', content: prompt },
+                    ],
                     temperature: 0.2,
-                    max_tokens: options.maxTokens ?? 256,
-                    messages: [{ role: 'user', content: prompt }],
-                    ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+                    max_tokens: options.maxTokens ?? 300,
                 }),
             });
             if (!response.ok) {
-                await readSafeError(response);
-                return { ok: false, errorType: classifyHttpStatus(response.status), status: response.status, model };
+                const safeMessage = await readSafeErrorMessage(response);
+                return { ok: false, errorType: classifyHttpStatus(response.status), status: response.status, safeMessage, model };
             }
             const json = await response.json() as unknown;
             const text = extractOpenAiCompatibleText(json);
@@ -44,12 +46,4 @@ export function getGrokModel(env: Env): string {
 
 function firstKey(value?: string): string | null {
     return value?.split(',').map(v => v.trim()).find(Boolean) ?? null;
-}
-
-async function readSafeError(response: Response): Promise<void> {
-    try {
-        await response.text();
-    } catch {
-        // Keep diagnostics classified only.
-    }
 }

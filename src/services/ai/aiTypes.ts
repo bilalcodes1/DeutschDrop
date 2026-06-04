@@ -2,7 +2,7 @@ import type { Env } from '../../models';
 
 export type AiTaskType = 'generate_example_and_pronunciation' | 'generate_pronunciation' | 'explain_answer' | 'classify_level';
 export type AiProviderName = 'gemini' | 'kimi' | 'grok';
-export type AiStatus = 'ok' | 'AI_DISABLED' | 'RATE_LIMITED' | 'AI_UNAVAILABLE';
+export type AiStatus = 'ok' | 'AI_DISABLED' | 'RATE_LIMITED' | 'AI_PROVIDER_RATE_LIMITED' | 'AI_UNAVAILABLE';
 
 export interface GenerateExampleInput {
     german: string;
@@ -51,6 +51,7 @@ export interface AiProviderResponse {
     json?: unknown;
     errorType?: AiProviderErrorType;
     status?: number;
+    safeMessage?: string;
     model?: string | null;
 }
 

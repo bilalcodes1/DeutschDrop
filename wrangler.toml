@@ -9,7 +9,7 @@ AI_ENABLED = "true"
 AI_PROVIDER_ORDER = "gemini,kimi,grok"
 GEMINI_MODEL = "gemini-2.0-flash"
 KIMI_MODEL = "moonshot-v1-8k"
-GROK_MODEL = "grok-2-latest"
+GROK_MODEL = "ضع هنا الموديل الصحيح من xAI console"
 
 [[d1_databases]]
 binding = "DB"

@@ -15,6 +15,7 @@ interface ProviderDebugResult {
     json_test_status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY';
     error_type?: AiErrorType;
     status_code?: number;
+    safe_message?: string;
 }
 
 export interface AiDebugReport {
@@ -55,6 +56,7 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
             json_test_status: jsonOk ? 'OK' : 'FAILED',
             ...(error.error_type ? { error_type: error.error_type } : {}),
             ...(error.status_code ? { status_code: error.status_code } : {}),
+            ...(error.safe_message ? { safe_message: error.safe_message } : {}),
         } satisfies ProviderDebugResult;
     }));
 
@@ -77,7 +79,8 @@ export function formatAiDebugReport(report: AiDebugReport): string {
         `raw_text_test_status: ${provider.raw_text_test_status}\n` +
         `json_test_status: ${provider.json_test_status}` +
         (provider.error_type ? `\nerror_type: ${provider.error_type}` : '') +
-        (provider.status_code ? `\nstatus_code: ${provider.status_code}` : '')
+        (provider.status_code ? `\nstatus_code: ${provider.status_code}` : '') +
+        (provider.safe_message ? `\nsafe_message: ${provider.safe_message}` : '')
     ).join('');
     return title + body;
 }
@@ -103,10 +106,10 @@ function firstError(
     raw: Awaited<ReturnType<AiProvider['run']>>,
     json: Awaited<ReturnType<AiProvider['run']>> | null,
     jsonOk: boolean
-): { error_type?: AiErrorType; status_code?: number } {
-    if (!raw.ok) return { error_type: raw.errorType ?? 'UNKNOWN', status_code: raw.status };
+): { error_type?: AiErrorType; status_code?: number; safe_message?: string } {
+    if (!raw.ok) return { error_type: raw.errorType ?? 'UNKNOWN', status_code: raw.status, safe_message: raw.safeMessage };
     if (!json) return {};
-    if (!json.ok) return { error_type: json.errorType ?? 'UNKNOWN', status_code: json.status };
+    if (!json.ok) return { error_type: json.errorType ?? 'UNKNOWN', status_code: json.status, safe_message: json.safeMessage };
     if (!jsonOk) return { error_type: 'BAD_JSON' };
     return {};
 }
