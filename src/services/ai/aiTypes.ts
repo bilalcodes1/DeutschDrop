@@ -38,9 +38,25 @@ export interface AiTaskResult<T = unknown> {
     model?: string | null;
 }
 
+export type AiProviderErrorType = 'AUTH' | 'RATE_LIMIT' | 'MODEL_NOT_FOUND' | 'BAD_REQUEST' | 'BAD_JSON' | 'NETWORK' | 'UNKNOWN' | 'SKIPPED_NO_KEY';
+
+export interface AiProviderRunOptions {
+    jsonMode?: boolean;
+    maxTokens?: number;
+}
+
+export interface AiProviderResponse {
+    ok: boolean;
+    text?: string;
+    json?: unknown;
+    errorType?: AiProviderErrorType;
+    status?: number;
+    model?: string | null;
+}
+
 export interface AiProvider {
     name: AiProviderName;
-    run(env: Env, prompt: string): Promise<{ text: string; model: string | null }>;
+    run(env: Env, prompt: string, options?: AiProviderRunOptions): Promise<AiProviderResponse>;
 }
 
 export interface RunAiOptions {

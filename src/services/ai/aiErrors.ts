@@ -1,4 +1,6 @@
-export type AiErrorType = 'RATE_LIMIT' | 'AUTH' | 'BAD_JSON' | 'NETWORK' | 'UNKNOWN' | 'SKIPPED_NO_KEY';
+import type { AiProviderErrorType } from './aiTypes';
+
+export type AiErrorType = AiProviderErrorType;
 
 export class AiProviderFailure extends Error {
     constructor(
@@ -12,6 +14,8 @@ export class AiProviderFailure extends Error {
 export function classifyHttpStatus(status: number): AiErrorType {
     if (status === 401 || status === 403) return 'AUTH';
     if (status === 429) return 'RATE_LIMIT';
+    if (status === 404) return 'MODEL_NOT_FOUND';
+    if (status === 400) return 'BAD_REQUEST';
     return 'UNKNOWN';
 }
 

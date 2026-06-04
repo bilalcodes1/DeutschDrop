@@ -1,6 +1,6 @@
 import type { Env } from '../../models';
 import type { AiProvider, AiProviderName } from './aiTypes';
-import { classifyAiError, type AiErrorType } from './aiErrors';
+import type { AiErrorType } from './aiErrors';
 import { countProviderKeys, getProviderModel, hasProviderKey, orderedProviders, parseJsonResult } from './aiRouter';
 import { geminiProvider } from './providers/geminiProvider';
 import { kimiProvider } from './providers/kimiProvider';
@@ -10,7 +10,9 @@ interface ProviderDebugResult {
     provider: AiProviderName;
     keys: number;
     model: string;
-    status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY';
+    endpoint_type: 'gemini_generateContent' | 'openai_chat_completions';
+    raw_text_test_status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY';
+    json_test_status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY';
     error_type?: AiErrorType;
     status_code?: number;
 }
@@ -29,40 +31,31 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
                 provider: provider.name,
                 keys,
                 model: getProviderModel(env, provider.name),
-                status: 'SKIPPED_NO_KEY',
+                endpoint_type: endpointType(provider.name),
+                raw_text_test_status: 'SKIPPED_NO_KEY',
+                json_test_status: 'SKIPPED_NO_KEY',
                 error_type: 'SKIPPED_NO_KEY',
             } satisfies ProviderDebugResult;
         }
 
-        try {
-            const response = await provider.run(env, debugPrompt(provider.name));
-            const parsed = parseJsonResult<{ ok?: boolean; provider?: string }>(response.text);
-            if (!parsed?.ok || parsed.provider !== provider.name) {
-                return {
-                    provider: provider.name,
-                    keys,
-                    model: getProviderModel(env, provider.name),
-                    status: 'FAILED',
-                    error_type: 'BAD_JSON',
-                } satisfies ProviderDebugResult;
-            }
-            return {
-                provider: provider.name,
-                keys,
-                model: response.model || getProviderModel(env, provider.name),
-                status: 'OK',
-            } satisfies ProviderDebugResult;
-        } catch (error) {
-            const classified = classifyAiError(error);
-            return {
-                provider: provider.name,
-                keys,
-                model: getProviderModel(env, provider.name),
-                status: 'FAILED',
-                error_type: classified.type,
-                status_code: classified.status,
-            } satisfies ProviderDebugResult;
-        }
+        const raw = await provider.run(env, 'Reply with OK', { jsonMode: false, maxTokens: 32 });
+        const json = raw.ok
+            ? await provider.run(env, debugPrompt(provider.name), { jsonMode: true, maxTokens: 128 })
+            : null;
+
+        const jsonParsed = json?.ok ? parseJsonResult<{ ok?: boolean; provider?: string }>(json.text ?? '') : null;
+        const jsonOk = Boolean(json?.ok && jsonParsed?.ok && jsonParsed.provider === provider.name);
+        const error = firstError(raw, json, jsonOk);
+        return {
+            provider: provider.name,
+            keys,
+            model: raw.model || json?.model || getProviderModel(env, provider.name),
+            endpoint_type: endpointType(provider.name),
+            raw_text_test_status: raw.ok && (raw.text ?? '').trim().includes('OK') ? 'OK' : 'FAILED',
+            json_test_status: jsonOk ? 'OK' : 'FAILED',
+            ...(error.error_type ? { error_type: error.error_type } : {}),
+            ...(error.status_code ? { status_code: error.status_code } : {}),
+        } satisfies ProviderDebugResult;
     }));
 
     return {
@@ -80,7 +73,9 @@ export function formatAiDebugReport(report: AiDebugReport): string {
         `\n\n${providerLabel(provider.provider)}:\n` +
         `keys: ${provider.keys}\n` +
         `model: ${provider.model}\n` +
-        `status: ${provider.status}` +
+        `endpoint_type: ${provider.endpoint_type}\n` +
+        `raw_text_test_status: ${provider.raw_text_test_status}\n` +
+        `json_test_status: ${provider.json_test_status}` +
         (provider.error_type ? `\nerror_type: ${provider.error_type}` : '') +
         (provider.status_code ? `\nstatus_code: ${provider.status_code}` : '')
     ).join('');
@@ -102,6 +97,22 @@ function orderedDebugProviders(env: Env): AiProvider[] {
 
 function debugPrompt(providerName: AiProviderName): string {
     return `Return this exact JSON only:\n{"ok":true,"provider":"${providerName}"}`;
+}
+
+function firstError(
+    raw: Awaited<ReturnType<AiProvider['run']>>,
+    json: Awaited<ReturnType<AiProvider['run']>> | null,
+    jsonOk: boolean
+): { error_type?: AiErrorType; status_code?: number } {
+    if (!raw.ok) return { error_type: raw.errorType ?? 'UNKNOWN', status_code: raw.status };
+    if (!json) return {};
+    if (!json.ok) return { error_type: json.errorType ?? 'UNKNOWN', status_code: json.status };
+    if (!jsonOk) return { error_type: 'BAD_JSON' };
+    return {};
+}
+
+function endpointType(providerName: AiProviderName): ProviderDebugResult['endpoint_type'] {
+    return providerName === 'gemini' ? 'gemini_generateContent' : 'openai_chat_completions';
 }
 
 function providerLabel(providerName: AiProviderName): string {

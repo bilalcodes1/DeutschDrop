@@ -5,8 +5,11 @@ compatibility_date = "2024-06-01"
 [vars]
 ENVIRONMENT = "production"
 ADMIN_TELEGRAM_IDS = "8590766269,8014388174"
-AI_ENABLED = "false"
+AI_ENABLED = "true"
 AI_PROVIDER_ORDER = "gemini,kimi,grok"
+GEMINI_MODEL = "gemini-2.0-flash"
+KIMI_MODEL = "moonshot-v1-8k"
+GROK_MODEL = "grok-2-latest"
 
 [[d1_databases]]
 binding = "DB"

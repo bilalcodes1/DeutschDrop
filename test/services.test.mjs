@@ -682,7 +682,8 @@ test('AI debug marks providers without keys as SKIPPED_NO_KEY', () => {
     const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
 
     assert.match(debugSource, /hasProviderKey/);
-    assert.match(debugSource, /status: 'SKIPPED_NO_KEY'/);
+    assert.match(debugSource, /raw_text_test_status: 'SKIPPED_NO_KEY'/);
+    assert.match(debugSource, /json_test_status: 'SKIPPED_NO_KEY'/);
     assert.match(debugSource, /error_type: 'SKIPPED_NO_KEY'/);
     assert.match(debugSource, /gemini/);
     assert.match(debugSource, /kimi/);
@@ -696,8 +697,44 @@ test('AI diagnostics classify bad JSON and 401 safely', () => {
     const errorsSource = fs.readFileSync(new URL('../src/services/ai/aiErrors.ts', import.meta.url), 'utf8');
 
     assert.equal(classifyHttpStatus(401), 'AUTH');
+    assert.equal(classifyHttpStatus(404), 'MODEL_NOT_FOUND');
+    assert.equal(classifyHttpStatus(400), 'BAD_REQUEST');
+    assert.equal(classifyHttpStatus(429), 'RATE_LIMIT');
     assert.match(debugSource, /error_type: 'BAD_JSON'/);
     assert.match(routerSource, /safeProviderWarn\(provider\.name, 'BAD_JSON'\)/);
     assert.match(providerSource, /classifyHttpStatus\(response\.status\)/);
     assert.match(errorsSource, /AI provider failed: provider=/);
+});
+
+test('AI providers use correct endpoints models and response extraction paths', () => {
+    const geminiSource = fs.readFileSync(new URL('../src/services/ai/providers/geminiProvider.ts', import.meta.url), 'utf8');
+    const kimiSource = fs.readFileSync(new URL('../src/services/ai/providers/kimiProvider.ts', import.meta.url), 'utf8');
+    const grokSource = fs.readFileSync(new URL('../src/services/ai/providers/grokProvider.ts', import.meta.url), 'utf8');
+    const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
+
+    assert.match(geminiSource, /generativelanguage\.googleapis\.com\/v1beta\/models\/\$\{model\}:generateContent/);
+    assert.match(geminiSource, /gemini-2\.0-flash/);
+    assert.match(geminiSource, /candidates\?\.\[0\]\?\.content\?\.parts/);
+    assert.match(kimiSource, /https:\/\/api\.moonshot\.ai\/v1\/chat\/completions/);
+    assert.match(grokSource, /https:\/\/api\.x\.ai\/v1\/chat\/completions/);
+    assert.match(kimiSource, /choices\?\.\[0\]\?\.message\?\.content/);
+    assert.match(grokSource, /extractOpenAiCompatibleText/);
+    assert.match(debugSource, /Reply with OK/);
+    assert.match(debugSource, /raw_text_test_status/);
+    assert.match(debugSource, /json_test_status/);
+    assert.match(debugSource, /endpoint_type/);
+});
+
+test('AI router continues after provider errors and can return later provider success', () => {
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const errorsSource = fs.readFileSync(new URL('../src/services/ai/aiErrors.ts', import.meta.url), 'utf8');
+
+    assert.match(routerSource, /for \(const provider of orderedProviders\(env\)\)/);
+    assert.match(routerSource, /if \(!response\.ok\)/);
+    assert.match(routerSource, /continue;/);
+    assert.match(routerSource, /return \{ status: 'ok', result, provider: provider\.name/);
+    assert.match(routerSource, /return \{ status: 'AI_UNAVAILABLE' \}/);
+    assert.match(errorsSource, /MODEL_NOT_FOUND/);
+    assert.match(errorsSource, /BAD_REQUEST/);
+    assert.match(errorsSource, /RATE_LIMIT/);
 });

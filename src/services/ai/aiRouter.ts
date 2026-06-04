@@ -7,7 +7,10 @@ import { canUseAiTask, getAiUsageSummary, incrementAiUsage } from './aiUsage';
 import { geminiProvider } from './providers/geminiProvider';
 import { kimiProvider } from './providers/kimiProvider';
 import { grokProvider } from './providers/grokProvider';
-import { classifyAiError, safeProviderWarn } from './aiErrors';
+import { safeProviderWarn } from './aiErrors';
+import { getGeminiModel } from './providers/geminiProvider';
+import { getKimiModel } from './providers/kimiProvider';
+import { getGrokModel } from './providers/grokProvider';
 
 export { getAiUsageSummary };
 
@@ -47,8 +50,12 @@ export async function runAiTask<T>(
             continue;
         }
         try {
-            const response = await provider.run(env, prompt);
-            const result = parseJsonResult<T>(response.text);
+            const response = await provider.run(env, prompt, { jsonMode: true });
+            if (!response.ok) {
+                safeProviderWarn(provider.name, response.errorType ?? 'UNKNOWN', response.status);
+                continue;
+            }
+            const result = parseJsonResult<T>(response.text ?? '');
             if (!result) {
                 safeProviderWarn(provider.name, 'BAD_JSON');
                 continue;
@@ -57,8 +64,7 @@ export async function runAiTask<T>(
             await incrementAiUsage(db, options.userId, taskType);
             return { status: 'ok', result, provider: provider.name, model: response.model };
         } catch (error) {
-            const classified = classifyAiError(error);
-            safeProviderWarn(provider.name, classified.type, classified.status);
+            safeProviderWarn(provider.name, 'UNKNOWN');
             // Provider fallback is intentional. Do not expose request details or keys.
         }
     }
@@ -107,9 +113,9 @@ export function hasProviderKey(env: Env, providerName: AiProviderName): boolean 
 }
 
 export function getProviderModel(env: Env, providerName: AiProviderName): string {
-    if (providerName === 'gemini') return env.GEMINI_MODEL || 'gemini-1.5-flash';
-    if (providerName === 'kimi') return env.KIMI_MODEL || 'moonshot-v1-8k';
-    return env.GROK_MODEL || 'grok-2-latest';
+    if (providerName === 'gemini') return getGeminiModel(env);
+    if (providerName === 'kimi') return getKimiModel(env);
+    return getGrokModel(env);
 }
 
 function providerKeyString(env: Env, providerName: AiProviderName): string {
