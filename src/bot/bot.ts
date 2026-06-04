@@ -22,6 +22,7 @@ import { registerSmartNotificationCommand } from '../commands/smartNotifications
 import { registerAiCoachCommand } from '../commands/aiCoach';
 import { getUserByTelegramId, isRegisteredUser } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
+import { safeAnswerCallback, showCallbackError } from './callbacks';
 
 export function createBot(token: string, env: Env): Bot<BotContext> {
     const bot = new Bot<BotContext>(token);
@@ -35,10 +36,16 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     bot.use(async (ctx, next) => {
         if (ctx.callbackQuery) {
             const answer = ctx.answerCallbackQuery.bind(ctx);
-            await answer().catch(() => {});
+            await safeAnswerCallback(ctx);
             ctx.answerCallbackQuery = ((...args: Parameters<typeof ctx.answerCallbackQuery>) => answer(...args).catch(() => {})) as typeof ctx.answerCallbackQuery;
         }
-        await next();
+        try {
+            await next();
+        } catch (error) {
+            if (!ctx.callbackQuery) throw error;
+            console.warn('Callback middleware caught handler error');
+            await showCallbackError(ctx);
+        }
     });
 
     bot.use(async (ctx, next) => {

@@ -154,7 +154,8 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
                 await incrementDailyTask(ctx, user.user_id, 'learn_words');
                 await checkAchievements(ctx, user.user_id);
                 await ctx.reply(
-                    `✅ تمت الإضافة!\n\n🇩🇪 ${pending.data.german}\n🇦🇪 ${text}`
+                    `✅ تمت الإضافة!\n\n🇩🇪 ${pending.data.german}\n🇦🇪 ${text}`,
+                    { reply_markup: wordAddedKeyboard() }
                 );
                 await deleteBotSession(ctx.db, user.user_id, 'add_word');
                 await startPictogramSelection(ctx, wordId);
@@ -491,7 +492,7 @@ async function addWordInline(ctx: BotContext, german: string, arabic: string): P
         await addXp(ctx.db, user.user_id, 5, 'new_word');
         await incrementDailyTask(ctx, user.user_id, 'learn_words');
         await checkAchievements(ctx, user.user_id);
-        await ctx.reply(`✅ تمت الإضافة!\n\n🇩🇪 ${german}\n🇦🇪 ${arabic}`);
+        await ctx.reply(`✅ تمت الإضافة!\n\n🇩🇪 ${german}\n🇦🇪 ${arabic}`, { reply_markup: wordAddedKeyboard() });
         await startPictogramSelection(ctx, wordId);
         return;
     } catch (error) {
@@ -611,6 +612,13 @@ function selectionActionsKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
         .text('☑️ تحديد', 'select_words_0').row()
         .text('⬅️ رجوع', 'menu_words')
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+function wordAddedKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('➕ إضافة كلمة أخرى', 'add_word').row()
+        .text('📂 كلماتي', 'list_words').row()
         .text('🏠 الرئيسية', 'menu_main');
 }
 

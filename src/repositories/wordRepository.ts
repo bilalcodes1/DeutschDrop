@@ -352,3 +352,28 @@ export async function getWordsForUserWithStatus(
     sql += ' ORDER BY uw.added_at DESC';
     return queryAll(db, sql, params);
 }
+
+export async function getTrainingWordCandidates(
+    db: D1Database,
+    userId: number,
+    limit: number = 100
+): Promise<Array<Word & { status: string; next_review: string | null; correct_count: number; wrong_count: number }>> {
+    return queryAll(
+        db,
+        `SELECT w.*, uw.status, uw.next_review, uw.correct_count, uw.wrong_count
+         FROM words w
+         INNER JOIN user_words uw ON w.word_id = uw.word_id
+         WHERE uw.user_id = ?
+         ORDER BY
+            CASE
+                WHEN uw.next_review IS NOT NULL AND datetime(uw.next_review) <= datetime('now') THEN 0
+                WHEN uw.wrong_count >= 2 OR uw.wrong_count > uw.correct_count OR uw.status = 'learning' THEN 1
+                WHEN uw.wrong_count > 0 THEN 2
+                WHEN uw.status = 'new' OR (uw.correct_count = 0 AND uw.wrong_count = 0) THEN 3
+                ELSE 4
+            END,
+            RANDOM()
+         LIMIT ?`,
+        [userId, limit]
+    );
+}

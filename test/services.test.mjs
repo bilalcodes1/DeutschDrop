@@ -8,6 +8,7 @@ import { buildArasaacImageUrl, normalizeArasaacResults, searchEducationalPictogr
 import { getAdminTelegramIds, isAdminTelegramId } from '../dist/services/adminAccess.js';
 import { classifyHttpStatus, sanitizeErrorMessage } from '../dist/services/ai/aiErrors.js';
 import { exampleContainsGerman, hasSuspiciousPronunciation, validateExampleSuggestion } from '../dist/services/ai/aiValidation.js';
+import { selectTrainingWords } from '../dist/services/srs.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -395,6 +396,20 @@ test('admin broadcast is protected and skips banned users', () => {
     assert.match(adminSource, /createBroadcastLog/);
 });
 
+test('training and notification performance paths use candidate limits and safe loops', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const wordRepoSource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    const notificationSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /getTrainingWordCandidates\(ctx\.db, user\.user_id, Math\.max\(100, count \* 6\)\)/);
+    assert.match(wordRepoSource, /LIMIT \?/);
+    assert.match(wordRepoSource, /RANDOM\(\)/);
+    assert.match(adminSource, /for \(const user of users\)/);
+    assert.match(adminSource, /try \{/);
+    assert.match(notificationSource, /try \{/);
+});
+
 test('pending support proofs are reachable only from admin panel', () => {
     const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
     const supportSource = fs.readFileSync(new URL('../src/commands/support.ts', import.meta.url), 'utf8');
@@ -616,6 +631,56 @@ test('training supports typing missing-letter hint and mixed question types', ()
     assert.match(trainSource, /train_mixed/);
 });
 
+test('training selection returns unique words when enough candidates exist', () => {
+    const words = Array.from({ length: 150 }, (_, index) => ({
+        wordId: index + 1,
+        status: index % 5 === 0 ? 'learning' : 'new',
+        wrongCount: index % 7 === 0 ? 2 : 0,
+        correctCount: index % 7 === 0 ? 0 : 1,
+        nextReview: index % 11 === 0 ? '2000-01-01T00:00:00.000Z' : null,
+    }));
+    const selected = selectTrainingWords(words, 10, 'mixed');
+    assert.equal(selected.length, 10);
+    assert.equal(new Set(selected.map(word => word.wordId)).size, 10);
+});
+
+test('training selection changes order across new sessions and prioritizes due hard words', () => {
+    const words = Array.from({ length: 40 }, (_, index) => ({
+        wordId: index + 1,
+        status: index < 5 ? 'learning' : index < 10 ? 'reviewing' : 'new',
+        wrongCount: index < 5 ? 3 : 0,
+        correctCount: index < 5 ? 0 : 1,
+        nextReview: index >= 5 && index < 10 ? '2000-01-01T00:00:00.000Z' : null,
+    }));
+    const runs = new Set(Array.from({ length: 6 }, () => selectTrainingWords(words, 10, 'mixed').map(word => word.wordId).join(',')));
+    assert.ok(runs.size > 1);
+    assert.ok(selectTrainingWords(words, 5, 'hard').every(word => word.reason === 'hard' || word.reason === 'repeat'));
+    assert.ok(selectTrainingWords(words, 5, 'review').some(word => word.reason === 'due'));
+});
+
+test('training session validation catches duplicate word ids unless forced by low vocabulary', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /validateTrainingSessionQuestions/);
+    assert.match(trainSource, /availableUniqueWords/);
+    assert.match(trainSource, /question\.word_id/);
+    assert.match(trainSource, /question\.question_index === undefined/);
+    assert.match(trainSource, /!question\.answer\?\.trim\(\)/);
+    assert.match(trainSource, /duplicates === 0 \|\| availableUniqueWords < session\.questions\.length/);
+});
+
+test('training score tracks answered correct wrong counts and duplicate answers', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /answeredCount/);
+    assert.match(trainSource, /wrongCount/);
+    assert.match(trainSource, /answeredQuestionIndexes/);
+    assert.match(trainSource, /isQuestionAnswered\(session\.data, current\.question_index\)/);
+    assert.match(trainSource, /markQuestionAnswered\(session\.data, current, isCorrect\)/);
+    assert.match(trainSource, /Math\.round\(\(correct \/ total\) \* 100\)/);
+    assert.doesNotMatch(trainSource, /6\/10|60%/);
+});
+
 test('training text answers have priority over stale word edit and support flows', () => {
     const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
@@ -682,6 +747,27 @@ test('cancel edit and navigation clear word edit sessions', () => {
     assert.match(menuSource, /clearTrainingAndEditSessions/);
     assert.match(menuSource, /deleteBotSession\(ctx\.db, user\.user_id, 'word_edit'\)/);
     assert.match(menuSource, /deleteBotSession\(ctx\.db, user\.user_id, 'train'\)/);
+});
+
+test('user-facing operations end with useful navigation buttons', () => {
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const uploadSource = fs.readFileSync(new URL('../src/commands/upload.ts', import.meta.url), 'utf8');
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const aiSource = fs.readFileSync(new URL('../src/commands/aiCoach.ts', import.meta.url), 'utf8');
+    const settingsSource = fs.readFileSync(new URL('../src/commands/settings.ts', import.meta.url), 'utf8');
+
+    assert.match(addWordSource, /wordAddedKeyboard/);
+    assert.match(addWordSource, /➕ إضافة كلمة أخرى/);
+    assert.match(addWordSource, /📂 كلماتي/);
+    assert.match(uploadSource, /📚 راجع الآن/);
+    assert.match(uploadSource, /🏋️ تدريب/);
+    assert.match(uploadSource, /📂 عرض الكلمات/);
+    assert.match(trainSource, /trainingFinishedKeyboard/);
+    assert.match(trainSource, /🔁 تدريب جديد/);
+    assert.match(trainSource, /🔥 درّب الكلمات الغلط/);
+    assert.match(aiSource, /showWordDetailPanel\(ctx, wordId, 'تم حفظ اقتراح الذكاء الاصطناعي ✅'\)/);
+    assert.match(aiSource, /showWordDetailPanel\(ctx, wordId\)/);
+    assert.match(settingsSource, /showNotificationSettings/);
 });
 
 test('period leaderboards use xp_events and champion snapshots', () => {
@@ -751,9 +837,14 @@ test('support proof approval cannot run twice', () => {
 
 test('callback middleware answers callback queries safely', () => {
     const source = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+    const callbackSource = fs.readFileSync(new URL('../src/bot/callbacks.ts', import.meta.url), 'utf8');
     assert.match(source, /ctx\.callbackQuery/);
-    assert.match(source, /await answer\(\)\.catch\(\(\) => \{\}\)/);
+    assert.match(source, /safeAnswerCallback/);
     assert.match(source, /ctx\.answerCallbackQuery =/);
+    assert.match(source, /showCallbackError/);
+    assert.match(callbackSource, /safeCallback/);
+    assert.match(callbackSource, /await ctx\.answerCallbackQuery\(\)\.catch\(\(\) => \{\}\)/);
+    assert.match(callbackSource, /حدث خطأ بسيط/);
 });
 
 test('banned users are blocked before support proofs', () => {

@@ -200,6 +200,9 @@ function formatUploadSummary(result: ParseResult): string {
 function uploadSummaryKeyboard(hasDuplicates: boolean): InlineKeyboard {
     const keyboard = new InlineKeyboard();
     if (hasDuplicates) keyboard.text('🔄 تحديث الكلمات الموجودة', 'upload_update_existing').row();
-    keyboard.text('🏠 الرئيسية', 'menu_main');
+    keyboard.text('📚 راجع الآن', 'menu_learn')
+        .text('🏋️ تدريب', 'menu_train').row()
+        .text('📂 عرض الكلمات', 'list_words').row()
+        .text('🏠 الرئيسية', 'menu_main');
     return keyboard;
 }

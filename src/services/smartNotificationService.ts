@@ -94,27 +94,31 @@ export async function selectNotificationForUser(db: D1Database, userId: number):
 export async function sendSmartNotification(env: Env, user: UserForNotification): Promise<boolean> {
     if (!await shouldSendNotification(env.DB, user)) return false;
 
-    const notification = await selectNotificationForUser(env.DB, user.user_id);
-    const eventId = await createNotificationEvent(env.DB, user.user_id, notification.type, notification.word?.word_id ?? null);
-    const replyMarkup = withEventCallbacks(notification.replyMarkup, eventId, Boolean(notification.word));
+    try {
+        const notification = await selectNotificationForUser(env.DB, user.user_id);
+        const eventId = await createNotificationEvent(env.DB, user.user_id, notification.type, notification.word?.word_id ?? null);
+        const replyMarkup = withEventCallbacks(notification.replyMarkup, eventId, Boolean(notification.word));
 
-    if (notification.photoUrl) {
-        await telegramCall(env, 'sendPhoto', {
-            chat_id: user.telegram_id,
-            photo: notification.photoUrl,
-            caption: notification.text,
-            reply_markup: replyMarkup,
-        });
-    } else {
-        await telegramCall(env, 'sendMessage', {
-            chat_id: user.telegram_id,
-            text: notification.text,
-            reply_markup: replyMarkup,
-        });
+        if (notification.photoUrl) {
+            await telegramCall(env, 'sendPhoto', {
+                chat_id: user.telegram_id,
+                photo: notification.photoUrl,
+                caption: notification.text,
+                reply_markup: replyMarkup,
+            });
+        } else {
+            await telegramCall(env, 'sendMessage', {
+                chat_id: user.telegram_id,
+                text: notification.text,
+                reply_markup: replyMarkup,
+            });
+        }
+
+        await env.DB.prepare('UPDATE settings SET last_notification_at = datetime("now"), last_notified_word_id = ? WHERE user_id = ?').bind(notification.word?.word_id ?? null, user.user_id).run();
+        return true;
+    } catch {
+        return false;
     }
-
-    await env.DB.prepare('UPDATE settings SET last_notification_at = datetime("now"), last_notified_word_id = ? WHERE user_id = ?').bind(notification.word?.word_id ?? null, user.user_id).run();
-    return true;
 }
 
 export async function getNotificationEventWord(db: D1Database, eventId: number): Promise<SmartWord | null> {

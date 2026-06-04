@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { getUserByTelegramId } from '../repositories/userRepository';
-import { getWordById, getWordsForUserWithStatus } from '../repositories/wordRepository';
+import { getTrainingWordCandidates, getWordById } from '../repositories/wordRepository';
 import { recordReview } from '../repositories/srsRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { getActiveReviewPlan, incrementReviewPlanProgress } from '../repositories/reviewPlanRepository';
@@ -13,7 +13,8 @@ import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
 import type { TrainExplainSession } from './aiCoach';
 
-interface TrainingQuestion {
+export interface TrainingQuestion {
+    question_index: number;
     word_id: number;
     type: TrainingQuestionType;
     prompt: string;
@@ -23,10 +24,14 @@ interface TrainingQuestion {
     helper?: string;
 }
 
-interface TrainingSessionData {
+export interface TrainingSessionData {
     questions: TrainingQuestion[];
     currentIndex: number;
+    answeredCount: number;
     correctCount: number;
+    wrongCount: number;
+    answeredQuestionIndexes: number[];
+    wrongWordIds: number[];
     startTime: number;
     planId?: number;
 }
@@ -107,11 +112,12 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
     });
 
     // Handle answer callbacks
-    bot.callbackQuery(/^train_ans_(\d+)_(\d+)_(correct|wrong)$/, async (ctx) => {
-        const wordId = parseInt(ctx.match[1], 10);
-        const optionIndex = parseInt(ctx.match[2], 10);
-        const isCorrect = ctx.match[3] === 'correct';
-        await handleTrainAnswer(ctx, wordId, optionIndex, isCorrect);
+    bot.callbackQuery(/^train_ans_(\d+)_(\d+)_(\d+)_(correct|wrong)$/, async (ctx) => {
+        const questionIndex = parseInt(ctx.match[1], 10);
+        const wordId = parseInt(ctx.match[2], 10);
+        const optionIndex = parseInt(ctx.match[3], 10);
+        const isCorrect = ctx.match[4] === 'correct';
+        await handleTrainAnswer(ctx, questionIndex, wordId, optionIndex, isCorrect);
     });
 
     bot.callbackQuery('train_continue', async (ctx) => {
@@ -157,27 +163,34 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
         return;
     }
 
-    const allWords = await getWordsForUserWithStatus(ctx.db, user.user_id);
+    await replaceWithText(ctx, '⏳ جاري تجهيز تدريب جديد...', mainMenuKeyboard());
+
+    const allWords = await getTrainingWordCandidates(ctx.db, user.user_id, Math.max(100, count * 6));
     const words = mode === 'hard'
         ? allWords.filter(w => isHardWord({ wrongCount: w.wrong_count, correctCount: w.correct_count, status: w.status }))
         : allWords;
 
-    if (words.length < count) {
+    if (words.length === 0) {
         const label = mode === 'hard' ? 'كلمة صعبة' : 'كلمة';
         await replaceWithText(
             ctx,
-            `⚠️ لديك ${words.length} ${label} فقط.\nأضف المزيد عبر /addword أو راجع كلمات أكثر.`,
+            `⚠️ لا توجد ${label} مناسبة للتدريب حالياً.\nأضف كلمات جديدة أو راجع كلمات أكثر.`,
             mainMenuKeyboard()
         );
         return;
     }
 
-    const selected = mode === 'exam'
-        ? selectExamWords(words, count)
-        : selectTrainingWords(
-            words.map(w => ({ wordId: w.word_id, status: w.status, wrongCount: w.wrong_count, correctCount: w.correct_count })),
-            count
-        );
+    const selected = selectTrainingWords(
+        words.map(w => ({
+            wordId: w.word_id,
+            status: w.status,
+            wrongCount: w.wrong_count,
+            correctCount: w.correct_count,
+            nextReview: w.next_review,
+        })),
+        count,
+        mode
+    );
 
     const questions = selected.map((s, i) => {
         const w = words.find(word => word.word_id === s.wordId)!;
@@ -188,7 +201,11 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
     await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', {
         questions,
         currentIndex: 0,
+        answeredCount: 0,
         correctCount: 0,
+        wrongCount: 0,
+        answeredQuestionIndexes: [],
+        wrongWordIds: [],
         startTime: Date.now(),
         ...(planId ? { planId } : {}),
     });
@@ -220,14 +237,15 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
     const session = await getBotSession<TrainingSessionData>(ctx.db, userId, 'train');
     if (!session || session.data.currentIndex >= session.data.questions.length) {
         await deleteBotSession(ctx.db, userId, 'train');
-        const total = session?.data.questions.length ?? 0;
+        const total = session?.data.answeredCount ?? session?.data.questions.length ?? 0;
         const correct = session?.data.correctCount ?? 0;
+        const wrong = session?.data.wrongCount ?? Math.max(0, total - correct);
         const percent = total > 0 ? Math.round((correct / total) * 100) : 0;
 
         await replaceWithText(
             ctx,
-            `✅ انتهى التدريب!\n\n📊 النتيجة: ${correct}/${total} (${percent}%)\n🎯 XP: +${correct * 2}`,
-            mainMenuKeyboard()
+            `✅ انتهى التدريب!\n\n📊 النتيجة: ${correct}/${total} (${percent}%)\n❌ الأخطاء: ${wrong}\n🎯 XP: +${correct * 2}`,
+            trainingFinishedKeyboard(session?.data.wrongWordIds.length ?? 0)
         );
         return;
     }
@@ -238,7 +256,7 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
     for (let i = 0; i < q.options.length; i++) {
         const opt = q.options[i];
         const isCorrect = normalizeAnswer(opt) === normalizeAnswer(q.answer);
-        keyboard.text(opt, `train_ans_${q.word_id}_${i}_${isCorrect ? 'correct' : 'wrong'}`).row();
+        keyboard.text(opt, `train_ans_${q.question_index}_${q.word_id}_${i}_${isCorrect ? 'correct' : 'wrong'}`).row();
     }
     keyboard.text('⬅️ رجوع', 'menu_train').text('🏠 الرئيسية', 'menu_main');
 
@@ -254,7 +272,7 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
     );
 }
 
-async function handleTrainAnswer(ctx: BotContext, wordId: number, optionIndex: number, isCorrect: boolean): Promise<void> {
+async function handleTrainAnswer(ctx: BotContext, questionIndex: number, wordId: number, optionIndex: number, isCorrect: boolean): Promise<void> {
     const telegramId = ctx.from?.id ?? 0;
     const user = await getUserByTelegramId(ctx.db, telegramId);
 
@@ -270,13 +288,19 @@ async function handleTrainAnswer(ctx: BotContext, wordId: number, optionIndex: n
     }
 
     const current = session.data.questions[session.data.currentIndex];
-    if (!current || current.word_id !== wordId) {
+    if (!current || current.word_id !== wordId || current.question_index !== questionIndex) {
         await ctx.answerCallbackQuery('هذا ليس السؤال الحالي');
         return;
     }
 
+    if (isQuestionAnswered(session.data, current.question_index)) {
+        await ctx.answerCallbackQuery('تم احتساب هذا السؤال');
+        return;
+    }
+
+    markQuestionAnswered(session.data, current, isCorrect);
+
     if (isCorrect) {
-        session.data.correctCount++;
         await addXp(ctx.db, user.user_id, 2, 'correct_train');
         await ctx.answerCallbackQuery('✅ صحيح! +2 XP');
     } else {
@@ -300,6 +324,7 @@ async function handleTrainAnswer(ctx: BotContext, wordId: number, optionIndex: n
                 example: word.example,
             }, 30);
         }
+        await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', session.data);
         await replaceWithText(
             ctx,
             `❌ خطأ\n\nالصحيح: *${current.answer}*`,
@@ -322,8 +347,14 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
     const session = await getBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train');
     if (!session) return;
 
+    if (isQuestionAnswered(session.data, current.question_index)) {
+        await ctx.reply('تم احتساب هذا السؤال. اضغط 🏋️ التالي أو 🏠 الرئيسية.');
+        return;
+    }
+
+    markQuestionAnswered(session.data, current, isCorrect);
+
     if (isCorrect) {
-        session.data.correctCount++;
         await addXp(ctx.db, user.user_id, 2, 'correct_train');
     }
 
@@ -343,6 +374,7 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
                 example: word.example,
             }, 30);
         }
+        await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', session.data);
         await replaceWithText(
             ctx,
             `❌ خطأ\n\nجوابك: *${answerText.trim()}*\nالصحيح: *${current.answer}*`,
@@ -355,6 +387,7 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
         return;
     }
 
+    await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', session.data);
     await replaceWithText(ctx, '✅ صحيح! +2 XP', new InlineKeyboard().text('🏋️ التالي', 'train_continue').text('🏠 الرئيسية', 'menu_main'));
 }
 
@@ -367,6 +400,11 @@ async function continueTraining(ctx: BotContext): Promise<void> {
     const session = await getBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train');
     if (!session) {
         await replaceWithText(ctx, 'انتهت جلسة التدريب.', mainMenuKeyboard());
+        return;
+    }
+    const current = session.data.questions[session.data.currentIndex];
+    if (current && !isQuestionAnswered(session.data, current.question_index)) {
+        await showTrainingQuestion(ctx, user.user_id);
         return;
     }
     await deleteBotSession(ctx.db, user.user_id, 'train_explain');
@@ -384,6 +422,46 @@ async function advanceTraining(ctx: BotContext, userId: number, data: TrainingSe
     await showTrainingQuestion(ctx, userId);
 }
 
+function markQuestionAnswered(data: TrainingSessionData, question: TrainingQuestion, isCorrect: boolean): void {
+    if (isQuestionAnswered(data, question.question_index)) return;
+    data.answeredQuestionIndexes.push(question.question_index);
+    data.answeredCount = (data.answeredCount ?? 0) + 1;
+    if (isCorrect) {
+        data.correctCount = (data.correctCount ?? 0) + 1;
+    } else {
+        data.wrongCount = (data.wrongCount ?? 0) + 1;
+        if (!data.wrongWordIds.includes(question.word_id)) data.wrongWordIds.push(question.word_id);
+    }
+}
+
+function isQuestionAnswered(data: TrainingSessionData, questionIndex: number): boolean {
+    return (data.answeredQuestionIndexes ?? []).includes(questionIndex);
+}
+
+function trainingFinishedKeyboard(hasWrongWords: number): InlineKeyboard {
+    const keyboard = new InlineKeyboard()
+        .text('🔁 تدريب جديد', 'train_mixed').row();
+    if (hasWrongWords > 0) keyboard.text('🔥 درّب الكلمات الغلط', 'train_hard').row();
+    keyboard.text('📚 راجع الآن', 'menu_learn').row()
+        .text('🏠 الرئيسية', 'menu_main');
+    return keyboard;
+}
+
+export function validateTrainingSessionQuestions(session: TrainingSessionData, availableUniqueWords: number = session.questions.length): boolean {
+    if (session.questions.length === 0) return false;
+    const exactQuestions = new Set<string>();
+    const wordIds = new Set<number>();
+    for (const question of session.questions) {
+        if (!question.word_id || question.question_index === undefined || !question.answer?.trim()) return false;
+        const exactKey = `${question.word_id}:${question.type}:${question.prompt}:${question.answer}`;
+        if (exactQuestions.has(exactKey) && availableUniqueWords >= session.questions.length) return false;
+        exactQuestions.add(exactKey);
+        wordIds.add(question.word_id);
+    }
+    const duplicates = session.questions.length - wordIds.size;
+    return duplicates === 0 || availableUniqueWords < session.questions.length;
+}
+
 function buildTrainingQuestion(
     words: Array<{ word_id: number; german: string; arabic: string; example: string | null }>,
     word: { word_id: number; german: string; arabic: string; example: string | null },
@@ -392,13 +470,14 @@ function buildTrainingQuestion(
 ): TrainingQuestion {
     const type = chooseQuestionType(mode, index, Boolean(word.example));
     if (type === 'typing_de') {
-        return { word_id: word.word_id, type, prompt: word.arabic, answer: word.german, direction: 'ar_de', options: [] };
+        return { question_index: index, word_id: word.word_id, type, prompt: word.arabic, answer: word.german, direction: 'ar_de', options: [] };
     }
     if (type === 'typing_ar') {
-        return { word_id: word.word_id, type, prompt: word.german, answer: word.arabic, direction: 'de_ar', options: [] };
+        return { question_index: index, word_id: word.word_id, type, prompt: word.german, answer: word.arabic, direction: 'de_ar', options: [] };
     }
     if (type === 'missing_letters') {
         return {
+            question_index: index,
             word_id: word.word_id,
             type,
             prompt: `${maskGerman(word.german)}`,
@@ -410,6 +489,7 @@ function buildTrainingQuestion(
     }
     if (type === 'first_last_hint') {
         return {
+            question_index: index,
             word_id: word.word_id,
             type,
             prompt: word.arabic,
@@ -422,6 +502,7 @@ function buildTrainingQuestion(
     if (type === 'example_context' && word.example) {
         const distractors = buildDistractors(words, word.word_id, 'de_ar', 2);
         return {
+            question_index: index,
             word_id: word.word_id,
             type,
             prompt: word.example,
@@ -437,6 +518,7 @@ function buildTrainingQuestion(
     const prompt = direction === 'de_ar' ? word.german : word.arabic;
     const distractors = buildDistractors(words, word.word_id, direction, 2);
     return {
+        question_index: index,
         word_id: word.word_id,
         type,
         prompt,
@@ -502,20 +584,6 @@ function buildDistractors(
         if (options.length >= count) break;
     }
     return options;
-}
-
-function selectExamWords(
-    words: Array<{ word_id: number; status: string; wrong_count: number; correct_count: number }>,
-    count: number
-): Array<{ wordId: number; status: string }> {
-    return [...words]
-        .sort((a, b) => {
-            const aScore = a.wrong_count * 2 - a.correct_count;
-            const bScore = b.wrong_count * 2 - b.correct_count;
-            return bScore - aScore;
-        })
-        .slice(0, count)
-        .map(w => ({ wordId: w.word_id, status: w.status }));
 }
 
 function shuffle<T>(array: T[]): T[] {
