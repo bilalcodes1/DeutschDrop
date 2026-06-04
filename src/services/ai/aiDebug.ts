@@ -23,14 +23,26 @@ interface ProviderDebugResult {
     safe_message?: string;
 }
 
+interface InactiveProviderDebugResult {
+    provider: AiProviderName;
+    keys: number | 'not required';
+    model: string;
+    endpoint_type: ProviderDebugResult['endpoint_type'];
+    status: 'CONFIGURED' | 'SKIPPED_NO_KEY' | 'SKIPPED_NO_BINDING';
+}
+
 export interface AiDebugReport {
     aiEnabled: boolean;
     providerOrder: string;
+    full: boolean;
     providers: ProviderDebugResult[];
+    inactiveProviders: InactiveProviderDebugResult[];
 }
 
-export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
-    const providers = await Promise.all(orderedDebugProviders(env).map(async (provider) => {
+export async function buildAiDebugReport(env: Env, options: { full?: boolean } = {}): Promise<AiDebugReport> {
+    const activeNames = orderedProviders(env).map(provider => provider.name);
+    const debugProviders = options.full ? allDebugProviders(env) : activeDebugProviders(env);
+    const providers = await Promise.all(debugProviders.map(async (provider) => {
         const keys = countProviderKeys(env, provider.name);
         if (!hasProviderKey(env, provider.name)) {
             return {
@@ -69,15 +81,18 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
 
     return {
         aiEnabled: env.AI_ENABLED === 'true',
-        providerOrder: env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,mistral,openrouter,cohere,gemini',
+        providerOrder: env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,mistral,openrouter,gemini',
+        full: Boolean(options.full),
         providers,
+        inactiveProviders: inactiveDebugProviders(env, activeNames),
     };
 }
 
 export function formatAiDebugReport(report: AiDebugReport): string {
     const title = `🤖 AI Debug\n\n` +
         `AI_ENABLED: ${report.aiEnabled ? 'true' : 'false'}\n` +
-        `Provider order: ${report.providerOrder}`;
+        `Provider order: ${report.providerOrder}\n\n` +
+        `Active providers:${report.full ? ' full test' : ''}`;
     const body = report.providers.map(provider =>
         `\n\n${providerLabel(provider.provider)}:\n` +
         `keys: ${provider.keys}\n` +
@@ -89,11 +104,16 @@ export function formatAiDebugReport(report: AiDebugReport): string {
         (provider.status_code ? `\nstatus_code: ${provider.status_code}` : '') +
         (provider.safe_message ? `\nsafe_message: ${provider.safe_message}` : '')
     ).join('');
-    return title + body;
+    const inactive = report.inactiveProviders.length
+        ? `\n\nConfigured but inactive providers:` + report.inactiveProviders.map(provider =>
+            `\n- ${provider.provider}: ${provider.status}, keys: ${provider.keys}, model: ${provider.model}`
+        ).join('')
+        : '';
+    return title + body + inactive;
 }
 
-function orderedDebugProviders(env: Env): AiProvider[] {
-    const byName: Record<AiProviderName, AiProvider> = {
+function providerMap(): Record<AiProviderName, AiProvider> {
+    return {
         cloudflareAi: cloudflareAiProvider,
         gemini: geminiProvider,
         kimi: kimiProvider,
@@ -103,11 +123,40 @@ function orderedDebugProviders(env: Env): AiProvider[] {
         mistral: mistralProvider,
         cohere: cohereProvider,
     };
+}
+
+function activeDebugProviders(env: Env): AiProvider[] {
+    const byName = providerMap();
+    return orderedProviders(env).map(provider => byName[provider.name]);
+}
+
+function allDebugProviders(env: Env): AiProvider[] {
+    const byName = providerMap();
     const names = orderedProviders(env).map(provider => provider.name);
-    for (const name of ['cloudflareAi', 'groqCloud', 'mistral', 'openrouter', 'cohere', 'gemini', 'zai'] as AiProviderName[]) {
+    for (const name of allProviderNames()) {
         if (!names.includes(name)) names.push(name);
     }
     return names.map(name => byName[name]);
+}
+
+function inactiveDebugProviders(env: Env, activeNames: AiProviderName[]): InactiveProviderDebugResult[] {
+    return allProviderNames()
+        .filter(name => !activeNames.includes(name))
+        .map(name => {
+            const keys = countProviderKeys(env, name);
+            const hasKey = hasProviderKey(env, name);
+            return {
+                provider: name,
+                keys: name === 'cloudflareAi' ? 'not required' : keys,
+                model: getProviderModel(env, name),
+                endpoint_type: endpointType(name),
+                status: hasKey ? 'CONFIGURED' : name === 'cloudflareAi' ? 'SKIPPED_NO_BINDING' : 'SKIPPED_NO_KEY',
+            };
+        });
+}
+
+function allProviderNames(): AiProviderName[] {
+    return ['cloudflareAi', 'groqCloud', 'mistral', 'openrouter', 'gemini', 'cohere', 'zai', 'kimi'];
 }
 
 function debugPrompt(providerName: AiProviderName): string {

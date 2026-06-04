@@ -673,8 +673,10 @@ test('/ai_debug is admin-only and does not expose provider keys', () => {
     const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
 
     assert.match(aiSource, /bot\.command\('ai_debug'/);
+    assert.match(aiSource, /bot\.command\('ai_debug_full'/);
     assert.match(aiSource, /isAdminTelegramId\(ctx\.env, ctx\.from\?\.id\)/);
     assert.match(aiSource, /غير مصرح لك باستخدام هذا الأمر/);
+    assert.match(aiSource, /buildAiDebugReport\(ctx\.env, \{ full: true \}\)/);
     assert.match(debugSource, /keys: \$\{provider\.keys\}/);
     assert.doesNotMatch(debugSource, /GEMINI_API_KEYS.*\+|KIMI_API_KEYS.*\+|GROK_API_KEYS.*\+/);
 });
@@ -761,7 +763,7 @@ test('AI rate limit and GroqCloud bad request diagnostics are safe', () => {
     assert.match(debugSource, /safe_message/);
     assert.match(errorsSource, /slice\(0, 200\)/);
     assert.match(errorsSource, /Bearer \[redacted\]/);
-    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,mistral,openrouter,cohere,gemini"/);
+    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,mistral,openrouter,gemini"/);
     assert.match(wranglerSource, /GROK_MODEL = "llama-3\.1-8b-instant"/);
 });
 
@@ -772,7 +774,7 @@ test('AI configuration uses GroqCloud endpoint only', () => {
     const kimiSource = fs.readFileSync(new URL('../src/services/ai/providers/kimiProvider.ts', import.meta.url), 'utf8');
     const allAiSource = routerSource + debugSource + groqCloudSource;
 
-    assert.match(routerSource, /cloudflareAi,groqCloud,mistral,openrouter,cohere,gemini/);
+    assert.match(routerSource, /cloudflareAi,groqCloud,mistral,openrouter,gemini/);
     assert.match(routerSource, /name === 'groqCloud'/);
     assert.match(groqCloudSource, /api\.groq\.com\/openai\/v1\/chat\/completions/);
     assert.match(groqCloudSource, /extractOpenAiCompatibleText/);
@@ -802,8 +804,10 @@ test('AI router starts with Cloudflare AI and keeps Kimi out of current order', 
     const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 
-    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,mistral,openrouter,cohere,gemini"/);
+    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,mistral,openrouter,gemini"/);
     assert.doesNotMatch(wranglerSource.match(/AI_PROVIDER_ORDER = "([^"]+)"/)?.[1] ?? '', /kimi/);
+    assert.doesNotMatch(wranglerSource.match(/AI_PROVIDER_ORDER = "([^"]+)"/)?.[1] ?? '', /cohere/);
+    assert.doesNotMatch(wranglerSource.match(/AI_PROVIDER_ORDER = "([^"]+)"/)?.[1] ?? '', /zai/);
     assert.match(routerSource, /cloudflareAi: cloudflareAiProvider/);
     assert.match(routerSource, /groqCloud: groqCloudProvider/);
     assert.match(routerSource, /return \{ status: 'ok', result, provider: provider\.name/);
@@ -835,7 +839,7 @@ test('Cloudflare AI fallback order keeps GroqCloud available after bad JSON', ()
 
     assert.match(routerSource, /safeProviderWarn\(provider\.name, 'BAD_JSON'\)/);
     assert.match(routerSource, /continue;/);
-    assert.ok(routerSource.indexOf('cloudflareAi,groqCloud,mistral,openrouter,cohere,gemini') >= 0);
+    assert.ok(routerSource.indexOf('cloudflareAi,groqCloud,mistral,openrouter,gemini') >= 0);
     assert.match(debugSource, /cloudflareAi/);
     assert.match(debugSource, /groqCloud/);
 });
@@ -886,12 +890,18 @@ test('AI router and debug include the expanded provider order without Kimi', () 
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
     const providerOrder = wranglerSource.match(/AI_PROVIDER_ORDER = "([^"]+)"/)?.[1] ?? '';
 
-    assert.equal(providerOrder, 'cloudflareAi,groqCloud,mistral,openrouter,cohere,gemini');
+    assert.equal(providerOrder, 'cloudflareAi,groqCloud,mistral,openrouter,gemini');
     assert.doesNotMatch(providerOrder, /kimi/);
+    assert.doesNotMatch(providerOrder, /cohere/);
+    assert.doesNotMatch(providerOrder, /zai/);
     assert.match(routerSource, /openrouter: openRouterProvider/);
     assert.match(routerSource, /zai: zaiProvider/);
     assert.match(routerSource, /mistral: mistralProvider/);
     assert.match(routerSource, /cohere: cohereProvider/);
+    assert.match(debugSource, /Active providers/);
+    assert.match(debugSource, /Configured but inactive providers/);
+    assert.match(debugSource, /options\.full \? allDebugProviders\(env\) : activeDebugProviders\(env\)/);
+    assert.match(debugSource, /inactiveDebugProviders\(env, activeNames\)/);
     assert.match(debugSource, /OpenRouter/);
     assert.match(debugSource, /Z\.ai/);
     assert.match(debugSource, /Mistral/);

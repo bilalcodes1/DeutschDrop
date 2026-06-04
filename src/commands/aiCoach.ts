@@ -59,6 +59,15 @@ export function registerAiCoachCommand(bot: Bot<BotContext>): void {
         await ctx.reply(formatAiDebugReport(report));
     });
 
+    bot.command('ai_debug_full', async (ctx) => {
+        if (!isAdminTelegramId(ctx.env, ctx.from?.id)) {
+            await ctx.reply('غير مصرح لك باستخدام هذا الأمر.');
+            return;
+        }
+        const report = await buildAiDebugReport(ctx.env, { full: true });
+        await ctx.reply(formatAiDebugReport(report));
+    });
+
     bot.callbackQuery(/^ai_improve_(\d+)$/, async (ctx) => {
         const wordId = Number(ctx.match[1]);
         await generateExampleSuggestion(ctx, wordId, false);
@@ -274,7 +283,7 @@ async function showAiSettings(ctx: BotContext): Promise<void> {
         ctx,
         `🤖 *إعدادات الذكاء الاصطناعي*\n\n` +
         `الحالة: *${enabled ? 'مفعل' : 'متوقف'}*\n` +
-        `المزوّدات: *${ctx.env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,mistral,openrouter,cohere,gemini'}*\n\n` +
+        `المزوّدات: *${ctx.env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,mistral,openrouter,gemini'}*\n\n` +
         `استخدام اليوم:\n${lines || '-'}`,
         navigationKeyboard('menu_settings'),
         'Markdown'
