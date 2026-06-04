@@ -450,17 +450,77 @@ test('word selection bulk delete is limited to current user', () => {
     assert.match(wordSource, /deleteWordForUser\(db, userId, wordId\)/);
 });
 
-test('smart notifications include due word content and six hour cooldown', () => {
+test('smart notifications include retrieval practice types and cooldown rules', () => {
     const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
-    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0011_admin_menu_csv_bulk_delete_smart_notifications.sql', import.meta.url), 'utf8');
+    const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0013_smart_learning_notifications.sql', import.meta.url), 'utf8');
 
-    assert.match(indexSource, /sendSmartReviewNotification/);
-    assert.match(indexSource, /notificationCooldownActive/);
-    assert.match(indexSource, /datetime\("now", "-6 hours"\)/);
-    assert.match(indexSource, /SELECT w\.german, w\.arabic/);
-    assert.match(indexSource, /ابدأ رحلتك مع DeutschDrop/);
-    assert.match(indexSource, /جرّب تدريب سريع/);
-    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS notification_logs/);
+    assert.match(indexSource, /sendSmartNotification/);
+    assert.match(serviceSource, /selectNotificationForUser/);
+    assert.match(serviceSource, /quick_recall/);
+    assert.match(serviceSource, /due_word/);
+    assert.match(serviceSource, /hard_word/);
+    assert.match(serviceSource, /context_example/);
+    assert.match(serviceSource, /pictogram_recall/);
+    assert.match(serviceSource, /daily_summary/);
+    assert.match(serviceSource, /withinHours\(settings\.last_notification_at, 6\)/);
+    assert.match(serviceSource, /withinMinutes\(user\.updated_at, 30\)/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS notification_events/);
+});
+
+test('user without words gets no words notification', () => {
+    const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+    assert.match(serviceSource, /if \(totalWords === 0\)/);
+    assert.match(serviceSource, /buildNoWordsNotification/);
+    assert.match(serviceSource, /ابدأ رحلتك مع DeutschDrop/);
+});
+
+test('user with due words gets German word notification and avoids repeat for 24 hours', () => {
+    const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+    assert.match(serviceSource, /countDueWords/);
+    assert.match(serviceSource, /SELECT w\.word_id, w\.german, w\.arabic, w\.example/);
+    assert.match(serviceSource, /ne\.sent_at >= datetime\('now', '-24 hours'\)/);
+    assert.match(serviceSource, /🇩🇪 \$\{word\.german\}/);
+});
+
+test('notification callbacks show meaning and store known forgotten responses', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/smartNotifications.ts', import.meta.url), 'utf8');
+    const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+
+    assert.match(botSource, /registerSmartNotificationCommand/);
+    assert.match(commandSource, /notif_show_/);
+    assert.match(commandSource, /🇮🇶 \$\{word\.arabic\}/);
+    assert.match(commandSource, /word\.example/);
+    assert.match(commandSource, /notif_known_/);
+    assert.match(commandSource, /notif_forgot_/);
+    assert.match(serviceSource, /recordNotificationResponse/);
+    assert.match(serviceSource, /markForgottenForTrainingPriority/);
+});
+
+test('notification intensity limits light normal intensive and disabled sends nothing', () => {
+    const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+    const settingsSource = fs.readFileSync(new URL('../src/commands/settings.ts', import.meta.url), 'utf8');
+
+    assert.match(serviceSource, /settings\.reminders_enabled === 0/);
+    assert.match(serviceSource, /notification_intensity === 'off'/);
+    assert.match(serviceSource, /if \(intensity === 'light'\) return 1/);
+    assert.match(serviceSource, /if \(intensity === 'intensive'\) return 3/);
+    assert.match(serviceSource, /return 2/);
+    assert.match(settingsSource, /إعدادات الإشعارات/);
+    assert.match(settingsSource, /notification_intensity_light/);
+});
+
+test('hard word pictogram and daily summary notification paths exist', () => {
+    const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+    assert.match(serviceSource, /selectHardWord/);
+    assert.match(serviceSource, /wrong_count >= 2/);
+    assert.match(serviceSource, /selectPictogramWord/);
+    assert.match(serviceSource, /INNER JOIN word_pictograms/);
+    assert.match(serviceSource, /sendPhoto/);
+    assert.match(serviceSource, /buildDailySummaryNotification/);
+    assert.match(serviceSource, /XP اليوم/);
+    assert.match(serviceSource, /السلسلة:/);
 });
 
 test('active announcement is rendered in main menu and can be cleared', () => {

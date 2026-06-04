@@ -4,6 +4,7 @@ import { handleWebhook } from './routes/webhook';
 import type { Env } from './models';
 import { deleteExpiredBotSessions } from './repositories/sessionRepository';
 import { ZAINCASH_QR_BASE64 } from './assets_zaincash_qr';
+import { sendSmartNotification } from './services/smartNotificationService';
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -93,101 +94,18 @@ function getJobNameFromCron(cron: string): string {
 
 async function runCheckDueReviews(env: Env): Promise<void> {
     const users = await env.DB.prepare(
-        `SELECT u.user_id, u.telegram_id, s.notification_mode, s.morning_time, s.evening_time
+        `SELECT u.user_id, u.telegram_id, u.updated_at
          FROM users u
          INNER JOIN settings s ON s.user_id = u.user_id
-         WHERE s.reminders_enabled = 1
+         WHERE u.is_banned = 0
            AND u.display_name IS NOT NULL`
-    ).all<{ user_id: number; telegram_id: number; notification_mode: string; morning_time: string; evening_time: string }>();
+    ).all<{ user_id: number; telegram_id: number; updated_at: string | null }>();
 
     for (const user of users.results ?? []) {
-        if (!shouldSendReminderNow(user)) continue;
-        if (await notificationCooldownActive(env, user.user_id, 'review_reminder')) continue;
-        await sendSmartReviewNotification(env, user.user_id, user.telegram_id);
+        await sendSmartNotification(env, user);
     }
 
     await runTimedDailySummaries(env);
-}
-
-async function notificationCooldownActive(env: Env, userId: number, type: string): Promise<boolean> {
-    const recent = await env.DB.prepare(
-        'SELECT 1 FROM notification_logs WHERE user_id = ? AND type = ? AND sent_at >= datetime("now", "-6 hours") LIMIT 1'
-    ).bind(userId, type).first();
-    return Boolean(recent);
-}
-
-async function recordNotification(env: Env, userId: number, type: string): Promise<void> {
-    await env.DB.prepare('INSERT INTO notification_logs (user_id, type) VALUES (?, ?)').bind(userId, type).run();
-}
-
-async function sendSmartReviewNotification(env: Env, userId: number, telegramId: number): Promise<void> {
-    const dueCount = await env.DB.prepare(
-        'SELECT COUNT(*) as cnt FROM user_words WHERE user_id = ? AND (status = "new" OR next_review <= datetime("now"))'
-    ).bind(userId).first<{ cnt: number }>();
-    const totalCount = await env.DB.prepare(
-        'SELECT COUNT(*) as cnt FROM user_words WHERE user_id = ?'
-    ).bind(userId).first<{ cnt: number }>();
-
-    const due = dueCount?.cnt ?? 0;
-    const total = totalCount?.cnt ?? 0;
-    let text: string;
-
-    if (due > 0) {
-        const word = await env.DB.prepare(
-            `SELECT w.german, w.arabic
-             FROM words w
-             INNER JOIN user_words uw ON uw.word_id = w.word_id
-             WHERE uw.user_id = ? AND (uw.status = 'new' OR uw.next_review <= datetime('now'))
-             ORDER BY RANDOM()
-             LIMIT 1`
-        ).bind(userId).first<{ german: string; arabic: string }>();
-        const motivation = randomMotivation(userId + due);
-        text =
-            `📚 مراجعة سريعة\n\n` +
-            (due > 5 ? `لديك ${due} كلمة للمراجعة.\nلنبدأ بكلمة واحدة:\n\n` : '') +
-            `🇩🇪 ${word?.german ?? 'Auto'}\n` +
-            `🇮🇶 ${word?.arabic ?? 'سيارة'}\n\n` +
-            `${motivation}\n\n` +
-            `ابدأ الآن: /learn`;
-    } else if (total > 0) {
-        text =
-            `🌟 ممتاز، لا توجد كلمات مستحقة الآن.\n` +
-            `جرّب تدريب سريع حتى تثبت حفظك:\n` +
-            `استخدم /train`;
-    } else {
-        text =
-            `👋 ابدأ رحلتك مع DeutschDrop\n` +
-            `أضف كلمة بهذه الصيغة:\n` +
-            `Haus = بيت\n` +
-            `أو ارفع CSV من إدارة الكلمات.`;
-    }
-
-    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            chat_id: telegramId,
-            text,
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: '📚 ابدأ التعلم', callback_data: 'menu_learn' }],
-                    [{ text: '🏋️ تدريب سريع', callback_data: 'train_5' }],
-                    [{ text: '⚙️ الإعدادات', callback_data: 'menu_settings' }],
-                ],
-            },
-        }),
-    });
-    await recordNotification(env, userId, 'review_reminder');
-}
-
-function randomMotivation(seed: number): string {
-    const messages = [
-        'دقيقة مراجعة اليوم أفضل من ساعة نسيان بكرة.',
-        'كلمة واحدة الآن تقرّبك من الألمانية أكثر.',
-        'راجع 5 كلمات فقط وخلّي السلسلة مستمرة.',
-        'لا تخلي الكلمات الصعبة تهرب منك.',
-    ];
-    return messages[Math.abs(seed) % messages.length];
 }
 
 async function runDailySummary(env: Env): Promise<void> {

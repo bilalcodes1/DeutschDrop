@@ -17,6 +17,7 @@ import { registerExportWordsCommand } from '../commands/exportWords';
 import { registerPictogramCommand } from '../commands/pictograms';
 import { registerProfileCommand } from '../commands/profile';
 import { registerAdminCommand } from '../commands/admin';
+import { registerSmartNotificationCommand } from '../commands/smartNotifications';
 import { getUserByTelegramId, isRegisteredUser } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 
@@ -46,6 +47,9 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
         if (text?.startsWith('/start')) return next();
 
         const user = await getUserByTelegramId(ctx.db, telegramId);
+        if (user) {
+            await ctx.db.prepare('UPDATE users SET updated_at = datetime("now") WHERE user_id = ?').bind(user.user_id).run();
+        }
         if (user?.is_banned) {
             await ctx.reply('تم إيقاف حسابك من استخدام البوت.');
             return;
@@ -79,6 +83,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerPictogramCommand(bot);
     registerProfileCommand(bot);
     registerAdminCommand(bot);
+    registerSmartNotificationCommand(bot);
 
     // Error handler
     bot.catch((err) => {

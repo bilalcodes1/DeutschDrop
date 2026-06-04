@@ -34,8 +34,12 @@ export interface Settings {
     new_words_per_day: number;
     notification_mode: 'morning' | 'morning_evening' | 'all_day';
     morning_time: string;
+    afternoon_time: string;
     evening_time: string;
     reminders_enabled: boolean;
+    notification_intensity: 'light' | 'normal' | 'intensive' | 'off';
+    notification_timezone: string;
+    last_notification_at: string | null;
     competition_notifications_enabled: boolean;
 }
 

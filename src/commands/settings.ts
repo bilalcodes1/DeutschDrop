@@ -49,21 +49,7 @@ export function registerSettingsCommand(bot: Bot<BotContext>): void {
     });
 
     bot.callbackQuery('set_notifications', async (ctx) => {
-        await ctx.editMessageText(
-            '🔔 *اختر أوقات الإشعارات:*',
-            {
-                parse_mode: 'Markdown',
-                reply_markup: new InlineKeyboard()
-                    .text('☀️ صباحاً فقط', 'notify_morning').row()
-                    .text('☀️ صباحاً + 🌙 مساءً', 'notify_both').row()
-                    .text('⏰ طوال اليوم', 'notify_all').row()
-                    .text('🔕 إيقاف التذكيرات', 'reminders_off').row()
-                    .text('🔔 تشغيل التذكيرات', 'reminders_on').row()
-                    .text('⚔️ إيقاف إشعارات المنافسة', 'competition_notify_off').row()
-                    .text('⚔️ تشغيل إشعارات المنافسة', 'competition_notify_on').row()
-                    .text('⬅️ رجوع', 'menu_settings')
-            }
-        );
+        await showNotificationSettings(ctx);
         await ctx.answerCallbackQuery();
     });
 
@@ -115,6 +101,31 @@ export function registerSettingsCommand(bot: Bot<BotContext>): void {
         );
         await ctx.answerCallbackQuery();
     });
+
+    bot.callbackQuery('notification_toggle', async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return;
+        const settings = await getUserSettings(ctx.db, user.user_id);
+        await updateUserSettings(ctx.db, user.user_id, { reminders_enabled: !isEnabled(settings?.reminders_enabled) });
+        await showNotificationSettings(ctx);
+        await ctx.answerCallbackQuery();
+    });
+
+    bot.callbackQuery(/^notification_intensity_(light|normal|intensive)$/, async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return;
+        await updateUserSettings(ctx.db, user.user_id, { notification_intensity: ctx.match[1] as 'light' | 'normal' | 'intensive' });
+        await showNotificationSettings(ctx);
+        await ctx.answerCallbackQuery();
+    });
+
+    bot.callbackQuery(/^notification_time_(morning|afternoon|evening)$/, async (ctx) => {
+        await ctx.editMessageText(
+            'تغيير وقت الإشعار من داخل البوت TODO.\nحالياً استخدم الأوقات الافتراضية أو إعدادات Wrangler لاحقاً.',
+            { reply_markup: settingsNavigationKeyboard() }
+        );
+        await ctx.answerCallbackQuery();
+    });
 }
 
 async function showSettings(ctx: BotContext): Promise<void> {
@@ -146,6 +157,45 @@ async function showSettings(ctx: BotContext): Promise<void> {
         parse_mode: 'Markdown',
         reply_markup: settingsNavigationKeyboard(),
     });
+}
+
+async function showNotificationSettings(ctx: BotContext): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (!user) {
+        await ctx.reply('يرجى استخدام /start أولاً.');
+        return;
+    }
+
+    const settings = await getUserSettings(ctx.db, user.user_id);
+    const intensityLabels: Record<string, string> = {
+        light: 'خفيف',
+        normal: 'عادي',
+        intensive: 'مكثف',
+        off: 'متوقف',
+    };
+
+    await ctx.editMessageText(
+        `🔔 *إعدادات الإشعارات*\n\n` +
+        `الحالة: *${isEnabled(settings?.reminders_enabled) ? 'مفعلة' : 'متوقفة'}*\n` +
+        `النمط: *${intensityLabels[settings?.notification_intensity ?? 'normal']}*\n` +
+        `الأوقات:\n` +
+        `صباحاً: *${settings?.morning_time ?? '09:00'}*\n` +
+        `عصراً: *${settings?.afternoon_time ?? '15:00'}*\n` +
+        `ليلاً: *${settings?.evening_time ?? '20:00'}*`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: new InlineKeyboard()
+                .text('✅ تشغيل/إيقاف', 'notification_toggle').row()
+                .text('🌱 خفيف', 'notification_intensity_light')
+                .text('⚖️ عادي', 'notification_intensity_normal')
+                .text('🔥 مكثف', 'notification_intensity_intensive').row()
+                .text('🕘 تغيير وقت الصباح', 'notification_time_morning').row()
+                .text('🕒 تغيير وقت العصر', 'notification_time_afternoon').row()
+                .text('🌙 تغيير وقت الليل', 'notification_time_evening').row()
+                .text('⬅️ رجوع', 'menu_settings')
+                .text('🏠 الرئيسية', 'menu_main'),
+        }
+    );
 }
 
 async function updateBooleanSetting(ctx: BotContext, settings: { reminders_enabled?: boolean; competition_notifications_enabled?: boolean }): Promise<void> {

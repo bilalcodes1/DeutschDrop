@@ -133,8 +133,11 @@ export async function updateUserSettings(
     if (settings.new_words_per_day !== undefined) { fields.push('new_words_per_day = ?'); values.push(settings.new_words_per_day); }
     if (settings.notification_mode !== undefined) { fields.push('notification_mode = ?'); values.push(settings.notification_mode); }
     if (settings.morning_time !== undefined) { fields.push('morning_time = ?'); values.push(settings.morning_time); }
+    if (settings.afternoon_time !== undefined) { fields.push('afternoon_time = ?'); values.push(settings.afternoon_time); }
     if (settings.evening_time !== undefined) { fields.push('evening_time = ?'); values.push(settings.evening_time); }
     if (settings.reminders_enabled !== undefined) { fields.push('reminders_enabled = ?'); values.push(settings.reminders_enabled ? 1 : 0); }
+    if (settings.notification_intensity !== undefined) { fields.push('notification_intensity = ?'); values.push(settings.notification_intensity); }
+    if (settings.notification_timezone !== undefined) { fields.push('notification_timezone = ?'); values.push(settings.notification_timezone); }
     if (settings.competition_notifications_enabled !== undefined) { fields.push('competition_notifications_enabled = ?'); values.push(settings.competition_notifications_enabled ? 1 : 0); }
 
     if (fields.length === 0) return;

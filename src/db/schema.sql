@@ -32,8 +32,12 @@ CREATE TABLE IF NOT EXISTS settings (
     new_words_per_day INTEGER DEFAULT 10,
     notification_mode TEXT DEFAULT 'morning', -- morning, morning_evening, all_day
     morning_time TEXT DEFAULT '08:00',
+    afternoon_time TEXT DEFAULT '15:00',
     evening_time TEXT DEFAULT '18:00',
     reminders_enabled INTEGER DEFAULT 1 CHECK (reminders_enabled IN (0, 1)),
+    notification_intensity TEXT DEFAULT 'normal' CHECK (notification_intensity IN ('light', 'normal', 'intensive', 'off')),
+    notification_timezone TEXT DEFAULT 'Asia/Baghdad',
+    last_notification_at DATETIME,
     competition_notifications_enabled INTEGER DEFAULT 1 CHECK (competition_notifications_enabled IN (0, 1)),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
@@ -333,6 +337,20 @@ CREATE TABLE IF NOT EXISTS notification_logs (
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+-- 27. notification_events
+CREATE TABLE IF NOT EXISTS notification_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    word_id INTEGER,
+    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    responded_at DATETIME,
+    response TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE SET NULL
+);
+
 -- 20. job_runs (Cron job state tracking)
 CREATE TABLE IF NOT EXISTS job_runs (
     job_name TEXT PRIMARY KEY,
@@ -367,6 +385,8 @@ CREATE INDEX IF NOT EXISTS idx_support_proofs_status ON support_proofs(status);
 CREATE INDEX IF NOT EXISTS idx_user_support_status_active ON user_support_status(is_supporter, supporter_until);
 CREATE INDEX IF NOT EXISTS idx_bot_announcements_active ON bot_announcements(is_active, updated_at);
 CREATE INDEX IF NOT EXISTS idx_notification_logs_user_type_time ON notification_logs(user_id, type, sent_at);
+CREATE INDEX IF NOT EXISTS idx_notification_events_user_sent ON notification_events(user_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_notification_events_user_word_sent ON notification_events(user_id, word_id, sent_at);
 
 -- =====================================================
 -- Seed: Default achievement definitions
