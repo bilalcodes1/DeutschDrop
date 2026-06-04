@@ -5,6 +5,8 @@ import { getWordById, updateWordAiFieldsForUser } from '../repositories/wordRepo
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { AI_ERROR_MESSAGES, getAiUsageSummary, runAiTask } from '../services/ai/aiRouter';
 import type { AiTaskResult } from '../services/ai/aiTypes';
+import { buildAiDebugReport, formatAiDebugReport } from '../services/ai/aiDebug';
+import { isAdminTelegramId } from '../services/adminAccess';
 import { navigationKeyboard, replaceWithText, showWordDetailPanel } from './wordPanel';
 
 interface ExampleResult {
@@ -48,6 +50,15 @@ export interface TrainExplainSession {
 }
 
 export function registerAiCoachCommand(bot: Bot<BotContext>): void {
+    bot.command('ai_debug', async (ctx) => {
+        if (!isAdminTelegramId(ctx.env, ctx.from?.id)) {
+            await ctx.reply('غير مصرح لك باستخدام هذا الأمر.');
+            return;
+        }
+        const report = await buildAiDebugReport(ctx.env);
+        await ctx.reply(formatAiDebugReport(report));
+    });
+
     bot.callbackQuery(/^ai_improve_(\d+)$/, async (ctx) => {
         const wordId = Number(ctx.match[1]);
         await generateExampleSuggestion(ctx, wordId, false);

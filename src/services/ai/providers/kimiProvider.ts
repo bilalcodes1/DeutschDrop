@@ -1,11 +1,12 @@
 import type { Env } from '../../../models';
 import type { AiProvider } from '../aiTypes';
+import { AiProviderFailure, classifyHttpStatus } from '../aiErrors';
 
 export const kimiProvider: AiProvider = {
     name: 'kimi',
     async run(env: Env, prompt: string) {
         const key = firstKey(env.KIMI_API_KEYS);
-        if (!key) throw new Error('missing Kimi key');
+        if (!key) throw new AiProviderFailure('SKIPPED_NO_KEY');
         const model = env.KIMI_MODEL || 'moonshot-v1-8k';
         const response = await fetch('https://api.moonshot.ai/v1/chat/completions', {
             method: 'POST',
@@ -19,10 +20,10 @@ export const kimiProvider: AiProvider = {
                 messages: [{ role: 'user', content: prompt }],
             }),
         });
-        if (!response.ok) throw new Error('Kimi request failed');
+        if (!response.ok) throw new AiProviderFailure(classifyHttpStatus(response.status), response.status);
         const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
         const text = json.choices?.[0]?.message?.content ?? '';
-        if (!text.trim()) throw new Error('Kimi empty response');
+        if (!text.trim()) throw new AiProviderFailure('BAD_JSON');
         return { text, model };
     },
 };

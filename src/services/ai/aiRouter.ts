@@ -7,6 +7,7 @@ import { canUseAiTask, getAiUsageSummary, incrementAiUsage } from './aiUsage';
 import { geminiProvider } from './providers/geminiProvider';
 import { kimiProvider } from './providers/kimiProvider';
 import { grokProvider } from './providers/grokProvider';
+import { classifyAiError, safeProviderWarn } from './aiErrors';
 
 export { getAiUsageSummary };
 
@@ -41,14 +42,23 @@ export async function runAiTask<T>(
 
     const prompt = buildPrompt(taskType, input);
     for (const provider of orderedProviders(env)) {
+        if (!hasProviderKey(env, provider.name)) {
+            safeProviderWarn(provider.name, 'SKIPPED_NO_KEY');
+            continue;
+        }
         try {
             const response = await provider.run(env, prompt);
             const result = parseJsonResult<T>(response.text);
-            if (!result) continue;
+            if (!result) {
+                safeProviderWarn(provider.name, 'BAD_JSON');
+                continue;
+            }
             await setCachedAiResult(db, taskType, inputHash, provider.name, result);
             await incrementAiUsage(db, options.userId, taskType);
             return { status: 'ok', result, provider: provider.name, model: response.model };
-        } catch {
+        } catch (error) {
+            const classified = classifyAiError(error);
+            safeProviderWarn(provider.name, classified.type, classified.status);
             // Provider fallback is intentional. Do not expose request details or keys.
         }
     }
@@ -56,7 +66,7 @@ export async function runAiTask<T>(
     return { status: 'AI_UNAVAILABLE' };
 }
 
-function orderedProviders(env: Env): AiProvider[] {
+export function orderedProviders(env: Env): AiProvider[] {
     const order = (env.AI_PROVIDER_ORDER || 'gemini,kimi,grok')
         .split(',')
         .map(name => name.trim())
@@ -69,7 +79,7 @@ function orderedProviders(env: Env): AiProvider[] {
     }).map(name => PROVIDERS[name]);
 }
 
-function parseJsonResult<T>(text: string): T | null {
+export function parseJsonResult<T>(text: string): T | null {
     const cleaned = text.trim()
         .replace(/^```(?:json)?/i, '')
         .replace(/```$/i, '')
@@ -82,4 +92,28 @@ function parseJsonResult<T>(text: string): T | null {
     } catch {
         return null;
     }
+}
+
+export function countProviderKeys(env: Env, providerName: AiProviderName): number {
+    return providerKeyString(env, providerName)
+        .split(',')
+        .map(key => key.trim())
+        .filter(Boolean)
+        .length;
+}
+
+export function hasProviderKey(env: Env, providerName: AiProviderName): boolean {
+    return countProviderKeys(env, providerName) > 0;
+}
+
+export function getProviderModel(env: Env, providerName: AiProviderName): string {
+    if (providerName === 'gemini') return env.GEMINI_MODEL || 'gemini-1.5-flash';
+    if (providerName === 'kimi') return env.KIMI_MODEL || 'moonshot-v1-8k';
+    return env.GROK_MODEL || 'grok-2-latest';
+}
+
+function providerKeyString(env: Env, providerName: AiProviderName): string {
+    if (providerName === 'gemini') return env.GEMINI_API_KEYS ?? '';
+    if (providerName === 'kimi') return env.KIMI_API_KEYS ?? '';
+    return env.GROK_API_KEYS ?? '';
 }

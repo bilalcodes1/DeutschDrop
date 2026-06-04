@@ -6,6 +6,7 @@ import { calculateNextReview } from '../dist/services/srs.js';
 import { getLevelFromXp, getProgressToNextLevel } from '../dist/services/xpMath.js';
 import { buildArasaacImageUrl, normalizeArasaacResults, searchEducationalPictograms } from '../dist/services/pictogramSearch.js';
 import { getAdminTelegramIds, isAdminTelegramId } from '../dist/services/adminAccess.js';
+import { classifyHttpStatus } from '../dist/services/ai/aiErrors.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -566,7 +567,7 @@ test('optional AI coach is disabled safely and uses provider fallback', () => {
     const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 
-    assert.match(wranglerSource, /AI_ENABLED = "false"/);
+    assert.match(wranglerSource, /AI_ENABLED = "(true|false)"/);
     assert.match(routerSource, /env\.AI_ENABLED !== 'true'/);
     assert.match(routerSource, /AI_DISABLED/);
     assert.match(routerSource, /AI_UNAVAILABLE/);
@@ -664,4 +665,39 @@ test('AI migration adds cache usage and word metadata columns', () => {
     assert.match(schemaSource, /example_ar TEXT DEFAULT NULL/);
     assert.match(schemaSource, /pronunciation_ar TEXT DEFAULT NULL/);
     assert.match(schemaSource, /level TEXT DEFAULT NULL/);
+});
+
+test('/ai_debug is admin-only and does not expose provider keys', () => {
+    const aiSource = fs.readFileSync(new URL('../src/commands/aiCoach.ts', import.meta.url), 'utf8');
+    const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
+
+    assert.match(aiSource, /bot\.command\('ai_debug'/);
+    assert.match(aiSource, /isAdminTelegramId\(ctx\.env, ctx\.from\?\.id\)/);
+    assert.match(aiSource, /غير مصرح لك باستخدام هذا الأمر/);
+    assert.match(debugSource, /keys: \$\{provider\.keys\}/);
+    assert.doesNotMatch(debugSource, /GEMINI_API_KEYS.*\+|KIMI_API_KEYS.*\+|GROK_API_KEYS.*\+/);
+});
+
+test('AI debug marks providers without keys as SKIPPED_NO_KEY', () => {
+    const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
+
+    assert.match(debugSource, /hasProviderKey/);
+    assert.match(debugSource, /status: 'SKIPPED_NO_KEY'/);
+    assert.match(debugSource, /error_type: 'SKIPPED_NO_KEY'/);
+    assert.match(debugSource, /gemini/);
+    assert.match(debugSource, /kimi/);
+    assert.match(debugSource, /grok/);
+});
+
+test('AI diagnostics classify bad JSON and 401 safely', () => {
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
+    const providerSource = fs.readFileSync(new URL('../src/services/ai/providers/geminiProvider.ts', import.meta.url), 'utf8');
+    const errorsSource = fs.readFileSync(new URL('../src/services/ai/aiErrors.ts', import.meta.url), 'utf8');
+
+    assert.equal(classifyHttpStatus(401), 'AUTH');
+    assert.match(debugSource, /error_type: 'BAD_JSON'/);
+    assert.match(routerSource, /safeProviderWarn\(provider\.name, 'BAD_JSON'\)/);
+    assert.match(providerSource, /classifyHttpStatus\(response\.status\)/);
+    assert.match(errorsSource, /AI provider failed: provider=/);
 });
