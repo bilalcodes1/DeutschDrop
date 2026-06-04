@@ -7,10 +7,12 @@ import { canUseAiTask, getAiUsageSummary, incrementAiUsage } from './aiUsage';
 import { geminiProvider } from './providers/geminiProvider';
 import { kimiProvider } from './providers/kimiProvider';
 import { groqCloudProvider } from './providers/groqCloudProvider';
+import { cloudflareAiProvider } from './providers/cloudflareAiProvider';
 import { safeProviderWarn } from './aiErrors';
 import { getGeminiModel } from './providers/geminiProvider';
 import { getKimiModel } from './providers/kimiProvider';
 import { getGroqCloudModel } from './providers/groqCloudProvider';
+import { getCloudflareAiModel } from './providers/cloudflareAiProvider';
 
 export { getAiUsageSummary };
 
@@ -22,6 +24,7 @@ export const AI_ERROR_MESSAGES: Record<Exclude<AiTaskResult['status'], 'ok'>, st
 };
 
 const PROVIDERS: Record<AiProviderName, AiProvider> = {
+    cloudflareAi: cloudflareAiProvider,
     gemini: geminiProvider,
     kimi: kimiProvider,
     groqCloud: groqCloudProvider,
@@ -82,10 +85,10 @@ export async function runAiTask<T>(
 }
 
 export function orderedProviders(env: Env): AiProvider[] {
-    const order = (env.AI_PROVIDER_ORDER || 'groqCloud,gemini,kimi')
+    const order = (env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,gemini')
         .split(',')
         .map(name => name.trim())
-        .filter((name): name is AiProviderName => name === 'gemini' || name === 'kimi' || name === 'groqCloud');
+        .filter((name): name is AiProviderName => name === 'cloudflareAi' || name === 'gemini' || name === 'kimi' || name === 'groqCloud');
     const seen = new Set<AiProviderName>();
     return order.filter(name => {
         if (seen.has(name)) return false;
@@ -110,6 +113,7 @@ export function parseJsonResult<T>(text: string): T | null {
 }
 
 export function countProviderKeys(env: Env, providerName: AiProviderName): number {
+    if (providerName === 'cloudflareAi') return 0;
     return providerKeyString(env, providerName)
         .split(',')
         .map(key => key.trim())
@@ -118,16 +122,19 @@ export function countProviderKeys(env: Env, providerName: AiProviderName): numbe
 }
 
 export function hasProviderKey(env: Env, providerName: AiProviderName): boolean {
+    if (providerName === 'cloudflareAi') return Boolean(env.AI?.run);
     return countProviderKeys(env, providerName) > 0;
 }
 
 export function getProviderModel(env: Env, providerName: AiProviderName): string {
+    if (providerName === 'cloudflareAi') return getCloudflareAiModel(env);
     if (providerName === 'gemini') return getGeminiModel(env);
     if (providerName === 'kimi') return getKimiModel(env);
     return getGroqCloudModel(env);
 }
 
 function providerKeyString(env: Env, providerName: AiProviderName): string {
+    if (providerName === 'cloudflareAi') return '';
     if (providerName === 'gemini') return env.GEMINI_API_KEYS ?? '';
     if (providerName === 'kimi') return env.KIMI_API_KEYS ?? '';
     return env.GROK_API_KEYS ?? '';

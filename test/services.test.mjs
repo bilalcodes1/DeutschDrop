@@ -571,6 +571,7 @@ test('optional AI coach is disabled safely and uses provider fallback', () => {
     assert.match(routerSource, /env\.AI_ENABLED !== 'true'/);
     assert.match(routerSource, /AI_DISABLED/);
     assert.match(routerSource, /AI_UNAVAILABLE/);
+    assert.match(routerSource, /cloudflareAiProvider/);
     assert.match(routerSource, /geminiProvider/);
     assert.match(routerSource, /kimiProvider/);
     assert.match(routerSource, /groqCloudProvider/);
@@ -760,7 +761,7 @@ test('AI rate limit and GroqCloud bad request diagnostics are safe', () => {
     assert.match(debugSource, /safe_message/);
     assert.match(errorsSource, /slice\(0, 200\)/);
     assert.match(errorsSource, /Bearer \[redacted\]/);
-    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "groqCloud,gemini,kimi"/);
+    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,gemini"/);
     assert.match(wranglerSource, /GROK_MODEL = "llama-3\.1-8b-instant"/);
 });
 
@@ -771,7 +772,7 @@ test('AI configuration uses GroqCloud endpoint only', () => {
     const kimiSource = fs.readFileSync(new URL('../src/services/ai/providers/kimiProvider.ts', import.meta.url), 'utf8');
     const allAiSource = routerSource + debugSource + groqCloudSource;
 
-    assert.match(routerSource, /groqCloud,gemini,kimi/);
+    assert.match(routerSource, /cloudflareAi,groqCloud,gemini/);
     assert.match(routerSource, /name === 'groqCloud'/);
     assert.match(groqCloudSource, /api\.groq\.com\/openai\/v1\/chat\/completions/);
     assert.match(groqCloudSource, /extractOpenAiCompatibleText/);
@@ -797,12 +798,44 @@ test('Kimi rate limit debug skips second test and retries once', () => {
     assert.match(utilsSource, /timeoutMs = 10000/);
 });
 
-test('AI router starts with GroqCloud and can avoid Kimi when GroqCloud succeeds', () => {
+test('AI router starts with Cloudflare AI and keeps Kimi out of current order', () => {
     const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 
-    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "groqCloud,gemini,kimi"/);
+    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,gemini"/);
+    assert.doesNotMatch(wranglerSource.match(/AI_PROVIDER_ORDER = "([^"]+)"/)?.[1] ?? '', /kimi/);
+    assert.match(routerSource, /cloudflareAi: cloudflareAiProvider/);
     assert.match(routerSource, /groqCloud: groqCloudProvider/);
     assert.match(routerSource, /return \{ status: 'ok', result, provider: provider\.name/);
     assert.ok(routerSource.indexOf("return { status: 'ok', result, provider: provider.name") < routerSource.indexOf("return { status: 'AI_UNAVAILABLE' }"));
+});
+
+test('Cloudflare AI provider uses Workers AI binding without API keys', () => {
+    const providerSource = fs.readFileSync(new URL('../src/services/ai/providers/cloudflareAiProvider.ts', import.meta.url), 'utf8');
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
+    const modelsSource = fs.readFileSync(new URL('../src/models/index.ts', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+
+    assert.match(providerSource, /env\.AI\.run\(model/);
+    assert.match(providerSource, /extractCloudflareAiText/);
+    assert.match(providerSource, /@cf\/meta\/llama-3\.1-8b-instruct/);
+    assert.match(routerSource, /if \(providerName === 'cloudflareAi'\) return Boolean\(env\.AI\?\.run\)/);
+    assert.match(debugSource, /keys: provider\.name === 'cloudflareAi' \? 'not required'/);
+    assert.match(debugSource, /Cloudflare AI/);
+    assert.match(debugSource, /cloudflare_workers_ai/);
+    assert.match(modelsSource, /AI\?: \{ run\(model: string, input: unknown\): Promise<unknown> \}/);
+    assert.match(wranglerSource, /\[ai\]\s+binding = "AI"/);
+    assert.match(wranglerSource, /CLOUDFLARE_AI_MODEL = "@cf\/meta\/llama-3\.1-8b-instruct"/);
+});
+
+test('Cloudflare AI fallback order keeps GroqCloud available after bad JSON', () => {
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
+
+    assert.match(routerSource, /safeProviderWarn\(provider\.name, 'BAD_JSON'\)/);
+    assert.match(routerSource, /continue;/);
+    assert.ok(routerSource.indexOf('cloudflareAi,groqCloud,gemini') >= 0);
+    assert.match(debugSource, /cloudflareAi/);
+    assert.match(debugSource, /groqCloud/);
 });

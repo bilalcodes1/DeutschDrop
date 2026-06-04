@@ -6,10 +6,14 @@ compatibility_date = "2024-06-01"
 ENVIRONMENT = "production"
 ADMIN_TELEGRAM_IDS = "8590766269,8014388174"
 AI_ENABLED = "true"
-AI_PROVIDER_ORDER = "groqCloud,gemini,kimi"
+AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,gemini"
 GEMINI_MODEL = "gemini-2.0-flash"
 KIMI_MODEL = "moonshot-v1-8k"
 GROK_MODEL = "llama-3.1-8b-instant"
+CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+
+[ai]
+binding = "AI"
 
 [[d1_databases]]
 binding = "DB"

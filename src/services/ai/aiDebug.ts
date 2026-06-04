@@ -5,12 +5,13 @@ import { countProviderKeys, getProviderModel, hasProviderKey, orderedProviders, 
 import { geminiProvider } from './providers/geminiProvider';
 import { kimiProvider } from './providers/kimiProvider';
 import { groqCloudProvider } from './providers/groqCloudProvider';
+import { cloudflareAiProvider } from './providers/cloudflareAiProvider';
 
 interface ProviderDebugResult {
     provider: AiProviderName;
-    keys: number;
+    keys: number | 'not required';
     model: string;
-    endpoint_type: 'gemini_generateContent' | 'openai_chat_completions' | 'groq_openai_compatible';
+    endpoint_type: 'cloudflare_workers_ai' | 'gemini_generateContent' | 'openai_chat_completions' | 'groq_openai_compatible';
     raw_text_test_status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY';
     json_test_status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY' | 'SKIPPED_AFTER_RATE_LIMIT';
     error_type?: AiErrorType;
@@ -30,7 +31,7 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
         if (!hasProviderKey(env, provider.name)) {
             return {
                 provider: provider.name,
-                keys,
+                keys: provider.name === 'cloudflareAi' ? 'not required' : keys,
                 model: getProviderModel(env, provider.name),
                 endpoint_type: endpointType(provider.name),
                 raw_text_test_status: 'SKIPPED_NO_KEY',
@@ -50,7 +51,7 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
         const error = firstError(raw, json, jsonOk);
         return {
             provider: provider.name,
-            keys,
+            keys: provider.name === 'cloudflareAi' ? 'not required' : keys,
             model: raw.model || json?.model || getProviderModel(env, provider.name),
             endpoint_type: endpointType(provider.name),
             raw_text_test_status: raw.ok && (raw.text ?? '').trim().includes('OK') ? 'OK' : 'FAILED',
@@ -63,7 +64,7 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
 
     return {
         aiEnabled: env.AI_ENABLED === 'true',
-        providerOrder: env.AI_PROVIDER_ORDER || 'groqCloud,gemini,kimi',
+        providerOrder: env.AI_PROVIDER_ORDER || 'cloudflareAi,groqCloud,gemini',
         providers,
     };
 }
@@ -88,12 +89,13 @@ export function formatAiDebugReport(report: AiDebugReport): string {
 
 function orderedDebugProviders(env: Env): AiProvider[] {
     const byName: Record<AiProviderName, AiProvider> = {
+        cloudflareAi: cloudflareAiProvider,
         gemini: geminiProvider,
         kimi: kimiProvider,
         groqCloud: groqCloudProvider,
     };
     const names = orderedProviders(env).map(provider => provider.name);
-    for (const name of ['gemini', 'kimi', 'groqCloud'] as AiProviderName[]) {
+    for (const name of ['cloudflareAi', 'gemini', 'groqCloud', 'kimi'] as AiProviderName[]) {
         if (!names.includes(name)) names.push(name);
     }
     return names.map(name => byName[name]);
@@ -116,6 +118,7 @@ function firstError(
 }
 
 function endpointType(providerName: AiProviderName): ProviderDebugResult['endpoint_type'] {
+    if (providerName === 'cloudflareAi') return 'cloudflare_workers_ai';
     if (providerName === 'gemini') return 'gemini_generateContent';
     if (providerName === 'groqCloud') return 'groq_openai_compatible';
     return 'openai_chat_completions';
@@ -123,6 +126,7 @@ function endpointType(providerName: AiProviderName): ProviderDebugResult['endpoi
 
 function providerLabel(providerName: AiProviderName): string {
     const labels: Record<AiProviderName, string> = {
+        cloudflareAi: 'Cloudflare AI',
         gemini: 'Gemini',
         kimi: 'Kimi',
         groqCloud: 'GroqCloud',
