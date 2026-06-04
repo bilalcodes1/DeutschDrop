@@ -274,7 +274,7 @@ async function showAiSettings(ctx: BotContext): Promise<void> {
         ctx,
         `🤖 *إعدادات الذكاء الاصطناعي*\n\n` +
         `الحالة: *${enabled ? 'مفعل' : 'متوقف'}*\n` +
-        `المزوّدات: *${ctx.env.AI_PROVIDER_ORDER || 'gemini,kimi,grok'}*\n\n` +
+        `المزوّدات: *${ctx.env.AI_PROVIDER_ORDER || 'gemini,kimi,groqCloud'}*\n\n` +
         `استخدام اليوم:\n${lines || '-'}`,
         navigationKeyboard('menu_settings'),
         'Markdown'

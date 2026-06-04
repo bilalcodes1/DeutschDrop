@@ -3,14 +3,14 @@ import type { AiProvider } from '../aiTypes';
 import { classifyHttpStatus, readSafeErrorMessage } from '../aiErrors';
 import { extractOpenAiCompatibleText } from './kimiProvider';
 
-export const grokProvider: AiProvider = {
-    name: 'grok',
+export const groqCloudProvider: AiProvider = {
+    name: 'groqCloud',
     async run(env: Env, prompt: string, options = {}) {
         const key = firstKey(env.GROK_API_KEYS);
-        if (!key) return { ok: false, errorType: 'SKIPPED_NO_KEY', model: getGrokModel(env) };
-        const model = getGrokModel(env);
+        if (!key) return { ok: false, errorType: 'SKIPPED_NO_KEY', model: getGroqCloudModel(env) };
+        const model = getGroqCloudModel(env);
         try {
-            const response = await fetch('https://api.x.ai/v1/chat/completions', {
+            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -40,8 +40,8 @@ export const grokProvider: AiProvider = {
     },
 };
 
-export function getGrokModel(env: Env): string {
-    return env.GROK_MODEL || 'grok-2-latest';
+export function getGroqCloudModel(env: Env): string {
+    return env.GROK_MODEL || 'llama-3.1-8b-instant';
 }
 
 function firstKey(value?: string): string | null {

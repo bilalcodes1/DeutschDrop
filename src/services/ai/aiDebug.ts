@@ -4,13 +4,13 @@ import type { AiErrorType } from './aiErrors';
 import { countProviderKeys, getProviderModel, hasProviderKey, orderedProviders, parseJsonResult } from './aiRouter';
 import { geminiProvider } from './providers/geminiProvider';
 import { kimiProvider } from './providers/kimiProvider';
-import { grokProvider } from './providers/grokProvider';
+import { groqCloudProvider } from './providers/groqCloudProvider';
 
 interface ProviderDebugResult {
     provider: AiProviderName;
     keys: number;
     model: string;
-    endpoint_type: 'gemini_generateContent' | 'openai_chat_completions';
+    endpoint_type: 'gemini_generateContent' | 'openai_chat_completions' | 'groq_openai_compatible';
     raw_text_test_status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY';
     json_test_status: 'OK' | 'FAILED' | 'SKIPPED_NO_KEY';
     error_type?: AiErrorType;
@@ -62,7 +62,7 @@ export async function buildAiDebugReport(env: Env): Promise<AiDebugReport> {
 
     return {
         aiEnabled: env.AI_ENABLED === 'true',
-        providerOrder: env.AI_PROVIDER_ORDER || 'gemini,kimi,grok',
+        providerOrder: env.AI_PROVIDER_ORDER || 'gemini,kimi,groqCloud',
         providers,
     };
 }
@@ -89,10 +89,10 @@ function orderedDebugProviders(env: Env): AiProvider[] {
     const byName: Record<AiProviderName, AiProvider> = {
         gemini: geminiProvider,
         kimi: kimiProvider,
-        grok: grokProvider,
+        groqCloud: groqCloudProvider,
     };
     const names = orderedProviders(env).map(provider => provider.name);
-    for (const name of ['gemini', 'kimi', 'grok'] as AiProviderName[]) {
+    for (const name of ['gemini', 'kimi', 'groqCloud'] as AiProviderName[]) {
         if (!names.includes(name)) names.push(name);
     }
     return names.map(name => byName[name]);
@@ -115,14 +115,16 @@ function firstError(
 }
 
 function endpointType(providerName: AiProviderName): ProviderDebugResult['endpoint_type'] {
-    return providerName === 'gemini' ? 'gemini_generateContent' : 'openai_chat_completions';
+    if (providerName === 'gemini') return 'gemini_generateContent';
+    if (providerName === 'groqCloud') return 'groq_openai_compatible';
+    return 'openai_chat_completions';
 }
 
 function providerLabel(providerName: AiProviderName): string {
     const labels: Record<AiProviderName, string> = {
         gemini: 'Gemini',
         kimi: 'Kimi',
-        grok: 'Grok',
+        groqCloud: 'GroqCloud',
     };
     return labels[providerName];
 }

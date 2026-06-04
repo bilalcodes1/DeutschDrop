@@ -573,7 +573,7 @@ test('optional AI coach is disabled safely and uses provider fallback', () => {
     assert.match(routerSource, /AI_UNAVAILABLE/);
     assert.match(routerSource, /geminiProvider/);
     assert.match(routerSource, /kimiProvider/);
-    assert.match(routerSource, /grokProvider/);
+    assert.match(routerSource, /groqCloudProvider/);
     assert.match(routerSource, /for \(const provider of orderedProviders\(env\)\)/);
 });
 
@@ -687,7 +687,7 @@ test('AI debug marks providers without keys as SKIPPED_NO_KEY', () => {
     assert.match(debugSource, /error_type: 'SKIPPED_NO_KEY'/);
     assert.match(debugSource, /gemini/);
     assert.match(debugSource, /kimi/);
-    assert.match(debugSource, /grok/);
+    assert.match(debugSource, /groqCloud/);
 });
 
 test('AI diagnostics classify bad JSON and 401 safely', () => {
@@ -709,24 +709,26 @@ test('AI diagnostics classify bad JSON and 401 safely', () => {
 test('AI providers use correct endpoints models and response extraction paths', () => {
     const geminiSource = fs.readFileSync(new URL('../src/services/ai/providers/geminiProvider.ts', import.meta.url), 'utf8');
     const kimiSource = fs.readFileSync(new URL('../src/services/ai/providers/kimiProvider.ts', import.meta.url), 'utf8');
-    const grokSource = fs.readFileSync(new URL('../src/services/ai/providers/grokProvider.ts', import.meta.url), 'utf8');
+    const groqCloudSource = fs.readFileSync(new URL('../src/services/ai/providers/groqCloudProvider.ts', import.meta.url), 'utf8');
     const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
 
     assert.match(geminiSource, /generativelanguage\.googleapis\.com\/v1beta\/models\/\$\{model\}:generateContent/);
     assert.match(geminiSource, /gemini-2\.0-flash/);
     assert.match(geminiSource, /candidates\?\.\[0\]\?\.content\?\.parts/);
     assert.match(kimiSource, /https:\/\/api\.moonshot\.ai\/v1\/chat\/completions/);
-    assert.match(grokSource, /https:\/\/api\.x\.ai\/v1\/chat\/completions/);
-    assert.match(grokSource, /Authorization: `Bearer \$\{key\}`/);
-    assert.match(grokSource, /role: 'system'/);
-    assert.match(grokSource, /role: 'user', content: prompt/);
-    assert.match(grokSource, /max_tokens: options\.maxTokens \?\? 300/);
+    assert.match(groqCloudSource, /https:\/\/api\.groq\.com\/openai\/v1\/chat\/completions/);
+    assert.match(groqCloudSource, /Authorization: `Bearer \$\{key\}`/);
+    assert.match(groqCloudSource, /role: 'system'/);
+    assert.match(groqCloudSource, /role: 'user', content: prompt/);
+    assert.match(groqCloudSource, /max_tokens: options\.maxTokens \?\? 300/);
     assert.match(kimiSource, /choices\?\.\[0\]\?\.message\?\.content/);
-    assert.match(grokSource, /extractOpenAiCompatibleText/);
+    assert.match(groqCloudSource, /extractOpenAiCompatibleText/);
     assert.match(debugSource, /Reply with OK/);
     assert.match(debugSource, /raw_text_test_status/);
     assert.match(debugSource, /json_test_status/);
     assert.match(debugSource, /endpoint_type/);
+    assert.match(debugSource, /GroqCloud/);
+    assert.match(debugSource, /groq_openai_compatible/);
 });
 
 test('AI router continues after provider errors and can return later provider success', () => {
@@ -743,9 +745,9 @@ test('AI router continues after provider errors and can return later provider su
     assert.match(errorsSource, /RATE_LIMIT/);
 });
 
-test('AI rate limit and Grok bad request diagnostics are safe', () => {
+test('AI rate limit and GroqCloud bad request diagnostics are safe', () => {
     const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
-    const grokSource = fs.readFileSync(new URL('../src/services/ai/providers/grokProvider.ts', import.meta.url), 'utf8');
+    const groqCloudSource = fs.readFileSync(new URL('../src/services/ai/providers/groqCloudProvider.ts', import.meta.url), 'utf8');
     const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
     const errorsSource = fs.readFileSync(new URL('../src/services/ai/aiErrors.ts', import.meta.url), 'utf8');
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
@@ -753,10 +755,27 @@ test('AI rate limit and Grok bad request diagnostics are safe', () => {
     assert.match(routerSource, /AI_PROVIDER_RATE_LIMITED/);
     assert.match(routerSource, /rateLimitedProviders\+\+/);
     assert.match(routerSource, /خدمة الذكاء الصناعي وصلت حد الاستخدام حالياً\. جرّب لاحقاً\./);
-    assert.match(grokSource, /readSafeErrorMessage\(response\)/);
-    assert.match(grokSource, /safeMessage/);
+    assert.match(groqCloudSource, /readSafeErrorMessage\(response\)/);
+    assert.match(groqCloudSource, /safeMessage/);
     assert.match(debugSource, /safe_message/);
     assert.match(errorsSource, /slice\(0, 200\)/);
     assert.match(errorsSource, /Bearer \[redacted\]/);
-    assert.match(wranglerSource, /GROK_MODEL = "ضع هنا الموديل الصحيح من xAI console"/);
+    assert.match(wranglerSource, /AI_PROVIDER_ORDER = "gemini,kimi,groqCloud"/);
+    assert.match(wranglerSource, /GROK_MODEL = "llama-3\.1-8b-instant"/);
+});
+
+test('AI configuration uses GroqCloud endpoint only', () => {
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const debugSource = fs.readFileSync(new URL('../src/services/ai/aiDebug.ts', import.meta.url), 'utf8');
+    const groqCloudSource = fs.readFileSync(new URL('../src/services/ai/providers/groqCloudProvider.ts', import.meta.url), 'utf8');
+    const kimiSource = fs.readFileSync(new URL('../src/services/ai/providers/kimiProvider.ts', import.meta.url), 'utf8');
+    const allAiSource = routerSource + debugSource + groqCloudSource;
+
+    assert.match(routerSource, /gemini,kimi,groqCloud/);
+    assert.match(routerSource, /name === 'groqCloud'/);
+    assert.match(groqCloudSource, /api\.groq\.com\/openai\/v1\/chat\/completions/);
+    assert.match(groqCloudSource, /extractOpenAiCompatibleText/);
+    assert.match(kimiSource, /choices\?\.\[0\]\?\.message\?\.content/);
+    assert.match(debugSource, /GroqCloud/);
+    assert.doesNotMatch(allAiSource, /api\.x\.ai/);
 });

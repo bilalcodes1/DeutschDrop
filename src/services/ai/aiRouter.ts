@@ -6,11 +6,11 @@ import { buildInputHash, getCachedAiResult, setCachedAiResult } from './aiCache'
 import { canUseAiTask, getAiUsageSummary, incrementAiUsage } from './aiUsage';
 import { geminiProvider } from './providers/geminiProvider';
 import { kimiProvider } from './providers/kimiProvider';
-import { grokProvider } from './providers/grokProvider';
+import { groqCloudProvider } from './providers/groqCloudProvider';
 import { safeProviderWarn } from './aiErrors';
 import { getGeminiModel } from './providers/geminiProvider';
 import { getKimiModel } from './providers/kimiProvider';
-import { getGrokModel } from './providers/grokProvider';
+import { getGroqCloudModel } from './providers/groqCloudProvider';
 
 export { getAiUsageSummary };
 
@@ -24,7 +24,7 @@ export const AI_ERROR_MESSAGES: Record<Exclude<AiTaskResult['status'], 'ok'>, st
 const PROVIDERS: Record<AiProviderName, AiProvider> = {
     gemini: geminiProvider,
     kimi: kimiProvider,
-    grok: grokProvider,
+    groqCloud: groqCloudProvider,
 };
 
 export async function runAiTask<T>(
@@ -82,10 +82,10 @@ export async function runAiTask<T>(
 }
 
 export function orderedProviders(env: Env): AiProvider[] {
-    const order = (env.AI_PROVIDER_ORDER || 'gemini,kimi,grok')
+    const order = (env.AI_PROVIDER_ORDER || 'gemini,kimi,groqCloud')
         .split(',')
         .map(name => name.trim())
-        .filter((name): name is AiProviderName => name === 'gemini' || name === 'kimi' || name === 'grok');
+        .filter((name): name is AiProviderName => name === 'gemini' || name === 'kimi' || name === 'groqCloud');
     const seen = new Set<AiProviderName>();
     return order.filter(name => {
         if (seen.has(name)) return false;
@@ -124,7 +124,7 @@ export function hasProviderKey(env: Env, providerName: AiProviderName): boolean 
 export function getProviderModel(env: Env, providerName: AiProviderName): string {
     if (providerName === 'gemini') return getGeminiModel(env);
     if (providerName === 'kimi') return getKimiModel(env);
-    return getGrokModel(env);
+    return getGroqCloudModel(env);
 }
 
 function providerKeyString(env: Env, providerName: AiProviderName): string {
