@@ -51,15 +51,21 @@ export interface Settings {
     user_id: number;
     daily_goal: number;
     new_words_per_day: number;
-    notification_mode: 'morning' | 'morning_evening' | 'all_day';
+    german_level: 'A1' | 'A2' | 'B1' | null;
+    notification_mode: 'light' | 'normal' | 'intensive' | 'custom' | 'off';
+    notification_interval_hours: number | null;
+    review_plan: 'none' | 'all_words_day' | 'all_words_week';
+    notification_batch_size: number;
     morning_time: string;
     afternoon_time: string;
     evening_time: string;
     reminders_enabled: boolean;
-    notification_intensity: 'light' | 'normal' | 'intensive' | 'off';
+    notification_intensity: 'light' | 'normal' | 'intensive' | 'custom' | 'off';
     notification_timezone: string;
     last_notification_at: string | null;
+    last_notified_word_id: number | null;
     competition_notifications_enabled: boolean;
+    leaderboard_notifications_enabled: boolean;
 }
 
 export interface Word {
@@ -197,6 +203,30 @@ export interface JobRun {
     job_name: string;
     last_run: string | null;
     status: 'success' | 'failed' | null;
+}
+
+export interface DailyReviewPlan {
+    id: number;
+    user_id: number;
+    plan_type: 'all_words_day' | 'all_words_week';
+    total_words: number;
+    reviewed_words: number;
+    batch_size: number;
+    started_at: string;
+    ends_at: string;
+    is_active: number;
+}
+
+export interface LearningSource {
+    id: number;
+    title: string;
+    url: string;
+    level: 'A1' | 'A2' | 'B1';
+    description: string | null;
+    is_active: number;
+    created_by_admin_id: number | null;
+    created_at: string;
+    updated_at: string | null;
 }
 
 // =====================================================

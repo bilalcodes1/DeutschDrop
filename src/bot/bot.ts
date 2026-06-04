@@ -17,6 +17,7 @@ import { registerExportWordsCommand } from '../commands/exportWords';
 import { registerPictogramCommand } from '../commands/pictograms';
 import { registerProfileCommand } from '../commands/profile';
 import { registerAdminCommand } from '../commands/admin';
+import { registerSourcesCommand } from '../commands/sources';
 import { registerSmartNotificationCommand } from '../commands/smartNotifications';
 import { registerAiCoachCommand } from '../commands/aiCoach';
 import { getUserByTelegramId, isRegisteredUser } from '../repositories/userRepository';
@@ -84,6 +85,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerPictogramCommand(bot);
     registerProfileCommand(bot);
     registerAdminCommand(bot);
+    registerSourcesCommand(bot);
     registerSmartNotificationCommand(bot);
     registerAiCoachCommand(bot);
 

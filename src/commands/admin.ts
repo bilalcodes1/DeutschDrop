@@ -195,6 +195,7 @@ function adminPanelKeyboard(): InlineKeyboard {
         .text('👥 المستخدمون', 'admin_users_0').row()
         .text('📢 إرسال تبليغ', 'admin_broadcast_start').row()
         .text('📌 تثبيت رسالة داخل البوت', 'admin_announcement_start').row()
+        .text('📚 إدارة المصادر', 'admin_sources').row()
         .text('💙 طلبات الدعم', 'admin_support_pending_0')
         .text('🚫 المحظورون', 'admin_banned').row()
         .text('🏠 الرئيسية', 'menu_main');

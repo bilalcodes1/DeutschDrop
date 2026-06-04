@@ -131,14 +131,21 @@ export async function updateUserSettings(
 
     if (settings.daily_goal !== undefined) { fields.push('daily_goal = ?'); values.push(settings.daily_goal); }
     if (settings.new_words_per_day !== undefined) { fields.push('new_words_per_day = ?'); values.push(settings.new_words_per_day); }
+    if (settings.german_level !== undefined) { fields.push('german_level = ?'); values.push(settings.german_level); }
     if (settings.notification_mode !== undefined) { fields.push('notification_mode = ?'); values.push(settings.notification_mode); }
+    if (settings.notification_interval_hours !== undefined) { fields.push('notification_interval_hours = ?'); values.push(settings.notification_interval_hours); }
+    if (settings.review_plan !== undefined) { fields.push('review_plan = ?'); values.push(settings.review_plan); }
+    if (settings.notification_batch_size !== undefined) { fields.push('notification_batch_size = ?'); values.push(settings.notification_batch_size); }
     if (settings.morning_time !== undefined) { fields.push('morning_time = ?'); values.push(settings.morning_time); }
     if (settings.afternoon_time !== undefined) { fields.push('afternoon_time = ?'); values.push(settings.afternoon_time); }
     if (settings.evening_time !== undefined) { fields.push('evening_time = ?'); values.push(settings.evening_time); }
     if (settings.reminders_enabled !== undefined) { fields.push('reminders_enabled = ?'); values.push(settings.reminders_enabled ? 1 : 0); }
     if (settings.notification_intensity !== undefined) { fields.push('notification_intensity = ?'); values.push(settings.notification_intensity); }
     if (settings.notification_timezone !== undefined) { fields.push('notification_timezone = ?'); values.push(settings.notification_timezone); }
+    if (settings.last_notification_at !== undefined) { fields.push('last_notification_at = ?'); values.push(settings.last_notification_at); }
+    if (settings.last_notified_word_id !== undefined) { fields.push('last_notified_word_id = ?'); values.push(settings.last_notified_word_id); }
     if (settings.competition_notifications_enabled !== undefined) { fields.push('competition_notifications_enabled = ?'); values.push(settings.competition_notifications_enabled ? 1 : 0); }
+    if (settings.leaderboard_notifications_enabled !== undefined) { fields.push('leaderboard_notifications_enabled = ?'); values.push(settings.leaderboard_notifications_enabled ? 1 : 0); }
 
     if (fields.length === 0) return;
 

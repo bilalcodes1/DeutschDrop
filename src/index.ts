@@ -5,6 +5,7 @@ import type { Env } from './models';
 import { deleteExpiredBotSessions } from './repositories/sessionRepository';
 import { ZAINCASH_QR_BASE64 } from './assets_zaincash_qr';
 import { sendSmartNotification } from './services/smartNotificationService';
+import { getLeaderboardByPeriod, type LeaderboardPeriod } from './services/xpLevels';
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -49,6 +50,7 @@ export default {
                 }
                 case 'generate_daily_summary': {
                     await runDailySummary(env);
+                    await runLeaderboardChampionNotifications(env);
                     break;
                 }
                 case 'update_streaks': {
@@ -79,6 +81,63 @@ function base64ToBytes(base64: string): Uint8Array {
         bytes[i] = binary.charCodeAt(i);
     }
     return bytes;
+}
+
+async function runLeaderboardChampionNotifications(env: Env): Promise<void> {
+    await sendChampionForPeriod(env, 'daily');
+    const now = new Date();
+    if (now.getUTCDay() === 0) await sendChampionForPeriod(env, 'weekly');
+    if (now.getUTCDate() === 1) await sendChampionForPeriod(env, 'monthly');
+}
+
+async function sendChampionForPeriod(env: Env, period: Exclude<LeaderboardPeriod, 'all_time'>): Promise<void> {
+    const bounds = leaderboardPeriodBounds(period);
+    const existing = await env.DB.prepare(
+        'SELECT 1 FROM leaderboard_snapshots WHERE period_type = ? AND period_start = ? AND period_end = ?'
+    ).bind(period, bounds.start, bounds.end).first();
+    if (existing) return;
+
+    const rows = await getLeaderboardByPeriod(env.DB, period);
+    const winner = rows.find(row => row.period_xp > 0);
+    await env.DB.prepare(
+        `INSERT OR IGNORE INTO leaderboard_snapshots (period_type, period_start, period_end, winner_user_id, winner_xp)
+         VALUES (?, ?, ?, ?, ?)`
+    ).bind(period, bounds.start, bounds.end, winner?.user_id ?? null, winner?.period_xp ?? 0).run();
+    if (!winner) return;
+
+    const users = await env.DB.prepare(
+        `SELECT u.telegram_id
+         FROM users u
+         INNER JOIN settings s ON s.user_id = u.user_id
+         WHERE u.is_banned = 0
+           AND u.display_name IS NOT NULL
+           AND s.reminders_enabled = 1
+           AND COALESCE(s.leaderboard_notifications_enabled, 1) = 1`
+    ).all<{ telegram_id: number }>();
+
+    const title = period === 'daily' ? '👑 بطل اليوم' : period === 'weekly' ? '🔥 بطل الأسبوع' : '👑 بطل الشهر';
+    const tail = period === 'daily' ? 'باچر منافسة جديدة 🔥' : 'استمروا، المنافسة بعدها مفتوحة 🔥';
+    const text = `${title}\n\n${winner.display_name} تصدر ${period === 'daily' ? 'اليوم' : period === 'weekly' ? 'هذا الأسبوع' : 'هذا الشهر'} بـ ${winner.period_xp} XP.\n${tail}`;
+    for (const user of users.results ?? []) {
+        await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: user.telegram_id, text }),
+        }).catch(() => undefined);
+    }
+}
+
+function leaderboardPeriodBounds(period: Exclude<LeaderboardPeriod, 'all_time'>): { start: string; end: string } {
+    const now = new Date();
+    const end = now.toISOString().slice(0, 10);
+    if (period === 'daily') return { start: end, end };
+    if (period === 'weekly') {
+        const start = new Date(now);
+        const day = start.getUTCDay() || 7;
+        start.setUTCDate(start.getUTCDate() - day + 1);
+        return { start: start.toISOString().slice(0, 10), end };
+    }
+    return { start: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`, end };
 }
 
 function getJobNameFromCron(cron: string): string {

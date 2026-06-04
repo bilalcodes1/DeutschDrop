@@ -4,6 +4,7 @@ import { getUserByTelegramId } from '../repositories/userRepository';
 import { getWordById, getWordsForUserWithStatus } from '../repositories/wordRepository';
 import { recordReview } from '../repositories/srsRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
+import { getActiveReviewPlan, incrementReviewPlanProgress } from '../repositories/reviewPlanRepository';
 import { isHardWord, selectTrainingWords } from '../services/srs';
 import { addXp } from '../services/xpLevels';
 import { checkAchievements } from '../services/achievements';
@@ -14,10 +15,12 @@ import type { TrainExplainSession } from './aiCoach';
 
 interface TrainingQuestion {
     word_id: number;
+    type: TrainingQuestionType;
     prompt: string;
     answer: string;
     options: string[];
     direction: 'de_ar' | 'ar_de';
+    helper?: string;
 }
 
 interface TrainingSessionData {
@@ -25,7 +28,21 @@ interface TrainingSessionData {
     currentIndex: number;
     correctCount: number;
     startTime: number;
+    planId?: number;
 }
+
+type TrainingQuestionType =
+    'multiple_choice' |
+    'german_to_arabic' |
+    'arabic_to_german' |
+    'typing_de' |
+    'typing_ar' |
+    'missing_letters' |
+    'first_last_hint' |
+    'example_context' |
+    'pictogram_recall';
+
+type TrainingMode = 'mixed' | 'typing' | 'missing' | 'de_ar' | 'ar_de' | 'hard' | 'exam' | 'plan';
 
 export function registerTrainCommand(bot: Bot<BotContext>): void {
     bot.command('train', async (ctx) => {
@@ -36,7 +53,37 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery(/^train_(\d+)$/, async (ctx) => {
         const count = parseInt(ctx.match[1], 10);
         await ctx.answerCallbackQuery();
-        await startTraining(ctx, count, 'standard');
+        await startTraining(ctx, count, 'mixed');
+    });
+
+    bot.callbackQuery('train_quick', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startTraining(ctx, 5, 'mixed');
+    });
+
+    bot.callbackQuery('train_mixed', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startTraining(ctx, 10, 'mixed');
+    });
+
+    bot.callbackQuery('train_typing', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startTraining(ctx, 10, 'typing');
+    });
+
+    bot.callbackQuery('train_missing', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startTraining(ctx, 10, 'missing');
+    });
+
+    bot.callbackQuery('train_de_ar', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startTraining(ctx, 10, 'de_ar');
+    });
+
+    bot.callbackQuery('train_ar_de', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startTraining(ctx, 10, 'ar_de');
     });
 
     bot.callbackQuery('train_hard', async (ctx) => {
@@ -47,6 +94,16 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery('train_exam', async (ctx) => {
         await ctx.answerCallbackQuery();
         await startTraining(ctx, 20, 'exam');
+    });
+
+    bot.callbackQuery('train_plan', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startReviewPlanTraining(ctx);
+    });
+
+    bot.callbackQuery(/^train_plan_(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startReviewPlanTraining(ctx, Number(ctx.match[1]));
     });
 
     // Handle answer callbacks
@@ -60,21 +117,34 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery('train_continue', async (ctx) => {
         await continueTraining(ctx);
     });
+
+    bot.on('message:text', async (ctx, next) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user || ctx.message.text.startsWith('/')) return next();
+        const session = await getBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train');
+        const current = session?.data.questions[session.data.currentIndex];
+        if (!session || !current || current.options.length > 0) return next();
+        await handleTypedTrainingAnswer(ctx, current, ctx.message.text);
+    });
 }
 
 async function showTrainOptions(ctx: BotContext): Promise<void> {
     const keyboard = new InlineKeyboard()
-        .text('تدريب سريع 5 أسئلة', 'train_5').row()
-        .text('10 أسئلة', 'train_10')
-        .text('20 سؤال', 'train_20').row()
+        .text('⚡ تدريب سريع', 'train_quick')
+        .text('🎲 مختلط', 'train_mixed').row()
+        .text('✍️ كتابة', 'train_typing')
+        .text('🧩 حروف ناقصة', 'train_missing').row()
+        .text('🇩🇪 ألماني → عربي', 'train_de_ar').row()
+        .text('🇮🇶 عربي → ألماني', 'train_ar_de').row()
         .text('🔥 الكلمات الصعبة', 'train_hard').row()
-        .text('🎯 مراجعة قبل الامتحان', 'train_exam').row()
-        .text('⬅️ رجوع', 'menu_main');
+        .text('📦 جلسة خطة المراجعة', 'train_plan').row()
+        .text('⬅️ رجوع', 'menu_main')
+        .text('🏠 الرئيسية', 'menu_main');
 
-    await replaceWithText(ctx, '🏋️ *اختر عدد الأسئلة:*', keyboard, 'Markdown');
+    await replaceWithText(ctx, '🏋️ *اختر نوع التدريب:*\n\nالافتراضي الأفضل هو 🎲 مختلط.', keyboard, 'Markdown');
 }
 
-async function startTraining(ctx: BotContext, count: number, mode: 'standard' | 'hard' | 'exam'): Promise<void> {
+async function startTraining(ctx: BotContext, count: number, mode: TrainingMode, planId?: number): Promise<void> {
     const telegramId = ctx.from?.id ?? 0;
     const user = await getUserByTelegramId(ctx.db, telegramId);
 
@@ -107,17 +177,7 @@ async function startTraining(ctx: BotContext, count: number, mode: 'standard' | 
 
     const questions = selected.map((s, i) => {
         const w = words.find(word => word.word_id === s.wordId)!;
-        const direction: 'de_ar' | 'ar_de' = i % 2 === 0 ? 'de_ar' : 'ar_de';
-        const answer = direction === 'de_ar' ? w.arabic : w.german;
-        const prompt = direction === 'de_ar' ? w.german : w.arabic;
-        const distractors = buildDistractors(words, w.word_id, direction, 2);
-        return {
-            word_id: w.word_id,
-            prompt,
-            answer,
-            direction,
-            options: shuffle([answer, ...distractors]),
-        };
+        return buildTrainingQuestion(words, w, mode, i);
     });
 
     await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', {
@@ -125,9 +185,24 @@ async function startTraining(ctx: BotContext, count: number, mode: 'standard' | 
         currentIndex: 0,
         correctCount: 0,
         startTime: Date.now(),
+        ...(planId ? { planId } : {}),
     });
 
     await showTrainingQuestion(ctx, user.user_id);
+}
+
+async function startReviewPlanTraining(ctx: BotContext, forcedPlanId?: number): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (!user) {
+        await ctx.reply('يرجى استخدام /start أولاً.');
+        return;
+    }
+    const plan = await getActiveReviewPlan(ctx.db, user.user_id);
+    if (!plan || (forcedPlanId && plan.id !== forcedPlanId)) {
+        await replaceWithText(ctx, 'لا توجد خطة مراجعة نشطة حالياً.', mainMenuKeyboard());
+        return;
+    }
+    await startTraining(ctx, Math.min(plan.batch_size, Math.max(1, plan.total_words - plan.reviewed_words)), 'plan', plan.id);
 }
 
 async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<void> {
@@ -151,16 +226,18 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
     const keyboard = new InlineKeyboard();
     for (let i = 0; i < q.options.length; i++) {
         const opt = q.options[i];
-        const isCorrect = opt === q.answer;
+        const isCorrect = normalizeAnswer(opt) === normalizeAnswer(q.answer);
         keyboard.text(opt, `train_ans_${q.word_id}_${i}_${isCorrect ? 'correct' : 'wrong'}`).row();
     }
     keyboard.text('⬅️ رجوع', 'menu_train').text('🏠 الرئيسية', 'menu_main');
 
-    const label = q.direction === 'de_ar' ? 'اختر المعنى العربي' : 'اختر الكلمة الألمانية';
-    const flag = q.direction === 'de_ar' ? '🇩🇪' : '🇦🇪';
+    const label = questionLabel(q);
+    const flag = q.direction === 'de_ar' ? '🇩🇪' : '🇮🇶';
     await replaceWithText(
         ctx,
-        `🏋️ (${progress}) ${label}:\n\n${flag} *${q.prompt}*`,
+        `🏋️ (${progress}) ${label}:\n\n${flag} *${q.prompt}*` +
+        (q.helper ? `\n\n${q.helper}` : '') +
+        (q.options.length === 0 ? `\n\nاكتب جوابك برسالة عادية.` : ''),
         keyboard,
         'Markdown'
     );
@@ -227,6 +304,49 @@ async function handleTrainAnswer(ctx: BotContext, wordId: number, optionIndex: n
     await advanceTraining(ctx, user.user_id, session.data);
 }
 
+async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuestion, answerText: string): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (!user) return;
+    const isCorrect = normalizeAnswer(answerText) === normalizeAnswer(current.answer);
+    const session = await getBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train');
+    if (!session) return;
+
+    if (isCorrect) {
+        session.data.correctCount++;
+        await addXp(ctx.db, user.user_id, 2, 'correct_train');
+    }
+
+    await recordReview(ctx.db, user.user_id, current.word_id, isCorrect, null, null);
+    await checkAchievements(ctx, user.user_id);
+
+    if (!isCorrect) {
+        const word = await getWordById(ctx.db, current.word_id);
+        if (word) {
+            await saveBotSession<TrainExplainSession>(ctx.db, user.user_id, 'train_explain', {
+                wordId: current.word_id,
+                questionType: current.direction,
+                german: word.german,
+                arabic: word.arabic,
+                userAnswer: answerText,
+                correctAnswer: current.answer,
+                example: word.example,
+            }, 30);
+        }
+        await replaceWithText(
+            ctx,
+            `❌ خطأ\n\nجوابك: *${answerText.trim()}*\nالصحيح: *${current.answer}*`,
+            new InlineKeyboard()
+                .text('🤖 اشرح لي', 'train_explain').row()
+                .text('🏋️ أكمل التدريب', 'train_continue').row()
+                .text('🏠 الرئيسية', 'menu_main'),
+            'Markdown'
+        );
+        return;
+    }
+
+    await replaceWithText(ctx, '✅ صحيح! +2 XP', new InlineKeyboard().text('🏋️ التالي', 'train_continue').text('🏠 الرئيسية', 'menu_main'));
+}
+
 async function continueTraining(ctx: BotContext): Promise<void> {
     const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
     if (!user) {
@@ -248,8 +368,111 @@ async function advanceTraining(ctx: BotContext, userId: number, data: TrainingSe
     await saveBotSession<TrainingSessionData>(ctx.db, userId, 'train', data);
     if (data.currentIndex >= data.questions.length) {
         await incrementDailyTask(ctx, userId, 'complete_training');
+        if (data.planId) await incrementReviewPlanProgress(ctx.db, data.planId, data.questions.length);
     }
     await showTrainingQuestion(ctx, userId);
+}
+
+function buildTrainingQuestion(
+    words: Array<{ word_id: number; german: string; arabic: string; example: string | null }>,
+    word: { word_id: number; german: string; arabic: string; example: string | null },
+    mode: TrainingMode,
+    index: number
+): TrainingQuestion {
+    const type = chooseQuestionType(mode, index, Boolean(word.example));
+    if (type === 'typing_de') {
+        return { word_id: word.word_id, type, prompt: word.arabic, answer: word.german, direction: 'ar_de', options: [] };
+    }
+    if (type === 'typing_ar') {
+        return { word_id: word.word_id, type, prompt: word.german, answer: word.arabic, direction: 'de_ar', options: [] };
+    }
+    if (type === 'missing_letters') {
+        return {
+            word_id: word.word_id,
+            type,
+            prompt: `${maskGerman(word.german)}`,
+            answer: word.german,
+            direction: 'ar_de',
+            options: [],
+            helper: `المعنى: ${word.arabic}`,
+        };
+    }
+    if (type === 'first_last_hint') {
+        return {
+            word_id: word.word_id,
+            type,
+            prompt: word.arabic,
+            answer: word.german,
+            direction: 'ar_de',
+            options: [],
+            helper: `أول حرف: ${word.german[0] ?? '-'}\nآخر حرف: ${word.german[word.german.length - 1] ?? '-'}`,
+        };
+    }
+    if (type === 'example_context' && word.example) {
+        const distractors = buildDistractors(words, word.word_id, 'de_ar', 2);
+        return {
+            word_id: word.word_id,
+            type,
+            prompt: word.example,
+            answer: word.arabic,
+            direction: 'de_ar',
+            options: shuffle([word.arabic, ...distractors]),
+            helper: `شنو معنى "${word.german}" من السياق؟`,
+        };
+    }
+
+    const direction: 'de_ar' | 'ar_de' = type === 'arabic_to_german' ? 'ar_de' : 'de_ar';
+    const answer = direction === 'de_ar' ? word.arabic : word.german;
+    const prompt = direction === 'de_ar' ? word.german : word.arabic;
+    const distractors = buildDistractors(words, word.word_id, direction, 2);
+    return {
+        word_id: word.word_id,
+        type,
+        prompt,
+        answer,
+        direction,
+        options: shuffle([answer, ...distractors]),
+    };
+}
+
+function chooseQuestionType(mode: TrainingMode, index: number, hasExample: boolean): TrainingQuestionType {
+    if (mode === 'de_ar') return 'german_to_arabic';
+    if (mode === 'ar_de') return 'arabic_to_german';
+    if (mode === 'typing') return index % 2 === 0 ? 'typing_de' : 'typing_ar';
+    if (mode === 'missing') return index % 2 === 0 ? 'missing_letters' : 'first_last_hint';
+    const types: TrainingQuestionType[] = [
+        'multiple_choice',
+        'german_to_arabic',
+        'arabic_to_german',
+        'typing_de',
+        'typing_ar',
+        'missing_letters',
+        'first_last_hint',
+        ...(hasExample ? ['example_context' as TrainingQuestionType] : []),
+        'pictogram_recall',
+    ];
+    return types[index % types.length];
+}
+
+function questionLabel(question: TrainingQuestion): string {
+    if (question.type === 'typing_de') return '✍️ اكتبها بالألماني';
+    if (question.type === 'typing_ar') return '✍️ اكتب معناها بالعربي';
+    if (question.type === 'missing_letters') return '🧩 أكمل الكلمة';
+    if (question.type === 'first_last_hint') return '✍️ تلميح كتابة';
+    if (question.type === 'example_context') return '🧠 من السياق';
+    return question.direction === 'de_ar' ? 'اختر المعنى العربي' : 'اختر الكلمة الألمانية';
+}
+
+function maskGerman(value: string): string {
+    return value.split('').map((char, index) => {
+        if (char === ' ') return ' ';
+        if (index === 0 || index === value.length - 1) return char;
+        return '_';
+    }).join(' ');
+}
+
+function normalizeAnswer(value: string): string {
+    return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('de-DE');
 }
 
 function buildDistractors(

@@ -1,6 +1,8 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { addXp } from '../services/xpLevels';
+import { getUserByTelegramId, updateUserSettings } from '../repositories/userRepository';
+import { cancelActiveReviewPlan } from '../repositories/reviewPlanRepository';
 import {
     getNotificationEventWord,
     markForgottenForTrainingPriority,
@@ -29,7 +31,7 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
             new InlineKeyboard()
                 .text('✅ نعم عرفتها', `notif_known_${eventId}`)
                 .text('❌ لا نسيتها', `notif_forgot_${eventId}`).row()
-                .text('🏋️ تدريب سريع', 'train_5')
+                .text('🏋️ تدريبها', 'train_quick')
                 .text('📚 راجع الآن', 'menu_learn')
         );
     });
@@ -50,12 +52,40 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
         await ctx.answerCallbackQuery('تم تسجيلها');
         await replaceWithText(ctx, 'تمام، هاي فرصة ذهبية للتثبيت. راجعها الآن: /learn', notificationDoneKeyboard());
     });
+
+    bot.callbackQuery('notif_disable', async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (user) {
+            await updateUserSettings(ctx.db, user.user_id, {
+                reminders_enabled: false,
+                notification_mode: 'off',
+                notification_intensity: 'off',
+            });
+        }
+        await ctx.answerCallbackQuery('تم إيقاف الإشعارات');
+        await replaceWithText(ctx, '🔕 تم إيقاف الإشعارات. تقدر ترجع تشغلها من ⚙️ المزيد > 🔔 الإشعارات.', notificationDoneKeyboard());
+    });
+
+    bot.callbackQuery('review_plan_delay', async (ctx) => {
+        await ctx.answerCallbackQuery('تم التأجيل');
+        await replaceWithText(ctx, '🔁 تم تأجيل الجلسة. سأذكرك لاحقاً حسب إعدادات الإشعارات.', notificationDoneKeyboard());
+    });
+
+    bot.callbackQuery('review_plan_cancel', async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (user) {
+            await cancelActiveReviewPlan(ctx.db, user.user_id);
+            await updateUserSettings(ctx.db, user.user_id, { review_plan: 'none' });
+        }
+        await ctx.answerCallbackQuery('تم إلغاء الخطة');
+        await replaceWithText(ctx, '❌ تم إلغاء خطة مراجعة كل الكلمات.', notificationDoneKeyboard());
+    });
 }
 
 function notificationDoneKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
         .text('📚 راجع الآن', 'menu_learn')
-        .text('🏋️ تدريب سريع', 'train_5').row()
+        .text('🏋️ تدريب قصير', 'train_quick').row()
         .text('🏠 الرئيسية', 'menu_main');
 }
 

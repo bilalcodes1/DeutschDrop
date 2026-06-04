@@ -2,7 +2,7 @@ import { Bot } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { completeUserRegistration, createPendingUser, getUserByTelegramId, isRegisteredUser, renameUser } from '../repositories/userRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
-import { showMainMenu } from './menu';
+import { showLevelSelection, showMainMenu } from './menu';
 
 interface NameSessionData {
     mode: 'register' | 'rename';
@@ -60,7 +60,7 @@ export function registerStartCommand(bot: Bot<BotContext>): void {
         await completeUserRegistration(ctx.db, user.user_id, displayName);
         await deleteBotSession(ctx.db, user.user_id, 'register');
         await ctx.reply(`تم تسجيلك ✅ أهلاً ${displayName}`);
-        await showMainMenu(ctx);
+        await showLevelSelection(ctx, 'حدد مستواك:');
     });
 }
 
@@ -92,6 +92,7 @@ async function ensureTelegramUser(ctx: BotContext) {
         xp: 0,
         level: 1,
         streak: 0,
+        is_banned: 0,
         identity: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

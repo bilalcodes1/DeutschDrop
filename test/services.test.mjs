@@ -163,6 +163,39 @@ test('registered start flow skips name prompt and shows main menu', () => {
     assert.match(source, /showMainMenu\(ctx\)/);
 });
 
+test('registration and old users are prompted for German level', () => {
+    const startSource = fs.readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf8');
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const settingsSource = fs.readFileSync(new URL('../src/commands/settings.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0015_simplified_ux_notifications_training_sources.sql', import.meta.url), 'utf8');
+
+    assert.match(startSource, /showLevelSelection\(ctx, 'حدد مستواك:'\)/);
+    assert.match(menuSource, /if \(!settings\?\.german_level\)/);
+    assert.match(menuSource, /level_set_A1/);
+    assert.match(menuSource, /level_set_A2/);
+    assert.match(menuSource, /level_set_B1/);
+    assert.match(settingsSource, /bot\.callbackQuery\(\/\^level_set_\(A1\|A2\|B1\)\$/);
+    assert.match(settingsSource, /german_level: ctx\.match\[1\]/);
+    assert.match(migrationSource, /german_level TEXT/);
+});
+
+test('notification settings support intervals and all-word review plans', () => {
+    const settingsSource = fs.readFileSync(new URL('../src/commands/settings.ts', import.meta.url), 'utf8');
+    const reviewPlanSource = fs.readFileSync(new URL('../src/repositories/reviewPlanRepository.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0015_simplified_ux_notifications_training_sources.sql', import.meta.url), 'utf8');
+
+    assert.match(settingsSource, /notification_interval_1/);
+    assert.match(settingsSource, /notification_interval_2/);
+    assert.match(settingsSource, /notification_interval_3/);
+    assert.match(settingsSource, /review_plan_all_words_day/);
+    assert.match(settingsSource, /review_plan_all_words_week/);
+    assert.match(settingsSource, /createDailyReviewPlan/);
+    assert.match(reviewPlanSource, /planType === 'all_words_day' \? 1 : 7/);
+    assert.match(reviewPlanSource, /batchSize: number = 10/);
+    assert.match(migrationSource, /notification_interval_hours/);
+    assert.match(migrationSource, /review_plan TEXT DEFAULT 'none'/);
+});
+
 test('rename flow updates display_name', () => {
     const startSource = fs.readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf8');
     const repositorySource = fs.readFileSync(new URL('../src/repositories/userRepository.ts', import.meta.url), 'utf8');
@@ -187,9 +220,13 @@ test('word duplicate checks remain scoped per user', () => {
     assert.match(source, /createWordAndAssignToUser/);
 });
 
-test('main menu exposes the requested public navigation buttons', () => {
+test('main menu is simplified and advanced actions live under more', () => {
     const source = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
-    for (const label of ['📚 تعلم', '🏋️ تدريب', '⚔️ تحدي', '🏆 الترتيب', '📂 إدارة الكلمات', '📊 الإحصائيات', '👤 ملفي الشخصي', '⚙️ الإعدادات']) {
+    for (const label of ['📚 راجع الآن', '🏋️ تدريب', '📂 كلماتي', '⚙️ المزيد']) {
+        assert.match(source, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(source, /moreMenuKeyboard/);
+    for (const label of ['👤 ملفي', '🏆 الصدارة', '⚔️ التحديات', '🔔 الإشعارات', '📚 المصادر', '💙 دعم المشروع']) {
         assert.match(source, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(source, /menu_main/);
@@ -455,18 +492,24 @@ test('smart notifications include retrieval practice types and cooldown rules', 
     const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
     const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
     const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0013_smart_learning_notifications.sql', import.meta.url), 'utf8');
+    const newMigrationSource = fs.readFileSync(new URL('../src/db/migrations/0015_simplified_ux_notifications_training_sources.sql', import.meta.url), 'utf8');
 
     assert.match(indexSource, /sendSmartNotification/);
     assert.match(serviceSource, /selectNotificationForUser/);
     assert.match(serviceSource, /quick_recall/);
+    assert.match(serviceSource, /arabic_to_german/);
+    assert.match(serviceSource, /missing_letters/);
+    assert.match(serviceSource, /first_last_hint/);
     assert.match(serviceSource, /due_word/);
     assert.match(serviceSource, /hard_word/);
     assert.match(serviceSource, /context_example/);
     assert.match(serviceSource, /pictogram_recall/);
     assert.match(serviceSource, /daily_summary/);
-    assert.match(serviceSource, /withinHours\(settings\.last_notification_at, 6\)/);
+    assert.match(serviceSource, /notification_interval_hours/);
+    assert.match(serviceSource, /withinHours\(settings\.last_notification_at, intervalHours\)/);
     assert.match(serviceSource, /withinMinutes\(user\.updated_at, 30\)/);
     assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS notification_events/);
+    assert.match(newMigrationSource, /daily_review_plans/);
 });
 
 test('user without words gets no words notification', () => {
@@ -499,17 +542,35 @@ test('notification callbacks show meaning and store known forgotten responses', 
     assert.match(serviceSource, /markForgottenForTrainingPriority/);
 });
 
+test('notification messages are real word questions with answer and disable actions', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/smartNotifications.ts', import.meta.url), 'utf8');
+    const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+
+    assert.match(serviceSource, /🧠 اختبار 10 ثواني/);
+    assert.match(serviceSource, /✍️ اكتبها بالألماني/);
+    assert.match(serviceSource, /🧩 أكمل الكلمة/);
+    assert.match(serviceSource, /✍️ تلميح كتابة/);
+    assert.match(serviceSource, /👁 أظهر الجواب/);
+    assert.match(serviceSource, /🔕 إيقاف الإشعارات/);
+    assert.match(commandSource, /notif_disable/);
+    assert.match(commandSource, /notification_mode: 'off'/);
+    assert.match(commandSource, /🗣 \$\{word\.pronunciation_ar\}/);
+});
+
 test('notification intensity limits light normal intensive and disabled sends nothing', () => {
     const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
     const settingsSource = fs.readFileSync(new URL('../src/commands/settings.ts', import.meta.url), 'utf8');
 
     assert.match(serviceSource, /settings\.reminders_enabled === 0/);
-    assert.match(serviceSource, /notification_intensity === 'off'/);
+    assert.match(serviceSource, /mode === 'off'/);
     assert.match(serviceSource, /if \(intensity === 'light'\) return 1/);
     assert.match(serviceSource, /if \(intensity === 'intensive'\) return 3/);
+    assert.match(serviceSource, /if \(intensity === 'custom'\) return 24/);
     assert.match(serviceSource, /return 2/);
-    assert.match(settingsSource, /إعدادات الإشعارات/);
-    assert.match(settingsSource, /notification_intensity_light/);
+    assert.match(settingsSource, /🔔 \*الإشعارات\*/);
+    assert.match(settingsSource, /notification_mode_light/);
+    assert.match(settingsSource, /notification_interval_2/);
+    assert.match(settingsSource, /review_plan_all_words_day/);
 });
 
 test('hard word pictogram and daily summary notification paths exist', () => {
@@ -522,6 +583,76 @@ test('hard word pictogram and daily summary notification paths exist', () => {
     assert.match(serviceSource, /buildDailySummaryNotification/);
     assert.match(serviceSource, /XP اليوم/);
     assert.match(serviceSource, /السلسلة:/);
+});
+
+test('daily review plan notification opens training sessions and tracks progress', () => {
+    const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+    const commandSource = fs.readFileSync(new URL('../src/commands/smartNotifications.ts', import.meta.url), 'utf8');
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const reviewPlanSource = fs.readFileSync(new URL('../src/repositories/reviewPlanRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(serviceSource, /buildReviewPlanNotification/);
+    assert.match(serviceSource, /جلسة مراجعة/);
+    assert.match(serviceSource, /train_plan_\$\{plan\.id\}/);
+    assert.match(commandSource, /review_plan_cancel/);
+    assert.match(trainSource, /startReviewPlanTraining/);
+    assert.match(trainSource, /incrementReviewPlanProgress/);
+    assert.match(reviewPlanSource, /reviewed_words = MIN\(total_words, reviewed_words \+ \?\)/);
+});
+
+test('training supports typing missing-letter hint and mixed question types', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /typing_de/);
+    assert.match(trainSource, /typing_ar/);
+    assert.match(trainSource, /missing_letters/);
+    assert.match(trainSource, /first_last_hint/);
+    assert.match(trainSource, /example_context/);
+    assert.match(trainSource, /pictogram_recall/);
+    assert.match(trainSource, /normalizeAnswer/);
+    assert.match(trainSource, /handleTypedTrainingAnswer/);
+    assert.match(trainSource, /train_quick/);
+    assert.match(trainSource, /train_mixed/);
+});
+
+test('period leaderboards use xp_events and champion snapshots', () => {
+    const xpSource = fs.readFileSync(new URL('../src/services/xpLevels.ts', import.meta.url), 'utf8');
+    const leaderboardSource = fs.readFileSync(new URL('../src/commands/leaderboard.ts', import.meta.url), 'utf8');
+    const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0015_simplified_ux_notifications_training_sources.sql', import.meta.url), 'utf8');
+
+    assert.match(xpSource, /INSERT INTO xp_events/);
+    assert.match(xpSource, /getLeaderboardByPeriod/);
+    assert.match(xpSource, /date\(x\.created_at\) = date\('now'\)/);
+    assert.match(leaderboardSource, /leaderboard_daily/);
+    assert.match(leaderboardSource, /leaderboard_weekly/);
+    assert.match(leaderboardSource, /leaderboard_monthly/);
+    assert.match(indexSource, /runLeaderboardChampionNotifications/);
+    assert.match(indexSource, /leaderboard_snapshots/);
+    assert.match(indexSource, /leaderboard_notifications_enabled/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS xp_events/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS leaderboard_snapshots/);
+});
+
+test('learning sources display by level and admin-only management exists', () => {
+    const sourceCommand = fs.readFileSync(new URL('../src/commands/sources.ts', import.meta.url), 'utf8');
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/sourceRepository.ts', import.meta.url), 'utf8');
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0015_simplified_ux_notifications_training_sources.sql', import.meta.url), 'utf8');
+
+    assert.match(botSource, /registerSourcesCommand/);
+    assert.match(sourceCommand, /menu_sources/);
+    assert.match(sourceCommand, /sources_level_\(A1\|A2\|B1\)/);
+    assert.match(sourceCommand, /requireSourceAdmin/);
+    assert.match(sourceCommand, /isAdminTelegramId/);
+    assert.match(adminSource, /admin_sources/);
+    assert.match(repositorySource, /getLearningSourcesByLevel/);
+    assert.match(repositorySource, /createLearningSource/);
+    assert.match(repositorySource, /updateLearningSource/);
+    assert.match(repositorySource, /disableLearningSource/);
+    assert.match(sourceCommand, /admin_source_edit_/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS learning_sources/);
 });
 
 test('active announcement is rendered in main menu and can be cleared', () => {

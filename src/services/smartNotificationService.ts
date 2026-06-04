@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '../models';
 
 export type SmartNotificationType =
-    'no_words' | 'quick_recall' | 'due_word' | 'hard_word' | 'context_example' | 'pictogram_recall' | 'motivational' | 'daily_summary';
+    'no_words' | 'quick_recall' | 'arabic_to_german' | 'missing_letters' | 'first_last_hint' | 'due_word' | 'hard_word' | 'context_example' | 'pictogram_recall' | 'review_plan' | 'motivational' | 'daily_summary';
 
 export interface SmartWord {
     word_id: number;
@@ -23,7 +23,11 @@ export interface SmartNotification {
 
 interface NotificationSettingsRow {
     reminders_enabled: number;
-    notification_intensity: 'light' | 'normal' | 'intensive' | 'off' | null;
+    notification_mode: 'light' | 'normal' | 'intensive' | 'custom' | 'off' | null;
+    notification_intensity: 'light' | 'normal' | 'intensive' | 'custom' | 'off' | null;
+    notification_interval_hours: number | null;
+    review_plan: 'none' | 'all_words_day' | 'all_words_week' | null;
+    notification_batch_size: number | null;
     morning_time: string | null;
     afternoon_time: string | null;
     evening_time: string | null;
@@ -39,12 +43,14 @@ interface UserForNotification {
 
 export async function shouldSendNotification(db: D1Database, user: UserForNotification): Promise<boolean> {
     const settings = await getNotificationSettings(db, user.user_id);
-    if (!settings || settings.reminders_enabled === 0 || settings.notification_intensity === 'off') return false;
-    if (settings.last_notification_at && withinHours(settings.last_notification_at, 6)) return false;
+    const mode = settings?.notification_mode ?? settings?.notification_intensity ?? 'normal';
+    if (!settings || settings.reminders_enabled === 0 || mode === 'off') return false;
+    const intervalHours = mode === 'custom' ? settings.notification_interval_hours ?? 2 : 6;
+    if (settings.last_notification_at && withinHours(settings.last_notification_at, intervalHours)) return false;
     if (user.updated_at && withinMinutes(user.updated_at, 30)) return false;
 
     const sentToday = await countNotificationsToday(db, user.user_id);
-    if (sentToday >= maxPerDay(settings.notification_intensity ?? 'normal')) return false;
+    if (sentToday >= maxPerDay(mode)) return false;
 
     return isWithinNotificationWindow(settings);
 }
@@ -55,6 +61,9 @@ export async function selectNotificationForUser(db: D1Database, userId: number):
         return buildNoWordsNotification();
     }
 
+    const activePlan = await getActiveReviewPlanForNotification(db, userId);
+    if (activePlan) return buildReviewPlanNotification(activePlan);
+
     const dueCount = await countDueWords(db, userId);
     if (dueCount > 0) {
         const due = await selectDueWord(db, userId);
@@ -64,14 +73,20 @@ export async function selectNotificationForUser(db: D1Database, userId: number):
     const hard = await selectHardWord(db, userId);
     if (hard) return buildHardWordNotification(hard);
 
-    const withExample = await selectExampleWord(db, userId);
-    if (withExample && (userId + totalWords) % 3 === 0) return buildContextExampleNotification(withExample);
-
-    const withPictogram = await selectPictogramWord(db, userId);
-    if (withPictogram) return buildPictogramRecallNotification(withPictogram);
-
     const randomWord = await selectAnyWord(db, userId);
-    if (randomWord && (userId + totalWords) % 2 === 0) return buildQuickRecallNotification(randomWord);
+    if (randomWord) {
+        const variants = [
+            () => buildQuickRecallNotification(randomWord),
+            () => buildArabicToGermanNotification(randomWord),
+            () => buildMissingLettersNotification(randomWord),
+            () => buildFirstLastHintNotification(randomWord),
+        ];
+        const withExample = await selectExampleWord(db, userId);
+        if (withExample) variants.push(() => buildContextExampleNotification(withExample));
+        const withPictogram = await selectPictogramWord(db, userId);
+        if (withPictogram) variants.push(() => buildPictogramRecallNotification(withPictogram));
+        return variants[Math.abs(userId + totalWords) % variants.length]();
+    }
 
     return buildMotivationalNotification(userId + totalWords);
 }
@@ -98,7 +113,7 @@ export async function sendSmartNotification(env: Env, user: UserForNotification)
         });
     }
 
-    await env.DB.prepare('UPDATE settings SET last_notification_at = datetime("now") WHERE user_id = ?').bind(user.user_id).run();
+    await env.DB.prepare('UPDATE settings SET last_notification_at = datetime("now"), last_notified_word_id = ? WHERE user_id = ?').bind(notification.word?.word_id ?? null, user.user_id).run();
     return true;
 }
 
@@ -151,7 +166,8 @@ export async function buildDailySummaryNotification(db: D1Database, userId: numb
 
 async function getNotificationSettings(db: D1Database, userId: number): Promise<NotificationSettingsRow | null> {
     return db.prepare(
-        `SELECT reminders_enabled, notification_intensity, morning_time, afternoon_time, evening_time, notification_timezone, last_notification_at
+        `SELECT reminders_enabled, notification_mode, notification_intensity, notification_interval_hours, review_plan, notification_batch_size,
+                morning_time, afternoon_time, evening_time, notification_timezone, last_notification_at
          FROM settings WHERE user_id = ?`
     ).bind(userId).first<NotificationSettingsRow>();
 }
@@ -166,16 +182,28 @@ async function countNotificationsToday(db: D1Database, userId: number): Promise<
 function maxPerDay(intensity: string): number {
     if (intensity === 'light') return 1;
     if (intensity === 'intensive') return 3;
+    if (intensity === 'custom') return 24;
     return 2;
 }
 
 function isWithinNotificationWindow(settings: NotificationSettingsRow): boolean {
+    if ((settings.notification_mode ?? settings.notification_intensity) === 'custom') return true;
     const hour = getHour(settings.notification_timezone ?? 'Asia/Baghdad');
-    const intensity = settings.notification_intensity ?? 'normal';
+    const intensity = settings.notification_mode ?? settings.notification_intensity ?? 'normal';
     const windows = [parseHour(settings.morning_time ?? '09:00')];
     if (intensity === 'normal' || intensity === 'intensive') windows.push(parseHour(settings.evening_time ?? '20:00'));
     if (intensity === 'intensive') windows.push(parseHour(settings.afternoon_time ?? '15:00'));
     return windows.includes(hour);
+}
+
+async function getActiveReviewPlanForNotification(db: D1Database, userId: number): Promise<{ id: number; total_words: number; reviewed_words: number; batch_size: number } | null> {
+    return db.prepare(
+        `SELECT id, total_words, reviewed_words, batch_size
+         FROM daily_review_plans
+         WHERE user_id = ? AND is_active = 1 AND ends_at > datetime('now') AND reviewed_words < total_words
+         ORDER BY started_at DESC
+         LIMIT 1`
+    ).bind(userId).first();
 }
 
 function parseHour(time: string): number {
@@ -280,9 +308,9 @@ function withEventCallbacks(markup: SmartNotification['replyMarkup'], eventId: n
 function recallButtons(): SmartNotification['replyMarkup'] {
     return {
         inline_keyboard: [
-            [{ text: '👁 أظهر المعنى', callback_data: 'notif_show_{eventId}' }],
-            [{ text: '✅ أعرفها', callback_data: 'notif_known_{eventId}' }, { text: '❌ نسيتها', callback_data: 'notif_forgot_{eventId}' }],
-            [{ text: '📚 راجع الآن', callback_data: 'menu_learn' }],
+            [{ text: '👁 أظهر الجواب', callback_data: 'notif_show_{eventId}' }],
+            [{ text: '📚 راجع الآن', callback_data: 'menu_learn' }, { text: '🏋️ تدريب قصير', callback_data: 'train_quick' }],
+            [{ text: '🔕 إيقاف الإشعارات', callback_data: 'notif_disable' }],
         ],
     };
 }
@@ -290,8 +318,9 @@ function recallButtons(): SmartNotification['replyMarkup'] {
 function trainingButtons(): SmartNotification['replyMarkup'] {
     return {
         inline_keyboard: [
-            [{ text: '👁 أظهر المعنى', callback_data: 'notif_show_{eventId}' }],
-            [{ text: '📚 ابدأ التعلم', callback_data: 'menu_learn' }, { text: '🏋️ تدريب سريع', callback_data: 'train_5' }],
+            [{ text: '👁 أظهر الجواب', callback_data: 'notif_show_{eventId}' }],
+            [{ text: '📚 راجع الآن', callback_data: 'menu_learn' }, { text: '🏋️ تدريب قصير', callback_data: 'train_quick' }],
+            [{ text: '🔕 إيقاف الإشعارات', callback_data: 'notif_disable' }],
         ],
     };
 }
@@ -301,7 +330,7 @@ function buildNoWordsNotification(): SmartNotification {
         type: 'no_words',
         word: null,
         text: '👋 ابدأ رحلتك مع DeutschDrop\nأضف كلمة بهذه الصيغة:\nHaus = بيت\nأو ارفع CSV من إدارة الكلمات.',
-        replyMarkup: { inline_keyboard: [[{ text: '📂 إدارة الكلمات', callback_data: 'menu_words' }]] },
+        replyMarkup: { inline_keyboard: [[{ text: '📂 كلماتي', callback_data: 'menu_words' }], [{ text: '🔕 إيقاف الإشعارات', callback_data: 'notif_disable' }]] },
     };
 }
 
@@ -309,7 +338,34 @@ function buildQuickRecallNotification(word: SmartWord): SmartNotification {
     return {
         type: 'quick_recall',
         word,
-        text: `🧠 اختبار سريع\n\nشنو معنى:\n🇩🇪 ${word.german}\n\nجاوب بعقلك قبل لا تضغط 👇`,
+        text: `🧠 اختبار 10 ثواني\n\nشنو معنى:\n🇩🇪 ${word.german}\n\nحاول تتذكر قبل لا تفتح البوت.`,
+        replyMarkup: recallButtons(),
+    };
+}
+
+function buildArabicToGermanNotification(word: SmartWord): SmartNotification {
+    return {
+        type: 'arabic_to_german',
+        word,
+        text: `✍️ اكتبها بالألماني\n\n🇮🇶 ${word.arabic}\n\nتتذكر شنو تصير؟`,
+        replyMarkup: recallButtons(),
+    };
+}
+
+function buildMissingLettersNotification(word: SmartWord): SmartNotification {
+    return {
+        type: 'missing_letters',
+        word,
+        text: `🧩 أكمل الكلمة\n\nالمعنى: ${word.arabic}\n${maskGerman(word.german)}`,
+        replyMarkup: recallButtons(),
+    };
+}
+
+function buildFirstLastHintNotification(word: SmartWord): SmartNotification {
+    return {
+        type: 'first_last_hint',
+        word,
+        text: `✍️ تلميح كتابة\n\nالمعنى: ${word.arabic}\nأول حرف: ${word.german[0] ?? '-'}\nآخر حرف: ${word.german[word.german.length - 1] ?? '-'}`,
         replyMarkup: recallButtons(),
     };
 }
@@ -321,6 +377,21 @@ function buildDueWordNotification(word: SmartWord, dueCount: number, seed: numbe
         `⚡ اختبار 10 ثواني\n\nشنو معنى:\n🇩🇪 ${word.german}`,
     ];
     return { type: 'due_word', word, text: templates[Math.abs(seed) % templates.length], replyMarkup: trainingButtons() };
+}
+
+function buildReviewPlanNotification(plan: { id: number; total_words: number; reviewed_words: number; batch_size: number }): SmartNotification {
+    const remaining = Math.max(0, plan.total_words - plan.reviewed_words);
+    return {
+        type: 'review_plan',
+        word: null,
+        text: `📚 جلسة مراجعة ${plan.reviewed_words}/${plan.total_words}\n\nباقي ${remaining} كلمة من الخطة.\nابدأ جلسة ${Math.min(plan.batch_size, remaining)} كلمات الآن.`,
+        replyMarkup: {
+            inline_keyboard: [
+                [{ text: '▶️ ابدأ الجلسة', callback_data: `train_plan_${plan.id}` }],
+                [{ text: '🔁 تأجيل', callback_data: 'review_plan_delay' }, { text: '❌ إلغاء الخطة', callback_data: 'review_plan_cancel' }],
+            ],
+        },
+    };
 }
 
 function buildHardWordNotification(word: SmartWord): SmartNotification {
@@ -363,8 +434,16 @@ function buildMotivationalNotification(seed: number): SmartNotification {
         type: 'motivational',
         word: null,
         text: messages[Math.abs(seed) % messages.length],
-        replyMarkup: { inline_keyboard: [[{ text: '📚 راجع الآن', callback_data: 'menu_learn' }, { text: '🏋️ تدريب سريع', callback_data: 'train_5' }]] },
+        replyMarkup: { inline_keyboard: [[{ text: '📚 راجع الآن', callback_data: 'menu_learn' }, { text: '🏋️ تدريب قصير', callback_data: 'train_quick' }], [{ text: '🔕 إيقاف الإشعارات', callback_data: 'notif_disable' }]] },
     };
+}
+
+function maskGerman(value: string): string {
+    return value.split('').map((char, index) => {
+        if (char === ' ') return ' ';
+        if (index === 0 || index === value.length - 1) return char;
+        return '_';
+    }).join(' ');
 }
 
 async function telegramCall(env: Env, method: string, body: unknown): Promise<void> {
