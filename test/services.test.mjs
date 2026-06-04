@@ -861,23 +861,50 @@ test('learning sources display by level and admin-only management exists', () =>
 test('source add flow uses isolated step sessions and does not route into words', () => {
     const sourceCommand = fs.readFileSync(new URL('../src/commands/sources.ts', import.meta.url), 'utf8');
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
     const sourceRepo = fs.readFileSync(new URL('../src/repositories/sourceRepository.ts', import.meta.url), 'utf8');
     const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0017_sources_admin_users_profile_challenges.sql', import.meta.url), 'utf8');
 
     assert.match(sourceCommand, /admin_source_add/);
     assert.match(sourceCommand, /admin_source_edit/);
     assert.match(sourceCommand, /step: 'title'/);
-    assert.match(sourceCommand, /step = 'url'/);
+    assert.match(sourceCommand, /step = data\.step === 'edit_title' \? 'preview' : 'url'/);
     assert.match(sourceCommand, /admin_source_level_\(A1\|A2\|B1\|General\)/);
     assert.match(sourceCommand, /admin_source_skip_description/);
     assert.match(sourceCommand, /admin_source_save/);
     assert.match(sourceCommand, /createLearningSource/);
     assert.doesNotMatch(sourceCommand, /createWordAndAssignToUser|addXp/);
+    assert.ok(botSource.indexOf('registerSourcesCommand(bot)') < botSource.indexOf('registerAddWordCommand(bot)'));
     assert.match(addWordSource, /'admin_source_add'/);
     assert.match(addWordSource, /'admin_source_edit'/);
     assert.match(addWordSource, /return next\(\)/);
     assert.match(sourceRepo, /level IN \(\?, 'General'\)/);
     assert.match(migrationSource, /level TEXT NOT NULL CHECK \(level IN \('A1', 'A2', 'B1', 'General'\)\)/);
+});
+
+test('source add description preview validation and navigation are explicit', () => {
+    const sourceCommand = fs.readFileSync(new URL('../src/commands/sources.ts', import.meta.url), 'utf8');
+
+    assert.match(sourceCommand, /step === 'description' \|\| data\.step === 'edit_description'/);
+    assert.match(sourceCommand, /data\.step = 'preview'/);
+    assert.match(sourceCommand, /formatSourcePreview\(data\)/);
+    assert.match(sourceCommand, /تخطي الوصف/);
+    assert.match(sourceCommand, /بدون وصف/);
+    assert.match(sourceCommand, /الرابط غير صالح\. أرسل رابط يبدأ بـ https:\/\//);
+    assert.match(sourceCommand, /isValidSourceTitle/);
+    assert.match(sourceCommand, /isValidSourceUrl/);
+    assert.match(sourceCommand, /sourceSavedKeyboard/);
+    assert.match(sourceCommand, /➕ إضافة مصدر آخر/);
+    assert.match(sourceCommand, /📚 عرض المصادر/);
+    assert.match(sourceCommand, /🛠 لوحة الأدمن/);
+    assert.match(sourceCommand, /sourceCancelledKeyboard/);
+    assert.match(sourceCommand, /📚 إدارة المصادر/);
+    assert.match(sourceCommand, /admin_source_edit_title/);
+    assert.match(sourceCommand, /admin_source_edit_url/);
+    assert.match(sourceCommand, /admin_source_edit_level/);
+    assert.match(sourceCommand, /admin_source_edit_description/);
+    assert.match(sourceCommand, /ctx\.answerCallbackQuery\(\)/);
+    assert.doesNotMatch(sourceCommand, /parse_mode: 'Markdown', reply_markup: sourcePreviewKeyboard/);
 });
 
 test('profile rename is isolated from add-word and returns to profile', () => {

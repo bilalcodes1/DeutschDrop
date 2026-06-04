@@ -80,6 +80,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerLearnCommand(bot);
     registerMenuCommand(bot);
     registerSupportCommand(bot);
+    registerSourcesCommand(bot);
     registerAddWordCommand(bot);
     registerUploadCommand(bot);
     registerTrainCommand(bot);
@@ -92,7 +93,6 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerPictogramCommand(bot);
     registerProfileCommand(bot);
     registerAdminCommand(bot);
-    registerSourcesCommand(bot);
     registerSmartNotificationCommand(bot);
     registerAiCoachCommand(bot);
 
