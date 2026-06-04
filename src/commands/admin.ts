@@ -3,12 +3,14 @@ import type { BotContext } from '../bot/context';
 import { clearActiveAnnouncements, setActiveAnnouncement } from '../repositories/announcementRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import {
+    activateSupporterForHours,
     countActiveSupporters,
     countPendingSupportProofs,
     createBroadcastLog,
     getPendingSupportProofs,
 } from '../repositories/supportRepository';
-import { getAdminUserList, getUserByTelegramId, setUserBanned } from '../repositories/userRepository';
+import { deleteAllWordsForUser } from '../repositories/wordRepository';
+import { countAdminUsers as countUsersForAdmin, getAdminUserDetail, getAdminUserList, getUserByTelegramId, logAdminAction, resetUserStreak, resetUserXp, setUserBanned, softDeleteUser } from '../repositories/userRepository';
 import { isAdminTelegramId } from '../services/adminAccess';
 import { sendTelegramMessage } from '../services/notifications';
 import { replaceWithText } from './wordPanel';
@@ -20,6 +22,12 @@ interface BroadcastSession {
 
 interface AnnouncementSession {
     step: 'awaiting_message' | 'confirm';
+    message?: string;
+}
+
+interface AdminPrivateMessageSession {
+    step: 'awaiting_message' | 'confirm';
+    targetUserId: number;
     message?: string;
 }
 
@@ -76,6 +84,39 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery(/^admin_users_(\d+)$/, async (ctx) => {
         if (!await requireAdmin(ctx)) return;
         await showAdminUsers(ctx, Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery(/^admin_user_(\d+)$/, async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showAdminUserDetail(ctx, Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery(/^admin_user_action_(ban|unban|support24|support7|message)_(\d+)$/, async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await handleAdminUserAction(ctx, ctx.match[1], Number(ctx.match[2]));
+    });
+
+    bot.callbackQuery(/^admin_user_confirm_(reset_xp|reset_streak|delete_words|delete_user)_(\d+)$/, async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await confirmDangerousAction(ctx, ctx.match[1], Number(ctx.match[2]));
+    });
+
+    bot.callbackQuery(/^admin_user_do_(reset_xp|reset_streak|delete_words|delete_user)_(\d+)$/, async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await runDangerousAction(ctx, ctx.match[1], Number(ctx.match[2]));
+    });
+
+    bot.callbackQuery('admin_private_message_confirm', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await sendPrivateAdminMessage(ctx);
+    });
+
+    bot.callbackQuery('admin_private_message_cancel', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        const admin = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        const session = admin ? await getBotSession<AdminPrivateMessageSession>(ctx.db, admin.user_id, 'admin_private_message') : null;
+        if (admin) await deleteBotSession(ctx.db, admin.user_id, 'admin_private_message');
+        await showAdminUserDetail(ctx, session?.data.targetUserId ?? admin?.user_id ?? 0);
     });
 
     bot.callbackQuery('admin_broadcast_start', async (ctx) => {
@@ -168,13 +209,27 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
         }
 
         const announcementSession = await getBotSession<AnnouncementSession>(ctx.db, user.user_id, 'admin_announcement');
-        if (announcementSession?.data.step !== 'awaiting_message') return next();
+        if (announcementSession?.data.step === 'awaiting_message') {
+            const text = ctx.message?.text?.trim();
+            if (!text || text.startsWith('/')) return next();
 
+            await saveBotSession<AnnouncementSession>(ctx.db, user.user_id, 'admin_announcement', { step: 'confirm', message: text }, 30);
+            await previewAnnouncement(ctx, text);
+            return;
+        }
+
+        const privateSession = await getBotSession<AdminPrivateMessageSession>(ctx.db, user.user_id, 'admin_private_message');
+        if (privateSession?.data.step !== 'awaiting_message') return next();
         const text = ctx.message?.text?.trim();
         if (!text || text.startsWith('/')) return next();
 
-        await saveBotSession<AnnouncementSession>(ctx.db, user.user_id, 'admin_announcement', { step: 'confirm', message: text }, 30);
-        await previewAnnouncement(ctx, text);
+        await saveBotSession<AdminPrivateMessageSession>(ctx.db, user.user_id, 'admin_private_message', { ...privateSession.data, step: 'confirm', message: text }, 30);
+        await replaceWithText(
+            ctx,
+            `📨 *معاينة الرسالة الخاصة:*\n\n${text}\n\nهل تريد إرسال هذه الرسالة؟`,
+            new InlineKeyboard().text('✅ إرسال', 'admin_private_message_confirm').text('❌ إلغاء', 'admin_private_message_cancel'),
+            'Markdown'
+        );
     });
 }
 
@@ -202,7 +257,7 @@ function adminPanelKeyboard(): InlineKeyboard {
 }
 
 async function showAdminStats(ctx: BotContext): Promise<void> {
-    const users = await getAdminUserList(ctx.db);
+    const users = await getAdminUserList(ctx.db, 1000, 0);
     const words = await ctx.db.prepare('SELECT COUNT(*) AS count FROM words').first<{ count: number }>();
     const todayUsers = await ctx.db.prepare(
         'SELECT COUNT(*) AS count FROM users WHERE display_name IS NOT NULL AND date(created_at) = date("now")'
@@ -230,28 +285,160 @@ async function showAdminStats(ctx: BotContext): Promise<void> {
 }
 
 async function showAdminUsers(ctx: BotContext, page: number): Promise<void> {
-    const users = await getAdminUserList(ctx.db);
-    const totalPages = Math.max(1, Math.ceil(users.length / USERS_PAGE_SIZE));
+    const totalUsers = await countUsersForAdmin(ctx.db);
+    const users = await getAdminUserList(ctx.db, USERS_PAGE_SIZE, page * USERS_PAGE_SIZE);
+    const totalPages = Math.max(1, Math.ceil(totalUsers / USERS_PAGE_SIZE));
     const safePage = Math.min(Math.max(page, 0), totalPages - 1);
-    const pageUsers = users.slice(safePage * USERS_PAGE_SIZE, safePage * USERS_PAGE_SIZE + USERS_PAGE_SIZE);
+    const pageUsers = safePage === page ? users : await getAdminUserList(ctx.db, USERS_PAGE_SIZE, safePage * USERS_PAGE_SIZE);
 
     const text = pageUsers.length === 0
         ? '👥 *المستخدمون*\n\nلا يوجد مستخدمون.'
         : '👥 *المستخدمون*\n\n' + pageUsers.map((user, index) =>
             `${safePage * USERS_PAGE_SIZE + index + 1}. ${user.display_name} — ${user.telegram_user_id ?? user.telegram_id}\n` +
-            `XP: ${user.total_xp} | ${user.is_supporter_active ? '💙 داعم' : 'غير داعم'} | ${user.is_banned ? 'محظور' : 'نشط'}`
+            `XP: ${user.total_xp} | كلمات: ${user.word_count} | ${adminUserStatus(ctx, user)}\n` +
+            `آخر نشاط: ${user.last_active_at ?? '-'}`
         ).join('\n\n');
 
-    await replaceWithText(ctx, `${text}\n\nصفحة ${safePage + 1}/${totalPages}`, usersKeyboard(safePage, totalPages), 'Markdown');
+    await replaceWithText(ctx, `${text}\n\nصفحة ${safePage + 1}/${totalPages}`, usersKeyboard(pageUsers, safePage, totalPages), 'Markdown');
 }
 
-function usersKeyboard(page: number, totalPages: number): InlineKeyboard {
+function usersKeyboard(users: Array<{ user_id: number; display_name: string | null }>, page: number, totalPages: number): InlineKeyboard {
     const keyboard = new InlineKeyboard();
+    for (const user of users) {
+        keyboard.text(`👤 ${user.display_name ?? user.user_id}`, `admin_user_${user.user_id}`).row();
+    }
     if (page > 0) keyboard.text('⬅️ السابق', `admin_users_${page - 1}`);
     if (page < totalPages - 1) keyboard.text('التالي ➡️', `admin_users_${page + 1}`);
     if (page > 0 || page < totalPages - 1) keyboard.row();
     keyboard.text('🛠 لوحة الأدمن', 'admin_panel').text('🏠 الرئيسية', 'menu_main');
     return keyboard;
+}
+
+async function showAdminUserDetail(ctx: BotContext, targetUserId: number): Promise<void> {
+    const target = await getAdminUserDetail(ctx.db, targetUserId);
+    if (!target) {
+        await replaceWithText(ctx, 'لم أجد هذا المستخدم.', usersKeyboard([], 0, 1));
+        return;
+    }
+    const text =
+        `👤 *تفاصيل المستخدم*\n\n` +
+        `الاسم:\n${target.display_name ?? '-'}\n\n` +
+        `Telegram ID:\n${target.telegram_user_id ?? target.telegram_id}\n\n` +
+        `الحالة:\n${adminUserStatus(ctx, target)}\n\n` +
+        `XP:\n${target.total_xp}\n\n` +
+        `عدد الكلمات:\n${target.word_count}\n\n` +
+        `المستوى:\n${target.german_level ?? '-'}\n\n` +
+        `آخر نشاط:\n${target.last_active_at ?? target.updated_at ?? '-'}\n\n` +
+        `الداعم حتى:\n${target.supporter_until ?? '-'}`;
+    await replaceWithText(ctx, text, adminUserDetailKeyboard(target), 'Markdown');
+}
+
+function adminUserDetailKeyboard(user: { user_id: number; is_banned: number; is_deleted?: number }): InlineKeyboard {
+    return new InlineKeyboard()
+        .text(user.is_banned ? '✅ إلغاء الحظر' : '🚫 حظر', `admin_user_action_${user.is_banned ? 'unban' : 'ban'}_${user.user_id}`).row()
+        .text('🔄 تصفير XP', `admin_user_confirm_reset_xp_${user.user_id}`)
+        .text('🧹 تصفير streak', `admin_user_confirm_reset_streak_${user.user_id}`).row()
+        .text('🗑 حذف كلمات المستخدم', `admin_user_confirm_delete_words_${user.user_id}`).row()
+        .text('💙 داعم 24 ساعة', `admin_user_action_support24_${user.user_id}`)
+        .text('💙 داعم 7 أيام', `admin_user_action_support7_${user.user_id}`).row()
+        .text('📨 إرسال رسالة خاصة', `admin_user_action_message_${user.user_id}`).row()
+        .text('🗑 حذف المستخدم من البوت', `admin_user_confirm_delete_user_${user.user_id}`).row()
+        .text('⬅️ رجوع', 'admin_users_0')
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+function adminUserStatus(ctx: BotContext, user: { telegram_user_id?: number | null; telegram_id: number; is_banned: number; is_deleted?: number; is_supporter_active?: number }): string {
+    if (isAdminTelegramId(ctx.env, user.telegram_user_id ?? user.telegram_id)) return '🛡 أدمن';
+    if (user.is_deleted) return 'محذوف';
+    if (user.is_banned) return 'محظور';
+    if (user.is_supporter_active) return '💙 داعم';
+    return '👤 عضو';
+}
+
+async function handleAdminUserAction(ctx: BotContext, action: string, targetUserId: number): Promise<void> {
+    const admin = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    const target = await getAdminUserDetail(ctx.db, targetUserId);
+    if (!admin || !target) return;
+    if ((action === 'ban' || action === 'unban') && !canModerateTarget(ctx, admin.user_id, target)) {
+        await replaceWithText(ctx, 'لا يمكن تنفيذ هذا الإجراء على هذا المستخدم.', adminUserDetailKeyboard(target));
+        return;
+    }
+    if (action === 'ban' || action === 'unban') {
+        await setUserBanned(ctx.db, target.telegram_user_id ?? target.telegram_id, action === 'ban');
+        await logAdminAction(ctx.db, admin.user_id, target.user_id, action, null);
+        await showAdminUserDetail(ctx, target.user_id);
+        return;
+    }
+    if (action === 'support24' || action === 'support7') {
+        const hours = action === 'support24' ? 24 : 24 * 7;
+        await activateSupporterForHours(ctx.db, target.user_id, ctx.from?.id ?? 0, hours);
+        await logAdminAction(ctx.db, admin.user_id, target.user_id, action === 'support24' ? 'activate_supporter_24h' : 'activate_supporter_7d', { hours });
+        await showAdminUserDetail(ctx, target.user_id);
+        return;
+    }
+    if (action === 'message') {
+        await saveBotSession<AdminPrivateMessageSession>(ctx.db, admin.user_id, 'admin_private_message', { step: 'awaiting_message', targetUserId }, 30);
+        await replaceWithText(ctx, `اكتب الرسالة التي تريد إرسالها إلى ${target.display_name ?? target.name}.`, new InlineKeyboard().text('❌ إلغاء', 'admin_private_message_cancel'));
+    }
+}
+
+async function confirmDangerousAction(ctx: BotContext, action: string, targetUserId: number): Promise<void> {
+    const target = await getAdminUserDetail(ctx.db, targetUserId);
+    if (!target) return;
+    await replaceWithText(
+        ctx,
+        `تأكيد العملية الخطرة:\n${dangerousActionLabel(action)}\n\nالمستخدم: ${target.display_name ?? target.name}`,
+        new InlineKeyboard()
+            .text('✅ تأكيد', `admin_user_do_${action}_${targetUserId}`).row()
+            .text('❌ إلغاء', `admin_user_${targetUserId}`)
+    );
+}
+
+async function runDangerousAction(ctx: BotContext, action: string, targetUserId: number): Promise<void> {
+    const admin = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    const target = await getAdminUserDetail(ctx.db, targetUserId);
+    if (!admin || !target) return;
+    if ((action === 'delete_user') && (target.user_id === admin.user_id || isAdminTelegramId(ctx.env, target.telegram_user_id ?? target.telegram_id))) {
+        await replaceWithText(ctx, 'لا يمكن حذف نفسك أو حذف أدمن آخر.', adminUserDetailKeyboard(target));
+        return;
+    }
+    if (action === 'reset_xp') await resetUserXp(ctx.db, targetUserId);
+    if (action === 'reset_streak') await resetUserStreak(ctx.db, targetUserId);
+    if (action === 'delete_words') await deleteAllWordsForUser(ctx.db, targetUserId);
+    if (action === 'delete_user') await softDeleteUser(ctx.db, targetUserId);
+    await logAdminAction(ctx.db, admin.user_id, targetUserId, action === 'delete_words' ? 'delete_user_words' : action, null);
+    if (action === 'delete_user') {
+        await replaceWithText(ctx, 'تم حذف المستخدم من البوت ✅', usersKeyboard([], 0, 1));
+        return;
+    }
+    await showAdminUserDetail(ctx, targetUserId);
+}
+
+async function sendPrivateAdminMessage(ctx: BotContext): Promise<void> {
+    const admin = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (!admin) return;
+    const session = await getBotSession<AdminPrivateMessageSession>(ctx.db, admin.user_id, 'admin_private_message');
+    if (!session?.data.message) return;
+    const target = await getAdminUserDetail(ctx.db, session.data.targetUserId);
+    if (!target) return;
+    await sendTelegramMessage(ctx.env, target.telegram_user_id ?? target.telegram_id, session.data.message);
+    await logAdminAction(ctx.db, admin.user_id, target.user_id, 'send_private_message', { message: session.data.message });
+    await deleteBotSession(ctx.db, admin.user_id, 'admin_private_message');
+    await showAdminUserDetail(ctx, target.user_id);
+}
+
+function canModerateTarget(ctx: BotContext, adminUserId: number, target: { user_id: number; telegram_user_id?: number | null; telegram_id: number }): boolean {
+    if (target.user_id === adminUserId) return false;
+    if (isAdminTelegramId(ctx.env, target.telegram_user_id ?? target.telegram_id)) return false;
+    return true;
+}
+
+function dangerousActionLabel(action: string): string {
+    if (action === 'reset_xp') return 'تصفير XP';
+    if (action === 'reset_streak') return 'تصفير streak';
+    if (action === 'delete_words') return 'حذف كلمات المستخدم';
+    if (action === 'delete_user') return 'حذف المستخدم من البوت';
+    return action;
 }
 
 async function startBroadcastFlow(ctx: BotContext): Promise<void> {
@@ -285,7 +472,7 @@ function adminCancelKeyboard(): InlineKeyboard {
 }
 
 async function sendBroadcast(ctx: BotContext, adminUserId: number, text: string): Promise<void> {
-    const users = await getAdminUserList(ctx.db);
+    const users = await getAdminUserList(ctx.db, 10000, 0);
     let sent = 0;
     let failed = 0;
 
@@ -364,7 +551,7 @@ function pendingSupportKeyboard(firstProofId: number, page: number, hasNext: boo
 }
 
 async function showBannedUsers(ctx: BotContext): Promise<void> {
-    const users = (await getAdminUserList(ctx.db)).filter(user => user.is_banned);
+    const users = (await getAdminUserList(ctx.db, 1000, 0)).filter(user => user.is_banned);
     const text = users.length === 0
         ? '🚫 لا يوجد مستخدمون محظورون.'
         : '🚫 *المحظورون*\n\n' + users.map(user => `${user.display_name} — ${user.telegram_user_id ?? user.telegram_id}`).join('\n');

@@ -1,6 +1,6 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
-import { createAsyncChallenge, getChallenge, getChallengeQuestions, submitChallengeResult } from '../repositories/challengeRepository';
+import { createAsyncChallenge, getChallenge, getChallengeQuestions, hasOpenChallengeBetween, submitChallengeResult } from '../repositories/challengeRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { getChallengeCandidates, getUserByTelegramId } from '../repositories/userRepository';
 import { getWordsForUserWithStatus } from '../repositories/wordRepository';
@@ -41,6 +41,11 @@ export function registerChallengeCommand(bot: Bot<BotContext>): void {
         await startExistingChallenge(ctx, parseInt(ctx.match[1], 10));
     });
 
+    bot.callbackQuery(/^challenge_history_(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await showChallengeHistory(ctx, Number(ctx.match[1]));
+    });
+
     bot.callbackQuery(/^challenge_ans_(\d+)_(\d+)_(correct|wrong)$/, async (ctx) => {
         const challengeId = parseInt(ctx.match[1], 10);
         const wordId = parseInt(ctx.match[2], 10);
@@ -56,17 +61,21 @@ async function showChallengeOptions(ctx: BotContext): Promise<void> {
     const pending = await ctx.db.prepare(
         `SELECT c.challenge_id, c.question_count, u.display_name, u.name
          FROM async_challenges c
-         INNER JOIN users u ON u.user_id = c.creator_user_id
-         WHERE c.opponent_user_id = ?
-           AND c.status = 'opponent_pending'
+         INNER JOIN users u ON u.user_id = CASE WHEN c.creator_user_id = ? THEN c.opponent_user_id ELSE c.creator_user_id END
+         WHERE (c.opponent_user_id = ? OR c.creator_user_id = ?)
+           AND c.status IN ('waiting_opponent', 'in_progress')
+           AND ((c.creator_user_id = ? AND c.creator_time_ms IS NULL) OR (c.opponent_user_id = ? AND c.opponent_time_ms IS NULL))
          ORDER BY c.created_at DESC
          LIMIT 5`
-    ).bind(user.user_id).all<{ challenge_id: number; question_count: number; display_name: string | null; name: string }>();
+    ).bind(user.user_id, user.user_id, user.user_id, user.user_id, user.user_id).all<{ challenge_id: number; question_count: number; display_name: string | null; name: string }>();
 
     const keyboard = new InlineKeyboard()
+        .text('🎲 تحدي عشوائي', 'challenge_create_5')
+        .text('👥 اختر منافس', 'challenge_create_10').row()
         .text('5 أسئلة', 'challenge_create_5')
         .text('10 أسئلة', 'challenge_create_10')
-        .text('20 سؤال', 'challenge_create_20');
+        .text('20 سؤال', 'challenge_create_20').row()
+        .text('📜 سجل التحديات', 'challenge_history_0');
 
     for (const challenge of pending.results ?? []) {
         keyboard.row().text(
@@ -77,7 +86,7 @@ async function showChallengeOptions(ctx: BotContext): Promise<void> {
 
     keyboard.row().text('⬅️ رجوع', 'menu_main');
 
-    await replaceWithText(ctx, '⚔️ *التحديات*\n\nاختر عدد الأسئلة:', keyboard, 'Markdown');
+    await replaceWithText(ctx, '⚔️ *التحديات*\n\nاختر عدد الأسئلة أو حل تحدياً نشطاً:', keyboard, 'Markdown');
 }
 
 async function showOpponentSelection(ctx: BotContext, count: number): Promise<void> {
@@ -86,16 +95,45 @@ async function showOpponentSelection(ctx: BotContext, count: number): Promise<vo
 
     const candidates = await getChallengeCandidates(ctx.db, user.user_id);
     if (candidates.length === 0) {
-        await replaceWithText(ctx, '⚠️ لا يوجد مستخدمون آخرون للتحدي حالياً.', mainMenuKeyboard());
+        await replaceWithText(ctx, 'لا يوجد مستخدم نشيط مناسب للتحدي حالياً. جرّب لاحقاً.', mainMenuKeyboard());
         return;
     }
 
-    const keyboard = new InlineKeyboard();
+    const keyboard = new InlineKeyboard().text('🎲 منافس عشوائي', `challenge_opp_${count}_${candidates[Math.floor(Math.random() * candidates.length)].user_id}`).row();
     for (const candidate of candidates) {
         keyboard.text(candidate.display_name ?? candidate.name, `challenge_opp_${count}_${candidate.user_id}`).row();
     }
     keyboard.text('⬅️ رجوع', 'menu_challenge');
     await replaceWithText(ctx, `⚔️ اختر مستخدم للتحدي (${count} أسئلة):`, keyboard);
+}
+
+async function showChallengeHistory(ctx: BotContext, page: number): Promise<void> {
+    const user = await getCurrentUser(ctx);
+    if (!user) return;
+    const limit = 5;
+    const rows = await ctx.db.prepare(
+        `SELECT c.challenge_id, c.status, c.question_count, c.creator_score, c.opponent_score, c.created_at, c.completed_at,
+                u.display_name, u.name
+         FROM async_challenges c
+         INNER JOIN users u ON u.user_id = CASE WHEN c.creator_user_id = ? THEN c.opponent_user_id ELSE c.creator_user_id END
+         WHERE (c.creator_user_id = ? OR c.opponent_user_id = ?)
+           AND c.status IN ('completed', 'expired', 'cancelled')
+         ORDER BY c.created_at DESC
+         LIMIT ? OFFSET ?`
+    ).bind(user.user_id, user.user_id, user.user_id, limit, page * limit).all<{ challenge_id: number; status: string; question_count: number; creator_score: number; opponent_score: number; created_at: string; completed_at: string | null; display_name: string | null; name: string }>();
+
+    const list = rows.results ?? [];
+    const text = list.length === 0
+        ? '📜 *سجل التحديات*\n\nلا يوجد سجل بعد.'
+        : '📜 *سجل التحديات*\n\n' + list.map(item =>
+            `#${item.challenge_id} ضد ${displayUserName(item)}\n${item.status} | ${item.creator_score}-${item.opponent_score} | ${item.question_count} أسئلة`
+        ).join('\n\n');
+    const keyboard = new InlineKeyboard();
+    if (page > 0) keyboard.text('⬅️ السابق', `challenge_history_${page - 1}`);
+    if (list.length === limit) keyboard.text('التالي ➡️', `challenge_history_${page + 1}`);
+    if (page > 0 || list.length === limit) keyboard.row();
+    keyboard.text('⬅️ رجوع', 'menu_challenge').text('🏠 الرئيسية', 'menu_main');
+    await replaceWithText(ctx, text, keyboard, 'Markdown');
 }
 
 async function createChallenge(ctx: BotContext, count: number, opponentUserId: number): Promise<void> {
@@ -106,7 +144,17 @@ async function createChallenge(ctx: BotContext, count: number, opponentUserId: n
         .bind(opponentUserId)
         .first<typeof user>();
     if (!peer || peer.user_id === user.user_id) {
-        await ctx.reply('⚠️ هذا المستخدم غير متاح للتحدي.');
+        await replaceWithText(ctx, '⚠️ هذا المستخدم غير متاح للتحدي.', mainMenuKeyboard());
+        return;
+    }
+
+    if (peer.is_banned || peer.is_deleted) {
+        await replaceWithText(ctx, '⚠️ هذا المستخدم غير متاح للتحدي.', mainMenuKeyboard());
+        return;
+    }
+
+    if (await hasOpenChallengeBetween(ctx.db, user.user_id, peer.user_id)) {
+        await replaceWithText(ctx, 'يوجد تحدي غير مكتمل بينكم. أكملوه أولاً.', mainMenuKeyboard());
         return;
     }
 
@@ -133,7 +181,16 @@ async function createChallenge(ctx: BotContext, count: number, opponentUserId: n
         startTime: Date.now(),
     }, 120);
 
-    await ctx.reply(`⚔️ بدأ التحدي #${challengeId}. جاوب أسئلتك الآن.`);
+    if (await competitionNotificationsEnabled(ctx.db, peer.user_id)) {
+        await sendTelegramMessage(
+            ctx.env,
+            peer.telegram_id,
+            `⚔️ تحدي جديد!\n\n${displayUserName(user)} تحداك في ${count} أسئلة.\nادخل وحل التحدي حتى نعرف الفائز.`,
+            { inline_keyboard: [[{ text: '▶️ حل التحدي', callback_data: `challenge_start_${challengeId}` }]] }
+        );
+    }
+
+    await replaceWithText(ctx, `⚔️ بدأ التحدي #${challengeId}. جاوب أسئلتك الآن.`, mainMenuKeyboard());
     await showChallengeQuestion(ctx, user.user_id);
 }
 
@@ -142,8 +199,12 @@ async function startExistingChallenge(ctx: BotContext, challengeId: number): Pro
     if (!user) return;
 
     const challenge = await getChallenge(ctx.db, challengeId);
-    if (!challenge || challenge.opponent_user_id !== user.user_id || challenge.status !== 'opponent_pending') {
-        await ctx.reply('⚠️ هذا التحدي غير متاح.');
+    if (!challenge || (challenge.opponent_user_id !== user.user_id && challenge.creator_user_id !== user.user_id) || !['waiting_opponent', 'in_progress'].includes(challenge.status)) {
+        await replaceWithText(ctx, '⚠️ هذا التحدي غير متاح.', mainMenuKeyboard());
+        return;
+    }
+    if ((challenge.creator_user_id === user.user_id && challenge.creator_time_ms !== null) || (challenge.opponent_user_id === user.user_id && challenge.opponent_time_ms !== null)) {
+        await replaceWithText(ctx, 'أنت أكملت هذا التحدي مسبقاً.', mainMenuKeyboard());
         return;
     }
 
@@ -181,10 +242,7 @@ async function showChallengeQuestion(ctx: BotContext, userId: number): Promise<v
         keyboard.text(option, `challenge_ans_${session.data.challengeId}_${question.word_id}_${option === question.answer ? 'correct' : 'wrong'}`).row();
     }
 
-    await ctx.reply(`⚔️ (${progress}) ${question.direction === 'de_ar' ? 'اختر المعنى العربي' : 'اختر الكلمة الألمانية'}:\n\n*${question.prompt}*`, {
-        parse_mode: 'Markdown',
-        reply_markup: keyboard,
-    });
+    await replaceWithText(ctx, `⚔️ (${progress}) ${question.direction === 'de_ar' ? 'اختر المعنى العربي' : 'اختر الكلمة الألمانية'}:\n\n*${question.prompt}*`, keyboard, 'Markdown');
 }
 
 async function handleChallengeAnswer(ctx: BotContext, challengeId: number, wordId: number, isCorrect: boolean): Promise<void> {
@@ -212,29 +270,18 @@ async function finishChallenge(ctx: BotContext, userId: number, session: Challen
     if (!challenge) return;
 
     await addXp(ctx.db, userId, session.correctCount * 2, 'challenge_participation');
-    await ctx.reply(`✅ انتهى دورك في التحدي.\nنتيجتك: ${session.correctCount}/${session.questions.length}`);
-
-    if (challenge.status === 'opponent_pending' && challenge.creator_user_id === userId) {
-        const creator = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ?').bind(challenge.creator_user_id).first<{ display_name: string | null; name: string }>();
-        const opponent = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ?').bind(challenge.opponent_user_id).first<{ user_id: number; telegram_id: number; display_name: string | null; name: string }>();
-        if (creator && opponent && await competitionNotificationsEnabled(ctx.db, opponent.user_id)) {
-            await sendTelegramMessage(
-                ctx.env,
-                opponent.telegram_id,
-                `⚔️ ${displayUserName(creator)} تحداك! عندك ${challenge.question_count} أسئلة. ابدأ الآن؟`,
-                {
-                    inline_keyboard: [[
-                        { text: '⚔️ ابدأ التحدي', callback_data: `challenge_start_${challenge.challenge_id}` },
-                    ]],
-                }
-            );
-        }
-        return;
-    }
+    await replaceWithText(ctx, `✅ انتهى دورك في التحدي.\nنتيجتك: ${session.correctCount}/${session.questions.length}`, challengeDoneKeyboard());
 
     if (challenge.status === 'completed') {
         await announceChallengeResult(ctx, challenge);
     }
+}
+
+function challengeDoneKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('🔁 تحدي جديد', 'menu_challenge').row()
+        .text('📜 سجل التحديات', 'challenge_history_0').row()
+        .text('🏠 الرئيسية', 'menu_main');
 }
 
 async function announceChallengeResult(ctx: BotContext, challenge: NonNullable<Awaited<ReturnType<typeof getChallenge>>>): Promise<void> {

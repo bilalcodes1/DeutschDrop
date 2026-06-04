@@ -42,6 +42,9 @@ export interface User {
     level: number;
     streak: number;
     is_banned: number;
+    is_deleted?: number;
+    deleted_at?: string | null;
+    last_active_at?: string | null;
     identity: 'bilal' | 'malak' | null;
     created_at: string;
     updated_at: string | null;
@@ -221,7 +224,7 @@ export interface LearningSource {
     id: number;
     title: string;
     url: string;
-    level: 'A1' | 'A2' | 'B1';
+    level: 'A1' | 'A2' | 'B1' | 'General';
     description: string | null;
     is_active: number;
     created_by_admin_id: number | null;

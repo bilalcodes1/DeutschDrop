@@ -20,7 +20,7 @@ import { registerAdminCommand } from '../commands/admin';
 import { registerSourcesCommand } from '../commands/sources';
 import { registerSmartNotificationCommand } from '../commands/smartNotifications';
 import { registerAiCoachCommand } from '../commands/aiCoach';
-import { getUserByTelegramId, isRegisteredUser } from '../repositories/userRepository';
+import { getUserByTelegramId, isRegisteredUser, updateUserLastActive } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 import { safeAnswerCallback, showCallbackError } from './callbacks';
 
@@ -57,7 +57,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
 
         const user = await getUserByTelegramId(ctx.db, telegramId);
         if (user) {
-            await ctx.db.prepare('UPDATE users SET updated_at = datetime("now") WHERE user_id = ?').bind(user.user_id).run();
+            await updateUserLastActive(ctx.db, user.user_id);
         }
         if (user?.is_banned) {
             await ctx.reply('تم إيقاف حسابك من استخدام البوت.');

@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS users (
     level INTEGER DEFAULT 1,
     streak INTEGER DEFAULT 0,
     is_banned INTEGER DEFAULT 0 CHECK (is_banned IN (0, 1)),
+    is_deleted INTEGER DEFAULT 0 CHECK (is_deleted IN (0, 1)),
+    deleted_at DATETIME,
+    last_active_at DATETIME,
     identity TEXT CHECK (identity IN ('bilal', 'malak')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -232,7 +235,7 @@ CREATE TABLE IF NOT EXISTS competition_leaderboard_snapshot (
 CREATE TABLE IF NOT EXISTS bot_sessions (
     session_id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('learn', 'train', 'add_word', 'word_edit', 'challenge', 'register', 'rename', 'support_proof', 'admin_broadcast', 'admin_announcement', 'admin_source', 'csv_update', 'word_selection', 'word_search', 'ai_word', 'train_explain')),
+    type TEXT NOT NULL CHECK (type IN ('learn', 'train', 'add_word', 'word_edit', 'challenge', 'register', 'rename', 'profile_rename', 'support_proof', 'admin_broadcast', 'admin_announcement', 'admin_source', 'admin_source_add', 'admin_source_edit', 'admin_private_message', 'admin_confirm', 'csv_update', 'word_selection', 'word_search', 'ai_word', 'train_explain')),
     data TEXT NOT NULL,
     expires_at DATETIME NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -268,7 +271,7 @@ CREATE TABLE IF NOT EXISTS learning_sources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
     url TEXT NOT NULL,
-    level TEXT NOT NULL CHECK (level IN ('A1', 'A2', 'B1')),
+    level TEXT NOT NULL CHECK (level IN ('A1', 'A2', 'B1', 'General')),
     description TEXT,
     is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
     created_by_admin_id INTEGER,
@@ -283,8 +286,9 @@ CREATE TABLE IF NOT EXISTS async_challenges (
     creator_user_id INTEGER NOT NULL,
     opponent_user_id INTEGER NOT NULL,
     question_count INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'creator_pending' CHECK (status IN ('creator_pending', 'opponent_pending', 'completed')),
+    status TEXT NOT NULL DEFAULT 'waiting_opponent' CHECK (status IN ('waiting_opponent', 'in_progress', 'completed', 'expired', 'cancelled')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME,
     completed_at DATETIME,
     creator_score INTEGER DEFAULT 0,
     opponent_score INTEGER DEFAULT 0,
@@ -460,6 +464,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_sessions_user_type ON bot_sessions(user_id, t
 CREATE INDEX IF NOT EXISTS idx_bot_sessions_expires_at ON bot_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_status ON async_challenges(status);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_users ON async_challenges(creator_user_id, opponent_user_id);
+CREATE INDEX IF NOT EXISTS idx_async_challenges_expires ON async_challenges(status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_daily_tasks_user_date ON daily_tasks(user_id, task_date);
 CREATE INDEX IF NOT EXISTS idx_support_requests_user_id ON support_requests(user_id);
 CREATE INDEX IF NOT EXISTS idx_support_proofs_user_id ON support_proofs(user_id);

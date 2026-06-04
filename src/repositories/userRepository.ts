@@ -8,6 +8,17 @@ export async function getUserByTelegramId(
 ): Promise<User | null> {
     return queryOne<User>(
         db,
+        'SELECT * FROM users WHERE (telegram_user_id = ? OR telegram_id = ?) AND COALESCE(is_deleted, 0) = 0',
+        [telegramId, telegramId]
+    );
+}
+
+export async function getUserByTelegramIdIncludingDeleted(
+    db: D1Database,
+    telegramId: number
+): Promise<User | null> {
+    return queryOne<User>(
+        db,
         'SELECT * FROM users WHERE telegram_user_id = ? OR telegram_id = ?',
         [telegramId, telegramId]
     );
@@ -44,6 +55,26 @@ export async function createPendingUser(
     firstName: string | null,
     lastName: string | null
 ): Promise<number> {
+    const existing = await getUserByTelegramIdIncludingDeleted(db, telegramId);
+    if (existing?.is_deleted) {
+        await run(
+            db,
+            `UPDATE users
+             SET is_deleted = 0,
+                 deleted_at = NULL,
+                 display_name = NULL,
+                 name = ?,
+                 telegram_username = ?,
+                 username = ?,
+                 first_name = ?,
+                 last_name = ?,
+                 updated_at = datetime('now'),
+                 last_active_at = datetime('now')
+             WHERE user_id = ?`,
+            [firstName ?? username ?? 'User', username, username, firstName, lastName, existing.user_id]
+        );
+        return existing.user_id;
+    }
     return createUser(db, firstName ?? username ?? 'User', telegramId, username, firstName, lastName, null);
 }
 
@@ -74,15 +105,17 @@ export function isRegisteredUser(user: User | null): user is User {
 }
 
 export async function getAllUsers(db: D1Database): Promise<User[]> {
-    return queryAll<User>(db, 'SELECT * FROM users WHERE display_name IS NOT NULL ORDER BY created_at DESC');
+    return queryAll<User>(db, 'SELECT * FROM users WHERE display_name IS NOT NULL AND COALESCE(is_deleted, 0) = 0 ORDER BY created_at DESC');
 }
 
-export async function getAdminUserList(db: D1Database): Promise<Array<User & { total_xp: number; word_count: number; is_supporter_active: number }>> {
+export async function getAdminUserList(db: D1Database, limit: number = 10, offset: number = 0): Promise<Array<User & { total_xp: number; word_count: number; is_supporter_active: number; german_level: string | null; supporter_until: string | null }>> {
     return queryAll(
         db,
         `SELECT u.*,
                 COALESCE(SUM(x.amount), 0) AS total_xp,
                 COUNT(DISTINCT w.word_id) AS word_count,
+                s.german_level,
+                us.supporter_until,
                 CASE
                     WHEN us.is_supporter = 1 AND us.supporter_until > datetime('now') THEN 1
                     ELSE 0
@@ -90,10 +123,41 @@ export async function getAdminUserList(db: D1Database): Promise<Array<User & { t
          FROM users u
          LEFT JOIN xp_log x ON x.user_id = u.user_id
          LEFT JOIN words w ON w.added_by = u.user_id
+         LEFT JOIN settings s ON s.user_id = u.user_id
          LEFT JOIN user_support_status us ON us.user_id = u.user_id
          WHERE u.display_name IS NOT NULL
          GROUP BY u.user_id
-         ORDER BY u.created_at DESC`
+         ORDER BY u.created_at DESC
+         LIMIT ? OFFSET ?`,
+        [limit, offset]
+    );
+}
+
+export async function countAdminUsers(db: D1Database): Promise<number> {
+    const row = await queryOne<{ count: number }>(
+        db,
+        'SELECT COUNT(*) AS count FROM users WHERE display_name IS NOT NULL'
+    );
+    return row?.count ?? 0;
+}
+
+export async function getAdminUserDetail(db: D1Database, userId: number): Promise<User & { total_xp: number; word_count: number; is_supporter_active: number; german_level: string | null; supporter_until: string | null } | null> {
+    return queryOne(
+        db,
+        `SELECT u.*,
+                COALESCE(SUM(x.amount), 0) AS total_xp,
+                COUNT(DISTINCT w.word_id) AS word_count,
+                s.german_level,
+                us.supporter_until,
+                CASE WHEN us.is_supporter = 1 AND us.supporter_until > datetime('now') THEN 1 ELSE 0 END AS is_supporter_active
+         FROM users u
+         LEFT JOIN xp_log x ON x.user_id = u.user_id
+         LEFT JOIN words w ON w.added_by = u.user_id
+         LEFT JOIN settings s ON s.user_id = u.user_id
+         LEFT JOIN user_support_status us ON us.user_id = u.user_id
+         WHERE u.user_id = ?
+         GROUP BY u.user_id`,
+        [userId]
     );
 }
 
@@ -109,8 +173,54 @@ export async function setUserBanned(db: D1Database, telegramId: number, banned: 
 export async function getChallengeCandidates(db: D1Database, currentUserId: number): Promise<Array<Pick<User, 'user_id' | 'display_name' | 'name'>>> {
     return queryAll(
         db,
-        'SELECT user_id, display_name, name FROM users WHERE user_id != ? AND display_name IS NOT NULL ORDER BY display_name LIMIT 10',
+        `SELECT u.user_id, u.display_name, u.name
+         FROM users u
+         WHERE u.user_id != ?
+           AND u.display_name IS NOT NULL
+           AND COALESCE(u.is_banned, 0) = 0
+           AND COALESCE(u.is_deleted, 0) = 0
+           AND u.last_active_at >= datetime('now', '-7 days')
+           AND EXISTS (SELECT 1 FROM words w WHERE w.added_by = u.user_id)
+         ORDER BY CASE WHEN u.last_active_at >= datetime('now', '-1 day') THEN 0 ELSE 1 END, RANDOM()
+         LIMIT 10`,
         [currentUserId]
+    );
+}
+
+export async function updateUserLastActive(db: D1Database, userId: number): Promise<void> {
+    await run(db, 'UPDATE users SET updated_at = datetime("now"), last_active_at = datetime("now") WHERE user_id = ?', [userId]);
+}
+
+export async function resetUserXp(db: D1Database, userId: number): Promise<void> {
+    await run(db, 'UPDATE users SET xp = 0, level = 1, updated_at = datetime("now") WHERE user_id = ?', [userId]);
+    await run(db, 'DELETE FROM xp_log WHERE user_id = ?', [userId]);
+    await run(db, 'DELETE FROM xp_events WHERE user_id = ?', [userId]);
+}
+
+export async function resetUserStreak(db: D1Database, userId: number): Promise<void> {
+    await run(db, 'UPDATE users SET streak = 0, updated_at = datetime("now") WHERE user_id = ?', [userId]);
+    await run(db, 'UPDATE daily_streaks SET current_streak = 0, last_active_date = NULL WHERE user_id = ?', [userId]);
+}
+
+export async function softDeleteUser(db: D1Database, userId: number): Promise<void> {
+    await run(
+        db,
+        'UPDATE users SET is_deleted = 1, deleted_at = datetime("now"), display_name = NULL, updated_at = datetime("now") WHERE user_id = ?',
+        [userId]
+    );
+}
+
+export async function logAdminAction(
+    db: D1Database,
+    adminUserId: number,
+    targetUserId: number | null,
+    actionType: string,
+    details: unknown = null
+): Promise<void> {
+    await run(
+        db,
+        'INSERT INTO admin_actions (admin_user_id, target_user_id, action_type, details_json) VALUES (?, ?, ?, ?)',
+        [adminUserId, targetUserId, actionType, details ? JSON.stringify(details) : null]
     );
 }
 

@@ -125,6 +125,30 @@ export async function activateSupporterFor24Hours(
     return until;
 }
 
+export async function activateSupporterForHours(
+    db: D1Database,
+    userId: number,
+    adminTelegramId: number,
+    hours: number,
+    proofId: number | null = null
+): Promise<string> {
+    const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+    await run(
+        db,
+        `INSERT INTO user_support_status (
+            user_id, is_supporter, supporter_until, last_confirmed_by_admin_id, last_support_proof_id, updated_at
+         ) VALUES (?, 1, ?, ?, ?, datetime("now"))
+         ON CONFLICT(user_id) DO UPDATE SET
+            is_supporter = 1,
+            supporter_until = excluded.supporter_until,
+            last_confirmed_by_admin_id = excluded.last_confirmed_by_admin_id,
+            last_support_proof_id = excluded.last_support_proof_id,
+            updated_at = datetime("now")`,
+        [userId, until, adminTelegramId, proofId]
+    );
+    return until;
+}
+
 export async function getActiveSupportStatus(db: D1Database, userId: number): Promise<SupportStatus | null> {
     const status = await queryOne<SupportStatus>(
         db,

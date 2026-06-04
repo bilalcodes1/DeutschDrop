@@ -810,6 +810,88 @@ test('learning sources display by level and admin-only management exists', () =>
     assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS learning_sources/);
 });
 
+test('source add flow uses isolated step sessions and does not route into words', () => {
+    const sourceCommand = fs.readFileSync(new URL('../src/commands/sources.ts', import.meta.url), 'utf8');
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const sourceRepo = fs.readFileSync(new URL('../src/repositories/sourceRepository.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0017_sources_admin_users_profile_challenges.sql', import.meta.url), 'utf8');
+
+    assert.match(sourceCommand, /admin_source_add/);
+    assert.match(sourceCommand, /admin_source_edit/);
+    assert.match(sourceCommand, /step: 'title'/);
+    assert.match(sourceCommand, /step = 'url'/);
+    assert.match(sourceCommand, /admin_source_level_\(A1\|A2\|B1\|General\)/);
+    assert.match(sourceCommand, /admin_source_skip_description/);
+    assert.match(sourceCommand, /admin_source_save/);
+    assert.match(sourceCommand, /createLearningSource/);
+    assert.doesNotMatch(sourceCommand, /createWordAndAssignToUser|addXp/);
+    assert.match(addWordSource, /'admin_source_add'/);
+    assert.match(addWordSource, /'admin_source_edit'/);
+    assert.match(addWordSource, /return next\(\)/);
+    assert.match(sourceRepo, /level IN \(\?, 'General'\)/);
+    assert.match(migrationSource, /level TEXT NOT NULL CHECK \(level IN \('A1', 'A2', 'B1', 'General'\)\)/);
+});
+
+test('profile rename is isolated from add-word and returns to profile', () => {
+    const profileSource = fs.readFileSync(new URL('../src/commands/profile.ts', import.meta.url), 'utf8');
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const sessionSource = fs.readFileSync(new URL('../src/repositories/sessionRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(profileSource, /✏️ تعديل الاسم/);
+    assert.match(profileSource, /profile_rename_start/);
+    assert.match(profileSource, /saveBotSession\(ctx\.db, user\.user_id, 'profile_rename'/);
+    assert.match(profileSource, /sanitizeProfileName/);
+    assert.match(profileSource, /https\?:/);
+    assert.match(profileSource, /renameUser/);
+    assert.match(profileSource, /showProfile\(ctx\)/);
+    assert.match(addWordSource, /'profile_rename'/);
+    assert.match(sessionSource, /profile_rename/);
+});
+
+test('admin users have pagination detail actions soft delete and audit logs', () => {
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    const userRepo = fs.readFileSync(new URL('../src/repositories/userRepository.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0017_sources_admin_users_profile_challenges.sql', import.meta.url), 'utf8');
+
+    assert.match(adminSource, /bot\.callbackQuery\(\/\^admin_user_/);
+    assert.match(adminSource, /showAdminUserDetail/);
+    assert.match(adminSource, /admin_user_confirm_reset_xp/);
+    assert.match(adminSource, /admin_user_do_\(reset_xp\|reset_streak\|delete_words\|delete_user\)/);
+    assert.match(adminSource, /canModerateTarget/);
+    assert.match(adminSource, /target\.user_id === adminUserId/);
+    assert.match(adminSource, /isAdminTelegramId\(ctx\.env, target\.telegram_user_id/);
+    assert.match(adminSource, /deleteAllWordsForUser/);
+    assert.match(adminSource, /activateSupporterForHours/);
+    assert.match(adminSource, /admin_private_message/);
+    assert.match(userRepo, /softDeleteUser/);
+    assert.match(userRepo, /is_deleted = 1/);
+    assert.match(userRepo, /logAdminAction/);
+    assert.match(userRepo, /resetUserXp/);
+    assert.match(userRepo, /resetUserStreak/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS admin_actions/);
+});
+
+test('deleted users re-register and active users drive challenges', () => {
+    const userRepo = fs.readFileSync(new URL('../src/repositories/userRepository.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+    const challengeSource = fs.readFileSync(new URL('../src/commands/challenge.ts', import.meta.url), 'utf8');
+    const challengeRepo = fs.readFileSync(new URL('../src/repositories/challengeRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(userRepo, /getUserByTelegramIdIncludingDeleted/);
+    assert.match(userRepo, /existing\?\.is_deleted/);
+    assert.match(userRepo, /is_deleted = 0/);
+    assert.match(botSource, /updateUserLastActive/);
+    assert.match(userRepo, /last_active_at >= datetime\('now', '-7 days'\)/);
+    assert.match(userRepo, /COALESCE\(u\.is_banned, 0\) = 0/);
+    assert.match(userRepo, /COALESCE\(u\.is_deleted, 0\) = 0/);
+    assert.match(challengeSource, /تحدي جديد!/);
+    assert.match(challengeSource, /▶️ حل التحدي/);
+    assert.match(challengeSource, /hasOpenChallengeBetween/);
+    assert.match(challengeRepo, /waiting_opponent/);
+    assert.match(challengeRepo, /expired/);
+    assert.doesNotMatch(challengeSource, /قبول|رفض|accepted|rejected|pending_acceptance/);
+});
+
 test('active announcement is rendered in main menu and can be cleared', () => {
     const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
     const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');

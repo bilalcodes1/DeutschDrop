@@ -15,7 +15,9 @@ export async function getLearningSourcesByLevel(
 ): Promise<LearningSource[]> {
     return queryAll<LearningSource>(
         db,
-        'SELECT * FROM learning_sources WHERE level = ? AND is_active = 1 ORDER BY created_at DESC',
+        `SELECT * FROM learning_sources
+         WHERE is_active = 1 AND level IN (?, 'General')
+         ORDER BY CASE WHEN level = 'General' THEN 1 ELSE 0 END, created_at DESC`,
         [level]
     );
 }
@@ -23,7 +25,7 @@ export async function getLearningSourcesByLevel(
 export async function createLearningSource(
     db: D1Database,
     adminUserId: number,
-    source: { title: string; url: string; level: 'A1' | 'A2' | 'B1'; description: string | null }
+    source: { title: string; url: string; level: 'A1' | 'A2' | 'B1' | 'General'; description: string | null }
 ): Promise<number> {
     const result = await run(
         db,
@@ -43,10 +45,19 @@ export async function disableLearningSource(db: D1Database, sourceId: number): P
     return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
 }
 
+export async function setLearningSourceActive(db: D1Database, sourceId: number, active: boolean): Promise<boolean> {
+    const result = await run(
+        db,
+        'UPDATE learning_sources SET is_active = ?, updated_at = datetime("now") WHERE id = ?',
+        [active ? 1 : 0, sourceId]
+    );
+    return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
+}
+
 export async function updateLearningSource(
     db: D1Database,
     sourceId: number,
-    source: { title: string; url: string; level: 'A1' | 'A2' | 'B1'; description: string | null }
+    source: { title: string; url: string; level: 'A1' | 'A2' | 'B1' | 'General'; description: string | null }
 ): Promise<boolean> {
     const result = await run(
         db,

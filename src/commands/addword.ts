@@ -82,6 +82,9 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
             await ctx.reply('⚔️ عندك تحدي فعال. استخدم أزرار التحدي الحالية أو ارجع للرئيسية.');
             return;
         }
+        if (user && (await getBotSession(ctx.db, user.user_id, 'admin_source_add') || await getBotSession(ctx.db, user.user_id, 'admin_source_edit') || await getBotSession(ctx.db, user.user_id, 'profile_rename'))) {
+            return next();
+        }
 
         const searchSession = user ? await getBotSession<WordSearchSession>(ctx.db, user.user_id, 'word_search') : null;
         if (user && searchSession?.data.awaiting) {
