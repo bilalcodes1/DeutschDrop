@@ -35,6 +35,16 @@ export async function setCachedAiResult(
     ).bind(taskType, inputHash, provider, JSON.stringify(output)).run();
 }
 
+export async function deleteCachedAiResult(
+    db: D1Database,
+    taskType: AiTaskType,
+    inputHash: string
+): Promise<void> {
+    await db.prepare('DELETE FROM ai_cache WHERE task_type = ? AND input_hash = ?')
+        .bind(taskType, inputHash)
+        .run();
+}
+
 function stableStringify(value: unknown): string {
     if (value === null || typeof value !== 'object') return JSON.stringify(value);
     if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;

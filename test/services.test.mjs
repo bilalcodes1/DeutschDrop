@@ -7,6 +7,7 @@ import { getLevelFromXp, getProgressToNextLevel } from '../dist/services/xpMath.
 import { buildArasaacImageUrl, normalizeArasaacResults, searchEducationalPictograms } from '../dist/services/pictogramSearch.js';
 import { getAdminTelegramIds, isAdminTelegramId } from '../dist/services/adminAccess.js';
 import { classifyHttpStatus, sanitizeErrorMessage } from '../dist/services/ai/aiErrors.js';
+import { exampleContainsGerman, hasSuspiciousPronunciation, validateExampleSuggestion } from '../dist/services/ai/aiValidation.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -818,6 +819,62 @@ test('AI coach saves word changes only after user confirmation', () => {
     assert.match(aiSource, /ai_save_level_/);
     assert.match(aiSource, /saveBotSession<AiWordSession>/);
     assert.match(repoSource, /updateWordAiFieldsForUser/);
+});
+
+test('AI word improvement rejects unrelated examples and suspicious pronunciation', () => {
+    assert.equal(validateExampleSuggestion({
+        german: 'Auto',
+        result: {
+            example_de: 'Ich bin froh.',
+            example_ar: 'أنا سعيد.',
+            pronunciation_ar: 'إخ بن فروه',
+            level: 'A1',
+        },
+    }), false);
+
+    assert.equal(validateExampleSuggestion({
+        german: 'Auto',
+        result: {
+            example_de: 'Ich habe ein Auto.',
+            example_ar: 'لدي سيارة.',
+            pronunciation_ar: 'آوتو',
+            level: 'A1',
+        },
+    }), true);
+
+    assert.equal(validateExampleSuggestion({
+        german: 'richtig gut in Schuss',
+        result: {
+            example_de: 'Das Auto ist richtig gut in Schuss.',
+            example_ar: 'السيارة بحالة جيدة جداً.',
+            pronunciation_ar: 'رِشتِش گوت إِن شوس',
+            level: 'B1',
+        },
+    }), true);
+
+    assert.equal(hasSuspiciousPronunciation('Auto', 'إخ بن فروه'), true);
+    assert.equal(exampleContainsGerman('Straße', 'Die Strasse ist lang.'), true);
+});
+
+test('AI word improvement validates cached provider results before display or save', () => {
+    const routerSource = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+    const cacheSource = fs.readFileSync(new URL('../src/services/ai/aiCache.ts', import.meta.url), 'utf8');
+    const aiSource = fs.readFileSync(new URL('../src/commands/aiCoach.ts', import.meta.url), 'utf8');
+    const promptsSource = fs.readFileSync(new URL('../src/services/ai/prompts.ts', import.meta.url), 'utf8');
+    const validationSource = fs.readFileSync(new URL('../src/services/ai/aiValidation.ts', import.meta.url), 'utf8');
+
+    assert.match(promptsSource, /example_de يجب أن يحتوي german الأصلي/);
+    assert.match(promptsSource, /pronunciation_ar يجب أن يكون لفظ german الأصلي فقط/);
+    assert.match(validationSource, /Math\.ceil\(tokens\.length \* 0\.6\)/);
+    assert.match(validationSource, /hasSuspiciousPronunciation/);
+    assert.match(routerSource, /options\.validateResult/);
+    assert.match(routerSource, /deleteCachedAiResult/);
+    assert.match(routerSource, /safeProviderWarn\('cache', 'BAD_RESPONSE'\)/);
+    assert.match(routerSource, /safeProviderWarn\(provider\.name, 'BAD_RESPONSE'\)/);
+    assert.match(cacheSource, /DELETE FROM ai_cache WHERE task_type = \? AND input_hash = \?/);
+    assert.match(aiSource, /validateExampleSuggestion/);
+    assert.match(aiSource, /currentWord\.german !== session\.data\.german/);
+    assert.match(aiSource, /لم أستطع توليد اقتراح مناسب/);
 });
 
 test('AI payloads avoid Telegram identity and private user data', () => {

@@ -5,6 +5,7 @@ import { getWordById, updateWordAiFieldsForUser } from '../repositories/wordRepo
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { AI_ERROR_MESSAGES, getAiUsageSummary, runAiTask } from '../services/ai/aiRouter';
 import type { AiTaskResult } from '../services/ai/aiTypes';
+import { validateExampleSuggestion } from '../services/ai/aiValidation';
 import { buildAiDebugReport, formatAiDebugReport } from '../services/ai/aiDebug';
 import { isAdminTelegramId } from '../services/adminAccess';
 import { navigationKeyboard, replaceWithText, showWordDetailPanel } from './wordPanel';
@@ -35,6 +36,7 @@ interface ExplainResult {
 
 interface AiWordSession {
     wordId: number;
+    german: string;
     mode: 'suggestion' | 'pronunciation' | 'level';
     result: ExampleResult | PronunciationResult | LevelResult;
 }
@@ -86,7 +88,16 @@ export function registerAiCoachCommand(bot: Bot<BotContext>): void {
         if (!session || session.data.wordId !== wordId || session.data.mode !== 'suggestion') {
             return replaceWithText(ctx, 'انتهت صلاحية الاقتراح. جرّب التوليد مرة ثانية.', navigationKeyboard(`word_detail_${wordId}`));
         }
+        const currentWord = await getWordById(ctx.db, wordId);
+        if (!currentWord || currentWord.added_by !== user.user_id || currentWord.german !== session.data.german) {
+            await deleteBotSession(ctx.db, user.user_id, 'ai_word');
+            return replaceWithText(ctx, 'الكلمة تغيّرت بعد توليد الاقتراح. ولّد اقتراحاً جديداً حتى أحفظه بأمان.', navigationKeyboard(`word_detail_${wordId}`));
+        }
         const result = session.data.result as ExampleResult;
+        if (!validateExampleSuggestion({ german: currentWord.german, result })) {
+            await deleteBotSession(ctx.db, user.user_id, 'ai_word');
+            return replaceWithText(ctx, 'هذا الاقتراح لا يطابق الكلمة الحالية، لذلك لم أحفظه. جرّب توليد غيره أو عدّلها يدوياً.', navigationKeyboard(`word_detail_${wordId}`));
+        }
         await updateWordAiFieldsForUser(ctx.db, user.user_id, wordId, {
             example: result.example_de,
             example_ar: result.example_ar,
@@ -169,11 +180,25 @@ async function generateExampleSuggestion(ctx: BotContext, wordId: number, bypass
             arabic: access.word.arabic,
             currentExample: access.word.example,
         },
-        { userId: access.user.user_id, bypassCache }
+        {
+            userId: access.user.user_id,
+            bypassCache,
+            validateResult: (candidate) => validateExampleSuggestion({
+                german: access.word.german,
+                result: candidate as ExampleResult,
+            }),
+        }
     );
-    if (!result.result) return showAiError(ctx, result, `word_detail_${wordId}`);
+    if (!result.result) {
+        return replaceWithText(
+            ctx,
+            'لم أستطع توليد اقتراح مناسب لهذه الكلمة حالياً. جرّب توليد غيره أو عدّلها يدوياً.',
+            navigationKeyboard(`word_detail_${wordId}`)
+        );
+    }
     await saveBotSession<AiWordSession>(ctx.db, access.user.user_id, 'ai_word', {
         wordId,
+        german: access.word.german,
         mode: 'suggestion',
         result: result.result,
     }, 30);
@@ -194,6 +219,7 @@ async function generatePronunciationSuggestion(ctx: BotContext, wordId: number, 
     if (!result.result) return showAiError(ctx, result, `word_detail_${wordId}`);
     await saveBotSession<AiWordSession>(ctx.db, access.user.user_id, 'ai_word', {
         wordId,
+        german: access.word.german,
         mode: 'pronunciation',
         result: result.result,
     }, 30);
@@ -219,6 +245,7 @@ async function generateLevelSuggestion(ctx: BotContext, wordId: number, bypassCa
     if (!result.result) return showAiError(ctx, result, `word_detail_${wordId}`);
     await saveBotSession<AiWordSession>(ctx.db, access.user.user_id, 'ai_word', {
         wordId,
+        german: access.word.german,
         mode: 'level',
         result: result.result,
     }, 30);

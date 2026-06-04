@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '../../models';
 import { buildPrompt } from './prompts';
 import type { AiProvider, AiProviderName, AiTaskInput, AiTaskResult, AiTaskType, RunAiOptions } from './aiTypes';
-import { buildInputHash, getCachedAiResult, setCachedAiResult } from './aiCache';
+import { buildInputHash, deleteCachedAiResult, getCachedAiResult, setCachedAiResult } from './aiCache';
 import { canUseAiTask, getAiUsageSummary, incrementAiUsage } from './aiUsage';
 import { geminiProvider } from './providers/geminiProvider';
 import { kimiProvider } from './providers/kimiProvider';
@@ -50,7 +50,13 @@ export async function runAiTask<T>(
     const inputHash = await buildInputHash(taskType, input);
     if (!options.bypassCache) {
         const cached = await getCachedAiResult<T>(db, taskType, inputHash);
-        if (cached) return { status: 'ok', result: cached, provider: 'cache' };
+        if (cached) {
+            if (!options.validateResult || options.validateResult(cached)) {
+                return { status: 'ok', result: cached, provider: 'cache' };
+            }
+            await deleteCachedAiResult(db, taskType, inputHash);
+            safeProviderWarn('cache', 'BAD_RESPONSE');
+        }
     }
 
     if (!await canUseAiTask(db, options.userId, taskType)) return { status: 'RATE_LIMITED' };
@@ -74,6 +80,10 @@ export async function runAiTask<T>(
             const result = parseJsonResult<T>(response.text ?? '');
             if (!result) {
                 safeProviderWarn(provider.name, 'BAD_JSON');
+                continue;
+            }
+            if (options.validateResult && !options.validateResult(result)) {
+                safeProviderWarn(provider.name, 'BAD_RESPONSE');
                 continue;
             }
             await setCachedAiResult(db, taskType, inputHash, provider.name, result);

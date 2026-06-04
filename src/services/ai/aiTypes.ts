@@ -63,4 +63,5 @@ export interface AiProvider {
 export interface RunAiOptions {
     userId: number;
     bypassCache?: boolean;
+    validateResult?: (result: unknown) => boolean;
 }
