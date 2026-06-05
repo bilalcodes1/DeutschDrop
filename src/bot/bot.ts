@@ -21,6 +21,7 @@ import { registerSourcesCommand } from '../commands/sources';
 import { registerSmartNotificationCommand } from '../commands/smartNotifications';
 import { registerAiCoachCommand } from '../commands/aiCoach';
 import { registerYouglishCommand } from '../commands/youglish';
+import { registerTtsCommand } from '../commands/tts';
 import { getUserByTelegramId, isRegisteredUser, updateUserLastActive } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 import { safeAnswerCallback, showCallbackError } from './callbacks';
@@ -97,6 +98,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerSmartNotificationCommand(bot);
     registerAiCoachCommand(bot);
     registerYouglishCommand(bot);
+    registerTtsCommand(bot);
 
     // Error handler
     bot.catch((err) => {

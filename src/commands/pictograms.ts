@@ -4,6 +4,9 @@ import { getPictogramByWordId, upsertPictogramForWord } from '../repositories/pi
 import { getUserByTelegramId } from '../repositories/userRepository';
 import { getWordById } from '../repositories/wordRepository';
 import { searchEducationalPictograms, type PictogramSearchResult } from '../services/pictogramSearch';
+import { normalizeReturnContext, sideFlowBackCallback, type ReturnContext } from '../services/returnContext';
+import { showCurrentLearnWord } from './learn';
+import { showCurrentTrainingQuestion } from './train';
 import { navigationKeyboard, replaceWithText, showWordDetailPanel } from './wordPanel';
 
 const NO_PICTOGRAM_MESSAGE = 'لم أجد رمزاً تعليمياً مناسباً لهذه الكلمة.';
@@ -16,10 +19,11 @@ export function registerPictogramCommand(bot: Bot<BotContext>): void {
         await showSavedOrSearchPictograms(ctx, wordId);
     });
 
-    bot.callbackQuery(/^(?:pictogram_assign_|pictogram:change:)(\d+)$/, async (ctx) => {
+    bot.callbackQuery(/^(?:pictogram_assign_|pictogram:change:)(\d+)(?::ctx:([a-z_]+))?$/, async (ctx) => {
         const wordId = parseInt(ctx.match[1], 10);
+        const context = normalizeReturnContext(ctx.match[2]);
         await ctx.answerCallbackQuery('جاري البحث عن رموز تعليمية...');
-        await startPictogramSelection(ctx, wordId);
+        await startPictogramSelection(ctx, wordId, context);
     });
 
     bot.callbackQuery(/^pictogram_change_(\d+)$/, async (ctx) => {
@@ -34,35 +38,39 @@ export function registerPictogramCommand(bot: Bot<BotContext>): void {
         await showSavedPictogram(ctx, wordId);
     });
 
-    bot.callbackQuery(/^pictogram:view:(\d+)$/, async (ctx) => {
+    bot.callbackQuery(/^pictogram:view:(\d+)(?::ctx:([a-z_]+))?$/, async (ctx) => {
         const wordId = parseInt(ctx.match[1], 10);
+        const context = normalizeReturnContext(ctx.match[2]);
         await ctx.answerCallbackQuery();
-        await showSavedPictogram(ctx, wordId);
+        await showSavedPictogram(ctx, wordId, context);
     });
 
-    bot.callbackQuery(/^(?:pictogram_nav_|pictogram:(?:next|prev):)(\d+)(?::|_)(-?\d+)$/, async (ctx) => {
+    bot.callbackQuery(/^(?:pictogram_nav_|pictogram:(?:next|prev):)(\d+)(?::|_)(-?\d+)(?::ctx:([a-z_]+))?$/, async (ctx) => {
         const wordId = parseInt(ctx.match[1], 10);
         const index = parseInt(ctx.match[2], 10);
+        const context = normalizeReturnContext(ctx.match[3]);
         await ctx.answerCallbackQuery();
-        await showPictogramCandidate(ctx, wordId, index);
+        await showPictogramCandidate(ctx, wordId, index, context);
     });
 
-    bot.callbackQuery(/^(?:pictogram_use_|pictogram:use:)(\d+)(?::|_)([^:]+)$/, async (ctx) => {
+    bot.callbackQuery(/^(?:pictogram_use_|pictogram:use:)(\d+)(?::|_)([^:]+)(?::ctx:([a-z_]+))?$/, async (ctx) => {
         const wordId = parseInt(ctx.match[1], 10);
         const pictogramId = ctx.match[2];
+        const context = normalizeReturnContext(ctx.match[3]);
         await ctx.answerCallbackQuery();
-        await choosePictogram(ctx, wordId, pictogramId);
+        await choosePictogram(ctx, wordId, pictogramId, context);
     });
 
-    bot.callbackQuery(/^(?:pictogram_cancel_|pictogram:back:)(\d+)$/, async (ctx) => {
+    bot.callbackQuery(/^(?:pictogram_cancel_|pictogram:back:)(\d+)(?::ctx:([a-z_]+))?$/, async (ctx) => {
         const wordId = parseInt(ctx.match[1], 10);
+        const context = normalizeReturnContext(ctx.match[2]);
         await ctx.answerCallbackQuery('تم الإلغاء');
-        await runPictogramCallback(ctx, 'pictogram_back', wordId, () => showWordDetailPanel(ctx, wordId));
+        await runPictogramCallback(ctx, 'pictogram_back', wordId, () => returnToContext(ctx, wordId, context));
     });
 }
 
-export async function startPictogramSelection(ctx: BotContext, wordId: number): Promise<void> {
-    await showPictogramCandidate(ctx, wordId, 0);
+export async function startPictogramSelection(ctx: BotContext, wordId: number, context: ReturnContext = 'word_details'): Promise<void> {
+    await showPictogramCandidate(ctx, wordId, 0, context);
 }
 
 async function showSavedOrSearchPictograms(ctx: BotContext, wordId: number): Promise<void> {
@@ -75,42 +83,42 @@ async function showSavedOrSearchPictograms(ctx: BotContext, wordId: number): Pro
     await startPictogramSelection(ctx, wordId);
 }
 
-async function showSavedPictogram(ctx: BotContext, wordId: number): Promise<void> {
+async function showSavedPictogram(ctx: BotContext, wordId: number, context: ReturnContext = 'word_details'): Promise<void> {
     const word = await getOwnedWord(ctx, wordId);
     if (!word) return;
 
     const saved = await getPictogramByWordId(ctx.db, word.word_id);
     if (!saved) {
         await replaceWithText(ctx, NO_SAVED_PICTOGRAM_MESSAGE, new InlineKeyboard()
-            .text('🖼 تعيين رمز', `pictogram:change:${word.word_id}`).row()
-            .text('⬅️ رجوع', `pictogram:back:${word.word_id}`)
+            .text('🖼 تعيين رمز', `pictogram:change:${word.word_id}:ctx:${context}`).row()
+            .text('⬅️ رجوع', `pictogram:back:${word.word_id}:ctx:${context}`)
             .text('🏠 الرئيسية', 'menu_main'));
         return;
     }
 
     await editOrSendPhoto(ctx, saved.image_url, `${word.german} = ${word.arabic}\n${saved.title}\n\n${saved.attribution}`, new InlineKeyboard()
-        .text('🔄 تغيير الرمز', `pictogram:change:${word.word_id}`).row()
-        .text('⬅️ رجوع', `pictogram:back:${word.word_id}`)
+        .text('🔄 تغيير الرمز', `pictogram:change:${word.word_id}:ctx:${context}`).row()
+        .text('⬅️ رجوع', `pictogram:back:${word.word_id}:ctx:${context}`)
         .text('🏠 الرئيسية', 'menu_main'));
 }
 
-async function showPictogramCandidate(ctx: BotContext, wordId: number, index: number): Promise<void> {
+async function showPictogramCandidate(ctx: BotContext, wordId: number, index: number, context: ReturnContext = 'word_details'): Promise<void> {
     const word = await getOwnedWord(ctx, wordId);
     if (!word) return;
 
     const results = await searchEducationalPictograms(word.german, word.arabic, 3);
     if (results.length === 0) {
-        await replaceWithText(ctx, NO_PICTOGRAM_MESSAGE, navigationKeyboard(`word_detail_${word.word_id}`));
+        await replaceWithText(ctx, NO_PICTOGRAM_MESSAGE, navigationKeyboard(sideFlowBackCallback(word.word_id, context)));
         return;
     }
 
     const safeIndex = ((index % results.length) + results.length) % results.length;
     const result = results[safeIndex];
     const keyboard = new InlineKeyboard()
-        .text('⬅️ السابق', `pictogram:prev:${word.word_id}:${safeIndex - 1}`)
-        .text('✅ استخدم هذا الرمز', `pictogram:use:${word.word_id}:${result.pictogramId}`)
-        .text('التالي ➡️', `pictogram:next:${word.word_id}:${safeIndex + 1}`).row()
-        .text('❌ إلغاء', `pictogram:back:${word.word_id}`)
+        .text('⬅️ السابق', `pictogram:prev:${word.word_id}:${safeIndex - 1}:ctx:${context}`)
+        .text('✅ استخدم هذا الرمز', `pictogram:use:${word.word_id}:${result.pictogramId}:ctx:${context}`)
+        .text('التالي ➡️', `pictogram:next:${word.word_id}:${safeIndex + 1}:ctx:${context}`).row()
+        .text('❌ إلغاء', `pictogram:back:${word.word_id}:ctx:${context}`)
         .text('🏠 الرئيسية', 'menu_main');
 
     await editOrSendPhoto(
@@ -121,21 +129,39 @@ async function showPictogramCandidate(ctx: BotContext, wordId: number, index: nu
     );
 }
 
-async function choosePictogram(ctx: BotContext, wordId: number, pictogramId: string): Promise<void> {
+async function choosePictogram(ctx: BotContext, wordId: number, pictogramId: string, context: ReturnContext = 'word_details'): Promise<void> {
     const word = await getOwnedWord(ctx, wordId);
     if (!word) return;
 
     const results = await searchEducationalPictograms(word.german, word.arabic, 10);
     const selected = results.find(result => result.pictogramId === pictogramId);
     if (!selected) {
-        await replaceWithText(ctx, NO_PICTOGRAM_MESSAGE, navigationKeyboard(`word_detail_${word.word_id}`));
+        await replaceWithText(ctx, NO_PICTOGRAM_MESSAGE, navigationKeyboard(sideFlowBackCallback(word.word_id, context)));
         return;
     }
 
     await runPictogramCallback(ctx, 'pictogram_use', word.word_id, async () => {
         await upsertPictogramForWord(ctx.db, word.word_id, selected);
-        await showWordDetailPanel(ctx, word.word_id, '✅ تم حفظ الرمز.');
+        if (context === 'word_details') {
+            await showWordDetailPanel(ctx, word.word_id, '✅ تم حفظ الرمز.');
+            return;
+        }
+        await replaceWithText(ctx, '✅ تم حفظ الرمز.', navigationKeyboard(sideFlowBackCallback(word.word_id, context)));
+        await returnToContext(ctx, word.word_id, context);
     });
+}
+
+async function returnToContext(ctx: BotContext, wordId: number, context: ReturnContext): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    if (context === 'learn_session' && user) {
+        await showCurrentLearnWord(ctx, user.user_id);
+        return;
+    }
+    if ((context === 'training_session' || context === 'review_plan') && user) {
+        await showCurrentTrainingQuestion(ctx, user.user_id);
+        return;
+    }
+    await showWordDetailPanel(ctx, wordId);
 }
 
 async function editOrSendPhoto(ctx: BotContext, imageUrl: string, caption: string, keyboard: InlineKeyboard): Promise<void> {

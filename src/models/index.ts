@@ -10,6 +10,7 @@ export interface Env {
     ADMIN_TELEGRAM_IDS?: string;
     AI_ENABLED?: string;
     AI_PROVIDER_ORDER?: string;
+    TTS_PROVIDER_ORDER?: string;
     GEMINI_API_KEYS?: string;
     KIMI_API_KEYS?: string;
     GROK_API_KEYS?: string;
@@ -21,6 +22,7 @@ export interface Env {
     KIMI_MODEL?: string;
     GROK_MODEL?: string;
     CLOUDFLARE_AI_MODEL?: string;
+    CLOUDFLARE_TTS_MODEL?: string;
     OPENROUTER_MODEL?: string;
     ZAI_MODEL?: string;
     ZAI_BASE_URL?: string;

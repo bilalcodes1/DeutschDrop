@@ -83,8 +83,9 @@ function wordDetailKeyboard(word: Word, hasPictogram: boolean, backCallback: str
     if (word.example && !word.pronunciation_ar) {
         keyboard.text('🗣 توليد اللفظ', `ai_pron_${wordId}`).row();
     }
+    keyboard.text('🔊 نطق', `tts:word:${wordId}:ctx:word_details`)
+        .text('🎬 YouGlish', `youglish:${wordId}:ctx:word_details`).row();
     keyboard.text('📊 تحديد المستوى', `ai_level_${wordId}`).row();
-    keyboard.text('🎬 النطق من YouGlish', `youglish:${wordId}`).row();
 
     if (hasPictogram) {
         keyboard

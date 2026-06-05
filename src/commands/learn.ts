@@ -45,6 +45,13 @@ export function registerLearnCommand(bot: Bot<BotContext>): void {
         const wordId = parseInt(ctx.match[1], 10);
         await handleReviewAnswer(ctx, false, 'hard', wordId);
     });
+
+    bot.callbackQuery(/^learn:back:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return;
+        await showWord(ctx, user.user_id);
+    });
 }
 
 async function startLearning(ctx: BotContext): Promise<void> {
@@ -79,6 +86,10 @@ async function startLearning(ctx: BotContext): Promise<void> {
     await showWord(ctx, user.user_id);
 }
 
+export async function showCurrentLearnWord(ctx: BotContext, userId: number): Promise<void> {
+    await showWord(ctx, userId);
+}
+
 async function showWord(ctx: BotContext, userId: number): Promise<void> {
     const session = await getBotSession<LearnSessionData>(ctx.db, userId, 'learn');
     if (!session || session.data.currentIndex >= session.data.words.length) {
@@ -103,7 +114,9 @@ async function showWord(ctx: BotContext, userId: number): Promise<void> {
         (word.example ? `\n\n💬 مثال: _${word.example}_` : '');
 
     const keyboard = new InlineKeyboard()
-        .text('🖼 رمز تعليمي', `pictogram_search_${word.word_id}`).row()
+        .text('🔊 نطق', `tts:word:${word.word_id}:ctx:learn_session`)
+        .text('🎬 YouGlish', `youglish:${word.word_id}:ctx:learn_session`).row()
+        .text('🖼 رمز تعليمي', `pictogram:change:${word.word_id}:ctx:learn_session`).row()
         .text('👍 أعرفها', `review_known_${word.word_id}`).row()
         .text('😊 سهلة', `review_easy_${word.word_id}`)
         .text('😐 متوسطة', `review_medium_${word.word_id}`)

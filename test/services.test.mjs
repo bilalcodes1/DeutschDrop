@@ -305,8 +305,10 @@ test('word panel shows review status and pictogram-specific actions', () => {
     assert.match(source, /🖼 عرض الرمز/);
     assert.match(source, /🖼 تعيين رمز/);
     assert.match(source, /🔄 تغيير الرمز/);
-    assert.match(source, /🎬 النطق من YouGlish/);
-    assert.match(source, /youglish:\$\{wordId\}/);
+    assert.match(source, /🔊 نطق/);
+    assert.match(source, /tts:word:\$\{wordId\}:ctx:word_details/);
+    assert.match(source, /🎬 YouGlish/);
+    assert.match(source, /youglish:\$\{wordId\}:ctx:word_details/);
     assert.match(source, /word\.added_by !== user\.user_id/);
 });
 
@@ -549,9 +551,50 @@ test('pictogram callbacks return to the same word detail screen', () => {
     for (const callback of ['pictogram:view:', 'pictogram:change:', 'pictogram:next:', 'pictogram:prev:', 'pictogram:use:', 'pictogram:back:']) {
         assert.match(source, new RegExp(callback.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
-    assert.match(source, /showWordDetailPanel\(ctx, wordId\)/);
     assert.match(source, /showWordDetailPanel\(ctx, word\.word_id, '✅ تم حفظ الرمز\.'\)/);
+    assert.match(source, /showCurrentLearnWord\(ctx, user\.user_id\)/);
+    assert.match(source, /showCurrentTrainingQuestion\(ctx, user\.user_id\)/);
+    assert.match(source, /:ctx:\$\{context\}/);
     assert.match(source, /word_callback_failed/);
+});
+
+test('Cloudflare TTS cache and provider are wired without Google TTS', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
+    const serviceSource = fs.readFileSync(new URL('../src/services/tts/cloudflareTts.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/wordAudioCacheRepository.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0020_word_audio_cache.sql', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+
+    assert.match(wranglerSource, /TTS_PROVIDER_ORDER = "cloudflareTts"/);
+    assert.match(wranglerSource, /CLOUDFLARE_TTS_MODEL = "@cf\/myshell-ai\/melotts"/);
+    assert.match(serviceSource, /env\.AI\.run\(model, \{/);
+    assert.match(serviceSource, /prompt: text/);
+    assert.match(serviceSource, /lang: 'de'/);
+    assert.match(commandSource, /getCachedWordAudio/);
+    assert.match(commandSource, /replyWithAudio\(cached\.telegram_file_id/);
+    assert.match(commandSource, /upsertWordAudioFileId/);
+    assert.match(commandSource, /TTS_DAILY_GENERATION_LIMIT = 30/);
+    assert.match(repoSource, /telegram_file_id IS NOT NULL/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS word_audio_cache/);
+    assert.doesNotMatch(`${commandSource}\n${serviceSource}`, /googleTts|Google Cloud TTS|texttospeech\.googleapis/i);
+});
+
+test('learn train notifications and hard words expose TTS without counting answers', () => {
+    const learnSource = fs.readFileSync(new URL('../src/commands/learn.ts', import.meta.url), 'utf8');
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const notifSource = fs.readFileSync(new URL('../src/commands/smartNotifications.ts', import.meta.url), 'utf8');
+    const hardSource = fs.readFileSync(new URL('../src/commands/hardWords.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+
+    assert.match(botSource, /registerTtsCommand\(bot\)/);
+    assert.match(learnSource, /tts:word:\$\{word\.word_id\}:ctx:learn_session/);
+    assert.match(learnSource, /learn:back:/);
+    assert.match(trainSource, /tts:word:\$\{q\.word_id\}:ctx:training_session/);
+    assert.match(trainSource, /tts:word:\$\{wordId\}:ctx:training_session/);
+    assert.match(trainSource, /train:back:/);
+    assert.match(notifSource, /tts:word:\$\{word\.word_id\}:ctx:notification_answer/);
+    assert.match(hardSource, /tts:word:\$\{word\.word_id\}:ctx:hard_words/);
+    assert.doesNotMatch(trainSource, /tts:word:[\s\S]{0,120}markQuestionAnswered/);
 });
 
 test('YouGlish URLs encode German words and phrases', () => {
@@ -569,19 +612,19 @@ test('YouGlish URLs encode German words and phrases', () => {
     );
 });
 
-test('/youglish route renders sanitized widget HTML without private data', () => {
+test('/youglish route renders sanitized fallback HTML without private data', () => {
     const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
     const routeSource = fs.readFileSync(new URL('../src/routes/youglish.ts', import.meta.url), 'utf8');
     const html = renderYouglishHtml('<script>alert(1)</script>', 'german');
 
     assert.match(indexSource, /url\.pathname === '\/youglish'/);
     assert.match(routeSource, /renderYouglishHtml/);
-    assert.match(html, /youglish-widget/);
-    assert.match(html, /https:\/\/youglish\.com\/public\/emb\/widget\.js/);
-    assert.match(html, /data-lang="german"/);
+    assert.match(html, /إذا لم يعمل الفيديو داخل Telegram/);
+    assert.match(html, /فتح في YouGlish/);
     assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
     assert.match(html, /%3Cscript%3Ealert\(1\)%3C%2Fscript%3E/);
     assert.doesNotMatch(html, /telegram_id|Telegram ID|user_id|display_name|username/);
+    assert.doesNotMatch(html, /youglish-widget|widget\.js/);
 });
 
 test('YouGlish Telegram panel uses WebApp with fallback and returns to word details', () => {
@@ -593,8 +636,8 @@ test('YouGlish Telegram panel uses WebApp with fallback and returns to word deta
     assert.match(wranglerSource, /TELEGRAM_WEBAPP_URL = "https:\/\/deutschdrop\.aque7x\.workers\.dev\/youglish"/);
     assert.match(source, /ctx\.env\.TELEGRAM_WEBAPP_URL/);
     assert.match(source, /keyboard\.webApp/);
-    assert.match(source, /webAppUrl \?\? directUrl/);
-    assert.match(source, /word_detail_\$\{word\.word_id\}/);
+    assert.match(source, /buildYouglishDirectUrl/);
+    assert.match(source, /sideFlowBackCallback\(word\.word_id, returnContext\)/);
     assert.match(source, /🧹 إخفاء هذه الرسالة/);
 });
 

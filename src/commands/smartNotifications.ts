@@ -31,6 +31,7 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
             (word.example ? `\n\nمثال:\n${word.example}` : '') +
             `\n\nهل كنت تعرفها؟`,
             new InlineKeyboard()
+                .text('🔊 نطق', `tts:word:${word.word_id}:ctx:notification_answer`).row()
                 .text('✅ نعم عرفتها', `notif_known_${eventId}`)
                 .text('❌ لا نسيتها', `notif_forgot_${eventId}`).row()
                 .text('🏋️ تدريبها', 'train_quick')

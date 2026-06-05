@@ -126,6 +126,13 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
         await continueTraining(ctx);
     });
 
+    bot.callbackQuery(/^train:back:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return;
+        await showTrainingQuestion(ctx, user.user_id);
+    });
+
     bot.on('message:text', async (ctx, next) => {
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user || ctx.message.text.startsWith('/')) return next();
@@ -238,6 +245,10 @@ async function startReviewPlanTraining(ctx: BotContext, forcedPlanId?: number): 
     await startTraining(ctx, Math.min(plan.batch_size, Math.max(1, plan.total_words - plan.reviewed_words)), 'plan', plan.id);
 }
 
+export async function showCurrentTrainingQuestion(ctx: BotContext, userId: number): Promise<void> {
+    await showTrainingQuestion(ctx, userId);
+}
+
 async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<void> {
     const session = await getBotSession<TrainingSessionData>(ctx.db, userId, 'train');
     if (!session || session.data.currentIndex >= session.data.questions.length) {
@@ -258,6 +269,8 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
     const q = session.data.questions[session.data.currentIndex];
     const progress = `${session.data.currentIndex + 1}/${session.data.questions.length}`;
     const keyboard = new InlineKeyboard();
+    keyboard.text('🔊 نطق', `tts:word:${q.word_id}:ctx:training_session`)
+        .text('🎬 YouGlish', `youglish:${q.word_id}:ctx:training_session`).row();
     for (let i = 0; i < q.options.length; i++) {
         const opt = q.options[i];
         const isCorrect = normalizeAnswer(opt) === normalizeAnswer(q.answer);
@@ -342,6 +355,7 @@ async function handleTrainAnswer(ctx: BotContext, questionIndex: number, wordId:
             ctx,
             `❌ خطأ\n\nالصحيح: *${current.answer}*`,
             new InlineKeyboard()
+                .text('🔊 نطق الصحيح', `tts:word:${wordId}:ctx:training_session`).row()
                 .text('🤖 اشرح لي', 'train_explain').row()
                 .text('🏋️ أكمل التدريب', 'train_continue').row()
                 .text('🏠 الرئيسية', 'menu_main'),
@@ -410,6 +424,7 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
             `${prefix}\n\nجوابك: *${answerText.trim()}*\nالصحيح: *${current.answer}*` +
             (grade.feedback ? `\n\n${grade.feedback}` : ''),
             new InlineKeyboard()
+                .text('🔊 نطق الصحيح', `tts:word:${current.word_id}:ctx:training_session`).row()
                 .text('🤖 اشرح لي', 'train_explain').row()
                 .text('🏋️ أكمل التدريب', 'train_continue').row()
                 .text('🏠 الرئيسية', 'menu_main'),

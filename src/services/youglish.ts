@@ -17,8 +17,6 @@ export function renderYouglishHtml(wordInput: string, langInput: string | null =
     const word = sanitizeDisplayWord(wordInput);
     const lang = normalizeYouglishLang(langInput);
     const escapedWord = escapeHtml(word);
-    const escapedLang = escapeHtml(lang);
-    const encodedWord = encodeURIComponent(word);
     const directUrl = buildYouglishDirectUrl(word, lang);
 
     return `<!doctype html>
@@ -33,7 +31,7 @@ export function renderYouglishHtml(wordInput: string, langInput: string | null =
     main { max-width: 820px; margin: 0 auto; }
     h1 { font-size: 24px; margin: 0 0 10px; direction: ltr; text-align: left; }
     p { margin: 0 0 16px; color: #555; line-height: 1.5; }
-    .widget { overflow: hidden; border-radius: 8px; background: white; min-height: 260px; }
+    .notice { border-radius: 8px; background: white; padding: 16px; }
     .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
     button, a { border: 0; border-radius: 8px; padding: 11px 14px; font: inherit; text-decoration: none; cursor: pointer; }
     button { background: #1473e6; color: white; }
@@ -42,7 +40,7 @@ export function renderYouglishHtml(wordInput: string, langInput: string | null =
     @media (prefers-color-scheme: dark) {
       body { background: #111; color: #f4f4f4; }
       p, .policy { color: #c8c8c8; }
-      .widget { background: #1c1c1c; }
+      .notice { background: #1c1c1c; }
       a { background: #2b2b2b; color: #f4f4f4; }
     }
   </style>
@@ -52,23 +50,16 @@ export function renderYouglishHtml(wordInput: string, langInput: string | null =
   <main>
     <h1>🎬 ${escapedWord}</h1>
     <p>أمثلة نطق حقيقية من YouGlish German.</p>
-    <div class="widget">
-      <a id="yg-widget-0"
-         class="youglish-widget"
-         data-query="${encodedWord}"
-         data-lang="${escapedLang}"
-         data-components="8415"
-         data-bkg-color="theme_light"
-         rel="nofollow noopener"
-         href="${escapeHtml(directUrl)}">فتح YouGlish</a>
+    <div class="notice">
+      <p>إذا لم يعمل الفيديو داخل Telegram بسبب WebView أو مشغل YouTube، افتحه مباشرة في YouGlish.</p>
+      <p>هذه الصفحة لا تحمّل فيديوهات ولا تخزن بيانات مستخدم.</p>
     </div>
     <div class="actions">
       <button type="button" onclick="closeTelegramWebApp()">✅ خلصت</button>
       <a href="${escapeHtml(directUrl)}" target="_blank" rel="noopener">🔗 فتح في YouGlish</a>
     </div>
-    <p class="policy">يعمل هذا العرض عبر YouGlish Widget الرسمي داخل الصفحة فقط. لا يتم تخزين أي بيانات مستخدم.</p>
+    <p class="policy">يفتح الرابط الرسمي لـ YouGlish فقط. لا يتم تخزين أي بيانات مستخدم.</p>
   </main>
-  <script async src="https://youglish.com/public/emb/widget.js" charset="utf-8"></script>
   <script>
     function closeTelegramWebApp() {
       if (window.Telegram && window.Telegram.WebApp) {

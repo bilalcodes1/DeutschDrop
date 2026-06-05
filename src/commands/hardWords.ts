@@ -45,6 +45,7 @@ async function showHardWords(ctx: BotContext): Promise<void> {
     if (hardWords.length > 0) {
         keyboard.text('🔥 تدريب الكلمات الصعبة', 'train_hard').row();
         for (const word of hardWords.slice(0, 8)) {
+            keyboard.text(`🔊 ${word.german}`, `tts:word:${word.word_id}:ctx:hard_words`).row();
             keyboard.text(`إزالة: ${word.german}`, `hard_clear_${word.word_id}`).row();
         }
     }
