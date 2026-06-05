@@ -13,6 +13,7 @@ export interface WordAudioCacheRow {
     voice: string | null;
     model: string | null;
     format: string | null;
+    api_key_hash: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -53,12 +54,13 @@ export async function upsertWordAudioFileId(
         voice: string;
         model: string;
         format: string;
+        apiKeyHash?: string | null;
     }
 ): Promise<void> {
     await run(
         db,
-        `INSERT INTO word_audio_cache (user_id, word_id, text, provider, telegram_file_id, content_hash, language, voice, model, format)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO word_audio_cache (user_id, word_id, text, provider, telegram_file_id, content_hash, language, voice, model, format, api_key_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, word_id, text, provider) DO UPDATE SET
             telegram_file_id = excluded.telegram_file_id,
             content_hash = excluded.content_hash,
@@ -66,8 +68,9 @@ export async function upsertWordAudioFileId(
             voice = excluded.voice,
             model = excluded.model,
             format = excluded.format,
+            api_key_hash = excluded.api_key_hash,
             updated_at = datetime('now')`,
-        [input.userId, input.wordId, input.text, input.provider, input.telegramFileId, input.contentHash, input.language, input.voice, input.model, input.format]
+        [input.userId, input.wordId, input.text, input.provider, input.telegramFileId, input.contentHash, input.language, input.voice, input.model, input.format, input.apiKeyHash ?? null]
     );
 }
 
@@ -80,6 +83,39 @@ export async function countGeneratedAudioToday(db: D1Database, userId: number, p
         [userId, provider]
     );
     return row?.count ?? 0;
+}
+
+export async function countGeneratedAudioTodayByKeyHash(db: D1Database, provider: string, apiKeyHash: string): Promise<number> {
+    const row = await queryOne<{ count: number }>(
+        db,
+        `SELECT COUNT(*) AS count
+         FROM word_audio_cache
+         WHERE provider = ? AND api_key_hash = ? AND date(created_at) = date('now')`,
+        [provider, apiKeyHash]
+    );
+    return row?.count ?? 0;
+}
+
+export async function getGeneratedAudioUsageTodayByKeyHash(
+    db: D1Database,
+    provider: string,
+    apiKeyHashes: string[]
+): Promise<Record<string, number>> {
+    if (apiKeyHashes.length === 0) return {};
+    const placeholders = apiKeyHashes.map(() => '?').join(', ');
+    const result = await db.prepare(
+        `SELECT api_key_hash, COUNT(*) AS count
+         FROM word_audio_cache
+         WHERE provider = ?
+           AND api_key_hash IN (${placeholders})
+           AND date(created_at) = date('now')
+         GROUP BY api_key_hash`
+    ).bind(provider, ...apiKeyHashes).all<{ api_key_hash: string; count: number }>();
+
+    const usage: Record<string, number> = {};
+    for (const hash of apiKeyHashes) usage[hash] = 0;
+    for (const row of result.results ?? []) usage[row.api_key_hash] = row.count;
+    return usage;
 }
 
 export async function acquireTtsRequestLock(

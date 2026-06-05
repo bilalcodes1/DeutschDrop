@@ -1,6 +1,6 @@
 import type { Env } from '../../models';
 import { edgeTtsWorkerProvider } from './edgeTtsWorker';
-import type { TtsProvider, TtsProviderResult } from './types';
+import type { TtsProvider, TtsProviderContext, TtsProviderResult } from './types';
 import { voiceRssGermanProvider } from './voiceRssGerman';
 
 const PROVIDERS: Record<string, TtsProvider> = {
@@ -18,10 +18,10 @@ export function orderedTtsProviders(env: Env): TtsProvider[] {
     return names.map(name => PROVIDERS[name]).filter(Boolean);
 }
 
-export async function synthesizeGermanTts(env: Env, text: string): Promise<{ result: TtsProviderResult; attempts: TtsProviderResult[] }> {
+export async function synthesizeGermanTts(env: Env, text: string, context?: TtsProviderContext): Promise<{ result: TtsProviderResult; attempts: TtsProviderResult[] }> {
     const attempts: TtsProviderResult[] = [];
     for (const provider of orderedTtsProviders(env)) {
-        const result = await provider.synthesize(env, text);
+        const result = await provider.synthesize(env, text, context);
         attempts.push(result);
         if (result.ok) return { result, attempts };
     }

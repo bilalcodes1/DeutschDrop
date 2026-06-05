@@ -1,6 +1,7 @@
 import type { Env } from '../../models';
+import type { D1Database } from '@cloudflare/workers-types';
 
-export type TtsErrorType = 'SKIPPED_NO_KEY' | 'SKIPPED_NO_URL' | 'BAD_CONFIG' | 'BAD_RESPONSE' | 'NETWORK' | 'UNKNOWN';
+export type TtsErrorType = 'SKIPPED_NO_KEY' | 'SKIPPED_NO_URL' | 'BAD_CONFIG' | 'BAD_RESPONSE' | 'NETWORK' | 'DAILY_LIMIT' | 'UNKNOWN';
 
 export interface TtsProviderConfig {
     provider: string;
@@ -14,6 +15,7 @@ export interface TtsSuccess extends TtsProviderConfig {
     ok: true;
     audioBytes: Uint8Array;
     contentHash: string;
+    apiKeyHash?: string | null;
 }
 
 export interface TtsFailure {
@@ -26,6 +28,7 @@ export interface TtsFailure {
     errorType: TtsErrorType;
     status?: number;
     message?: string;
+    apiKeyHash?: string | null;
 }
 
 export type TtsProviderResult = TtsSuccess | TtsFailure;
@@ -33,7 +36,11 @@ export type TtsProviderResult = TtsSuccess | TtsFailure;
 export interface TtsProvider {
     name: string;
     config(env: Env): TtsProviderConfig;
-    synthesize(env: Env, text: string): Promise<TtsProviderResult>;
+    synthesize(env: Env, text: string, context?: TtsProviderContext): Promise<TtsProviderResult>;
+}
+
+export interface TtsProviderContext {
+    db?: D1Database;
 }
 
 export function normalizeTtsText(value: string): string {

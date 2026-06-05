@@ -15,6 +15,8 @@ export interface Env {
     EDGE_TTS_VOICE?: string;
     EDGE_TTS_WORKER_URL?: string;
     VOICERSS_API_KEY?: string;
+    VOICERSS_API_KEYS?: string;
+    VOICERSS_DISABLED_KEY_HASHES?: string;
     GEMINI_API_KEYS?: string;
     KIMI_API_KEYS?: string;
     GROK_API_KEYS?: string;

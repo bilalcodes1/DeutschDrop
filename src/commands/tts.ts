@@ -4,7 +4,6 @@ import { getUserByTelegramId } from '../repositories/userRepository';
 import { getWordById } from '../repositories/wordRepository';
 import {
     acquireTtsRequestLock,
-    countGeneratedAudioToday,
     getCachedWordAudio,
     releaseTtsRequestLock,
     upsertWordAudioFileId,
@@ -13,8 +12,7 @@ import { isAdminTelegramId } from '../services/adminAccess';
 import { normalizeReturnContext, type ReturnContext } from '../services/returnContext';
 import { orderedTtsProviders, synthesizeGermanTts } from '../services/tts/ttsRouter';
 import { normalizeTtsText, safeTtsMessage, type TtsProviderResult } from '../services/tts/types';
-
-const TTS_DAILY_GENERATION_LIMIT = 30;
+import { firstDebugVoiceRssKeyStates, getVoiceRssKeyStates, VOICE_RSS_DAILY_LIMIT_PER_KEY, VOICE_RSS_GERMAN_PROVIDER, VOICE_RSS_GERMAN_VOICE } from '../services/tts/voiceRssGerman';
 
 export function registerTtsCommand(bot: Bot<BotContext>): void {
     bot.command('tts_debug', async (ctx) => {
@@ -88,17 +86,10 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
             }
         }
 
-        const generatedToday = await countGeneratedAudioToday(ctx.db, user.user_id, 'voiceRssGerman') +
-            await countGeneratedAudioToday(ctx.db, user.user_id, 'edgeTtsWorker');
-        if (generatedToday >= TTS_DAILY_GENERATION_LIMIT) {
-            await showTtsUnavailable(ctx);
-            return;
-        }
-
-        const { result, attempts } = await synthesizeGermanTts(ctx.env, germanText);
+        const { result, attempts } = await synthesizeGermanTts(ctx.env, germanText, { db: ctx.db });
         if (!result.ok) {
             logTtsAttempts(user.user_id, word.word_id, attempts);
-            await showTtsUnavailable(ctx);
+            await showTtsUnavailable(ctx, hasDailyLimitFailure(attempts));
             return;
         }
         const message = await ctx.replyWithAudio(new InputFile(result.audioBytes, `${safeAudioFilename(germanText)}.mp3`), {
@@ -119,6 +110,7 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
                 voice: result.voice,
                 model: result.model,
                 format: result.format,
+                apiKeyHash: result.apiKeyHash,
             });
         }
     } catch (error) {
@@ -137,11 +129,6 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
 
 async function showTtsDebug(ctx: BotContext): Promise<void> {
     const providers = orderedTtsProviders(ctx.env);
-    const rows = await Promise.all(providers.map(async (provider) => {
-        const config = provider.config(ctx.env);
-        const result = await provider.synthesize(ctx.env, 'Hallo');
-        return { config, result };
-    }));
     const cache = await ctx.db.prepare(
         `SELECT
             COUNT(*) AS total,
@@ -150,21 +137,27 @@ async function showTtsDebug(ctx: BotContext): Promise<void> {
          FROM word_audio_cache`
     ).first<{ total: number; voice_rss: number; cloudflare_stale: number }>();
 
-    const voice = rows.find(row => row.config.provider === 'voiceRssGerman');
-    const edge = rows.find(row => row.config.provider === 'edgeTtsWorker');
+    const providerConfigs = providers.map(provider => provider.config(ctx.env));
+    const voice = providerConfigs.find(config => config.provider === VOICE_RSS_GERMAN_PROVIDER);
+    const edge = providerConfigs.find(config => config.provider === 'edgeTtsWorker');
+    const voiceRssStates = await getVoiceRssKeyStates(ctx.env, { db: ctx.db });
+    const visibleStates = firstDebugVoiceRssKeyStates(voiceRssStates);
+    const estimatedDailyTotal = voiceRssStates.length * VOICE_RSS_DAILY_LIMIT_PER_KEY;
     await ctx.reply(
         `🔊 TTS Debug\n\n` +
         `Provider order:\n${providers.map(provider => provider.name).join(',') || '-'}\n\n` +
         `Voice RSS:\n` +
-        `key: ${ctx.env.VOICERSS_API_KEY ? 'configured' : 'missing'}\n` +
-        `language: ${voice?.config.language ?? 'de-de'}\n` +
-        `format: ${voice?.config.format ?? 'mp3'}\n` +
-        `status: ${statusLabel(voice?.result)}\n` +
-        `last_error: ${errorLabel(voice?.result)}\n\n` +
+        `keys configured: ${voiceRssStates.length}\n` +
+        `daily limit per key: ${VOICE_RSS_DAILY_LIMIT_PER_KEY}\n` +
+        `estimated total daily generation: ${estimatedDailyTotal}\n` +
+        `voice: ${voice?.voice ?? VOICE_RSS_GERMAN_VOICE}\n` +
+        `language: ${voice?.language ?? 'de-de'}\n` +
+        `format: ${voice?.format ?? 'mp3'}\n\n` +
+        `Keys usage today:\n` +
+        `${visibleStates.length > 0 ? visibleStates.map(state => `#${state.index}: ${state.usedToday}/${state.limit} ${state.status}`).join('\n') : '-'}\n\n` +
         `Edge TTS Worker:\n` +
         `url: ${ctx.env.EDGE_TTS_WORKER_URL ? 'configured' : 'missing'}\n` +
-        `voice: ${edge?.config.voice ?? ctx.env.EDGE_TTS_VOICE ?? 'de-DE-KatjaNeural'}\n` +
-        `status: ${statusLabel(edge?.result)}\n\n` +
+        `voice: ${edge?.voice ?? ctx.env.EDGE_TTS_VOICE ?? 'de-DE-KatjaNeural'}\n\n` +
         `Cache:\n` +
         `total records: ${cache?.total ?? 0}\n` +
         `voiceRss records: ${cache?.voice_rss ?? 0}\n` +
@@ -173,9 +166,12 @@ async function showTtsDebug(ctx: BotContext): Promise<void> {
 }
 
 async function runTtsTest(ctx: BotContext): Promise<void> {
-    const { result, attempts } = await synthesizeGermanTts(ctx.env, 'Hallo');
+    const { result, attempts } = await synthesizeGermanTts(ctx.env, 'Hallo', { db: ctx.db });
     if (!result.ok) {
-        await ctx.reply(`النطق الألماني غير متاح حالياً.\nreason: ${errorLabel(result)}`);
+        const message = hasDailyLimitFailure(attempts)
+            ? 'النطق الألماني وصل حد الاستخدام اليومي حالياً. جرّب لاحقاً.'
+            : `النطق الألماني غير متاح حالياً.\nreason: ${errorLabel(result)}`;
+        await ctx.reply(message);
         logTtsAttempts(undefined, undefined, attempts);
         return;
     }
@@ -201,21 +197,20 @@ function logTtsAttempts(userId: number | undefined, wordId: number | undefined, 
     }
 }
 
-function statusLabel(result: TtsProviderResult | undefined): string {
-    if (!result) return 'SKIPPED';
-    if (result.ok) return 'OK';
-    return result.errorType;
-}
-
 function errorLabel(result: TtsProviderResult | undefined): string {
     if (!result || result.ok) return '-';
     return `${result.errorType}${result.status ? ` status=${result.status}` : ''}${result.message ? ` ${safeTtsMessage(result.message)}` : ''}`;
 }
 
-async function showTtsUnavailable(ctx: BotContext): Promise<void> {
-    await ctx.answerCallbackQuery({ text: 'النطق الألماني غير متاح حالياً.', show_alert: true }).catch(async () => {
-        await ctx.reply('النطق الألماني غير متاح حالياً.').catch(() => {});
+async function showTtsUnavailable(ctx: BotContext, dailyLimit = false): Promise<void> {
+    const message = dailyLimit ? 'النطق الألماني وصل حد الاستخدام اليومي حالياً. جرّب لاحقاً.' : 'النطق الألماني غير متاح حالياً.';
+    await ctx.answerCallbackQuery({ text: message, show_alert: true }).catch(async () => {
+        await ctx.reply(message).catch(() => {});
     });
+}
+
+function hasDailyLimitFailure(attempts: TtsProviderResult[]): boolean {
+    return attempts.some(attempt => !attempt.ok && attempt.provider === VOICE_RSS_GERMAN_PROVIDER && attempt.errorType === 'DAILY_LIMIT');
 }
 
 function safeAudioFilename(value: string): string {

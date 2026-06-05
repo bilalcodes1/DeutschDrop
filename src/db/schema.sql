@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS word_audio_cache (
     voice TEXT,
     model TEXT,
     format TEXT,
+    api_key_hash TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(user_id, word_id, text, provider),
@@ -498,6 +499,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_sessions_expires_at ON bot_sessions(expires_a
 CREATE INDEX IF NOT EXISTS idx_word_audio_cache_lookup ON word_audio_cache(user_id, word_id, provider, content_hash);
 CREATE INDEX IF NOT EXISTS idx_word_audio_cache_user_created ON word_audio_cache(user_id, provider, created_at);
 CREATE INDEX IF NOT EXISTS idx_word_audio_cache_provider_language_voice ON word_audio_cache(provider, language, voice, format);
+CREATE INDEX IF NOT EXISTS idx_word_audio_cache_provider_key_created ON word_audio_cache(provider, api_key_hash, created_at);
 CREATE INDEX IF NOT EXISTS idx_tts_request_locks_expires ON tts_request_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_status ON async_challenges(status);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_users ON async_challenges(creator_user_id, opponent_user_id);

@@ -579,7 +579,9 @@ test('Voice RSS German is the primary TTS path with Edge Worker fallback', () =>
     assert.match(voiceRssSource, /https:\/\/api\.voicerss\.org\//);
     assert.match(voiceRssSource, /url\.searchParams\.set\('hl', language\)/);
     assert.match(voiceRssSource, /url\.searchParams\.set\('src', text\)/);
+    assert.match(voiceRssSource, /url\.searchParams\.set\('v', voice\)/);
     assert.match(voiceRssSource, /url\.searchParams\.set\('c', 'mp3'\)/);
+    assert.match(voiceRssSource, /VOICE_RSS_GERMAN_VOICE = 'Jonas'/);
     assert.match(voiceRssSource, /SKIPPED_NO_KEY/);
     assert.match(edgeWorkerSource, /EDGE_TTS_WORKER_URL/);
     assert.match(edgeWorkerSource, /\/api\/tts/);
@@ -590,10 +592,12 @@ test('Voice RSS German is the primary TTS path with Edge Worker fallback', () =>
     assert.match(commandSource, /acquireTtsRequestLock/);
     assert.match(commandSource, /releaseTtsRequestLock/);
     assert.match(commandSource, /synthesizeGermanTts/);
-    assert.match(commandSource, /TTS_DAILY_GENERATION_LIMIT = 30/);
+    assert.match(commandSource, /VOICE_RSS_DAILY_LIMIT_PER_KEY/);
+    assert.match(commandSource, /apiKeyHash: result\.apiKeyHash/);
     assert.match(repoSource, /telegram_file_id IS NOT NULL/);
     assert.match(repoSource, /language = \? AND voice = \? AND model = \?/);
     assert.match(repoSource, /format = \?/);
+    assert.match(repoSource, /api_key_hash/);
     assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS word_audio_cache/);
     assert.match(cacheMigrationSource, /ALTER TABLE word_audio_cache ADD COLUMN language/);
     assert.match(cacheMigrationSource, /CREATE TABLE IF NOT EXISTS tts_request_locks/);
@@ -611,12 +615,64 @@ test('TTS debug and test are admin-only and hide secrets', () => {
     assert.match(commandSource, /bot\.command\('tts_debug'/);
     assert.match(commandSource, /bot\.command\('tts_test'/);
     assert.match(commandSource, /isAdminTelegramId\(ctx\.env, ctx\.from\?\.id\)/);
-    assert.match(commandSource, /key: \$\{ctx\.env\.VOICERSS_API_KEY \? 'configured' : 'missing'\}/);
-    assert.doesNotMatch(commandSource, /VOICERSS_API_KEY\}/);
+    assert.match(commandSource, /keys configured: \$\{voiceRssStates\.length\}/);
+    assert.match(commandSource, /estimated total daily generation: \$\{estimatedDailyTotal\}/);
+    assert.match(commandSource, /Keys usage today:/);
+    assert.doesNotMatch(commandSource, /VOICERSS_API_KEYS?\}/);
+    assert.doesNotMatch(commandSource, /provider\.synthesize\(ctx\.env, 'Hallo'\)/);
     assert.match(voiceRssSource, /isGermanLanguage\(config\.language\)/);
+    assert.match(voiceRssSource, /parseVoiceRssKeys/);
+    assert.match(voiceRssSource, /VOICERSS_API_KEYS \|\| env\.VOICERSS_API_KEY/);
+    assert.match(voiceRssSource, /VOICERSS_DISABLED_KEY_HASHES/);
     assert.match(edgeWorkerSource, /isGermanVoice\(config\.voice\)/);
     assert.match(edgeWorkerSource, /ALLOWED_EDGE_WORKER_VOICES\.has\(config\.voice\)/);
-    assert.doesNotMatch(`${voiceRssSource}\n${edgeWorkerSource}`, /en-US|en-GB|English/);
+    assert.doesNotMatch(`${voiceRssSource}\n${edgeWorkerSource}`, /Hanna|Lina|en-US|en-GB|English/);
+});
+
+test('VoiceRSS multi-key rotation supports seven keys safely', () => {
+    const voiceRssSource = fs.readFileSync(new URL('../src/services/tts/voiceRssGerman.ts', import.meta.url), 'utf8');
+    const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
+
+    assert.match(voiceRssSource, /VOICE_RSS_DAILY_LIMIT_PER_KEY = 350/);
+    assert.match(voiceRssSource, /DEBUG_VISIBLE_KEY_COUNT = 7/);
+    assert.match(voiceRssSource, /env\.VOICERSS_API_KEYS \|\| env\.VOICERSS_API_KEY/);
+    assert.match(voiceRssSource, /\.split\(','.*\)/s);
+    assert.match(voiceRssSource, /hashVoiceRssKey/);
+    assert.match(voiceRssSource, /getGeneratedAudioUsageTodayByKeyHash/);
+    assert.match(voiceRssSource, /usedToday < VOICE_RSS_DAILY_LIMIT_PER_KEY/);
+    assert.match(voiceRssSource, /\.sort\(\(a, b\) => a\.usedToday - b\.usedToday \|\| a\.index - b\.index\)/);
+    assert.match(voiceRssSource, /url\.searchParams\.set\('v', voice\)/);
+    assert.match(commandSource, /estimatedDailyTotal = voiceRssStates\.length \* VOICE_RSS_DAILY_LIMIT_PER_KEY/);
+    assert.match(commandSource, /keys configured: \$\{voiceRssStates\.length\}/);
+    assert.match(commandSource, /#\$\{state\.index\}: \$\{state\.usedToday\}\/\$\{state\.limit\} \$\{state\.status\}/);
+    assert.doesNotMatch(voiceRssSource, /Hanna|Lina/);
+});
+
+test('VoiceRSS rotation skips disabled and exhausted keys', () => {
+    const voiceRssSource = fs.readFileSync(new URL('../src/services/tts/voiceRssGerman.ts', import.meta.url), 'utf8');
+
+    assert.match(voiceRssSource, /VOICERSS_DISABLED_KEY_HASHES/);
+    assert.match(voiceRssSource, /disabled\.has\(keyHash\)/);
+    assert.match(voiceRssSource, /status: disabled\.has\(keyHash\) \? 'DISABLED' : usedToday >= VOICE_RSS_DAILY_LIMIT_PER_KEY \? 'LIMIT' : 'OK'/);
+    assert.match(voiceRssSource, /\.filter\(state => !state\.disabled && state\.usedToday < VOICE_RSS_DAILY_LIMIT_PER_KEY\)/);
+    assert.match(voiceRssSource, /errorType: 'DAILY_LIMIT'/);
+});
+
+test('VoiceRSS debug and cache rules do not leak keys or count cached playback', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
+    const voiceRssSource = fs.readFileSync(new URL('../src/services/tts/voiceRssGerman.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/wordAudioCacheRepository.ts', import.meta.url), 'utf8');
+    const keyHashMigration = fs.readFileSync(new URL('../src/db/migrations/0023_voicerss_key_rotation.sql', import.meta.url), 'utf8');
+
+    assert.match(commandSource, /replyWithAudio\(cached\.telegram_file_id/);
+    assert.ok(commandSource.indexOf('getCachedWordAudio') < commandSource.indexOf('synthesizeGermanTts'));
+    assert.match(commandSource, /النطق الألماني وصل حد الاستخدام اليومي حالياً\. جرّب لاحقاً\./);
+    assert.match(voiceRssSource, /hashVoiceRssKey/);
+    assert.match(voiceRssSource, /contentHash\(`voiceRssGerman:\$\{apiKey\}`\)/);
+    assert.match(repoSource, /api_key_hash = \?/);
+    assert.match(keyHashMigration, /ALTER TABLE word_audio_cache ADD COLUMN api_key_hash TEXT/);
+    assert.doesNotMatch(commandSource, /VOICERSS_API_KEYS?\s*\}/);
+    assert.doesNotMatch(`${commandSource}\n${voiceRssSource}`, /console\.warn\([^)]*VOICERSS_API_KEYS?|console\.log\([^)]*VOICERSS_API_KEYS?/);
 });
 
 test('learn train notifications and hard words expose TTS without counting answers', () => {
