@@ -1,9 +1,9 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
-import { getUserByTelegramId, getUserSettings, updateUserSettings } from '../repositories/userRepository';
+import { getUserByTelegramId, getUserSettings, markOnboardingSeen, updateUserSettings } from '../repositories/userRepository';
 import { countWordsByUser } from '../repositories/wordRepository';
 import { createDailyReviewPlan } from '../repositories/reviewPlanRepository';
-import { levelSelectionKeyboard, mainMenuKeyboard } from './menu';
+import { levelSelectionKeyboard, mainMenuKeyboard, showOnboarding } from './menu';
 import { replaceWithText } from './wordPanel';
 
 export function registerSettingsCommand(bot: Bot<BotContext>): void {
@@ -116,6 +116,11 @@ export function registerSettingsCommand(bot: Bot<BotContext>): void {
         if (!user) return;
         await updateUserSettings(ctx.db, user.user_id, { german_level: ctx.match[1] as 'A1' | 'A2' | 'B1' });
         await ctx.answerCallbackQuery('تم حفظ المستوى');
+        if (!user.onboarding_seen) {
+            await markOnboardingSeen(ctx.db, user.user_id);
+            await showOnboarding(ctx);
+            return;
+        }
         await replaceWithText(ctx, `تم حفظ مستواك: ${ctx.match[1]} ✅`, mainMenuKeyboard(), 'Markdown');
     });
 

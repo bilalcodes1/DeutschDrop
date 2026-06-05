@@ -95,6 +95,7 @@ async function ensureTelegramUser(ctx: BotContext) {
         level: 1,
         streak: 0,
         is_banned: 0,
+        onboarding_seen: 0,
         identity: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

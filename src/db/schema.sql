@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
     is_deleted INTEGER DEFAULT 0 CHECK (is_deleted IN (0, 1)),
     deleted_at DATETIME,
     last_active_at DATETIME,
+    onboarding_seen INTEGER DEFAULT 0 CHECK (onboarding_seen IN (0, 1)),
     identity TEXT CHECK (identity IN ('bilal', 'malak')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

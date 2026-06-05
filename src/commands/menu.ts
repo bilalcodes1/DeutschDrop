@@ -47,6 +47,11 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
         await replaceWithText(ctx, aboutProjectText(), aboutProjectKeyboard());
     });
 
+    bot.callbackQuery('menu_help', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await replaceWithText(ctx, helpText(), helpKeyboard());
+    });
+
     // Back to main menu
     bot.callbackQuery('menu_main', async (ctx) => {
         await ctx.answerCallbackQuery();
@@ -135,6 +140,7 @@ export function moreMenuKeyboard(isAdmin: boolean = false): InlineKeyboard {
         .text('🔔 الإشعارات', 'menu_notifications').row()
         .text('📊 الإحصائيات', 'menu_stats')
         .text('📚 المصادر', 'menu_sources').row()
+        .text('❓ طريقة الاستخدام', 'menu_help').row()
         .text('💙 دعم المشروع', 'menu_support')
         .text('ℹ️ عن المشروع', 'menu_about').row();
 
@@ -188,6 +194,78 @@ function aboutProjectKeyboard(): InlineKeyboard {
         .text('🏠 الرئيسية', 'menu_main');
 }
 
+function onboardingText(): string {
+    return `👋 أهلاً بك في DeutschDrop
+
+حتى تبدأ بسرعة:
+
+1. أضف أول 5 كلمات.
+2. جرّب 📚 راجع الآن.
+3. جرّب 🏋️ تدريب مختلط.
+4. فعّل 🔔 الإشعارات حتى لا تنسى الكلمات.
+5. استخدم 🔊 النطق لتثبيت الصوت.
+
+DeutschDrop يجمع الحفظ، المراجعة، النطق، الكتابة، والتدريب في مكان واحد داخل تيليگرام.`;
+}
+
+function onboardingKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('➕ أضف أول كلمة', 'add_word')
+        .text('📤 رفع CSV', 'upload_csv').row()
+        .text('📚 راجع الآن', 'menu_learn')
+        .text('🏋️ تدريب', 'menu_train').row()
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+function helpText(): string {
+    return `❓ طريقة استخدام DeutschDrop
+
+1. إضافة الكلمات
+يمكنك إضافة كلمة يدوياً:
+Haus = بيت
+
+أو رفع ملف CSV بصيغة:
+German,Arabic,Example
+
+2. المراجعة
+استخدم 📚 راجع الآن لمراجعة الكلمات حسب التكرار الذكي.
+
+3. التدريب
+استخدم 🏋️ تدريب لاختبار نفسك:
+
+* مختلط
+* كتابة
+* حروف ناقصة
+* ألماني → عربي
+* عربي → ألماني
+* الكلمات التي أخطأت بها
+* الكلمات الصعبة
+
+4. النطق
+اضغط 🔊 نطق لسماع الكلمة بالألماني داخل البوت.
+
+5. الإشعارات
+فعّل 🔔 الإشعارات حتى تصلك كلمات للمراجعة بدل تذكير عام.
+
+6. الكلمات الصعبة
+إذا أخطأت بكلمة أكثر من مرة، تدخل في تدريب خاص حتى تثبت.
+
+7. الدعم
+إذا أردت دعم المشروع، افتح 💙 دعم المشروع.`;
+}
+
+function helpKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('➕ إضافة كلمة', 'add_word')
+        .text('📤 رفع CSV', 'upload_csv').row()
+        .text('📚 راجع الآن', 'menu_learn')
+        .text('🏋️ تدريب', 'menu_train').row()
+        .text('🔔 الإشعارات', 'menu_notifications')
+        .text('💙 دعم المشروع', 'menu_support').row()
+        .text('⬅️ رجوع', 'menu_more')
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
 export function levelSelectionKeyboard(backCallback: string = 'menu_main'): InlineKeyboard {
     return new InlineKeyboard()
         .text('A1', 'level_set_A1')
@@ -199,6 +277,10 @@ export function levelSelectionKeyboard(backCallback: string = 'menu_main'): Inli
 
 export async function showLevelSelection(ctx: BotContext, intro: string = 'حدد مستواك:'): Promise<void> {
     await replaceWithText(ctx, `🎚 *${intro}*\n\nA1\nA2\nB1`, levelSelectionKeyboard(), 'Markdown');
+}
+
+export async function showOnboarding(ctx: BotContext): Promise<void> {
+    await replaceWithText(ctx, onboardingText(), onboardingKeyboard());
 }
 
 function trainMenuText(): string {

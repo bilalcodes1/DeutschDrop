@@ -100,6 +100,10 @@ export async function renameUser(
     await completeUserRegistration(db, userId, displayName);
 }
 
+export async function markOnboardingSeen(db: D1Database, userId: number): Promise<void> {
+    await run(db, 'UPDATE users SET onboarding_seen = 1, updated_at = datetime("now") WHERE user_id = ?', [userId]);
+}
+
 export function isRegisteredUser(user: User | null): user is User {
     return Boolean(user?.display_name?.trim());
 }

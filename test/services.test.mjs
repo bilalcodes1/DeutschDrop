@@ -254,6 +254,77 @@ test('about project page introduces developer and navigation', () => {
     assert.match(source, /\.text\('🏠 الرئيسية', 'menu_main'\)/);
 });
 
+test('onboarding appears after first level selection and only once', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const settingsSource = fs.readFileSync(new URL('../src/commands/settings.ts', import.meta.url), 'utf8');
+    const userRepoSource = fs.readFileSync(new URL('../src/repositories/userRepository.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0024_onboarding_help_admin_health.sql', import.meta.url), 'utf8');
+
+    assert.match(menuSource, /export async function showOnboarding/);
+    for (const label of ['➕ أضف أول كلمة', '📤 رفع CSV', '📚 راجع الآن', '🏋️ تدريب', '🏠 الرئيسية']) {
+        assert.match(menuSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(settingsSource, /if \(!user\.onboarding_seen\)/);
+    assert.match(settingsSource, /markOnboardingSeen\(ctx\.db, user\.user_id\)/);
+    assert.match(settingsSource, /await showOnboarding\(ctx\)/);
+    assert.match(userRepoSource, /export async function markOnboardingSeen/);
+    assert.match(migrationSource, /ALTER TABLE users ADD COLUMN onboarding_seen INTEGER DEFAULT 0/);
+    assert.match(migrationSource, /UPDATE users[\s\S]*german_level IS NOT NULL/);
+});
+
+test('help page is reachable from more menu with navigation buttons', () => {
+    const source = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const helpBlock = source.slice(source.indexOf("bot.callbackQuery('menu_help'"), source.indexOf("// Back to main menu"));
+
+    assert.match(source, /❓ طريقة الاستخدام/);
+    assert.match(source, /bot\.callbackQuery\('menu_help'/);
+    assert.match(helpBlock, /await ctx\.answerCallbackQuery\(\)/);
+    assert.match(source, /Haus = بيت/);
+    assert.match(source, /German,Arabic,Example/);
+    for (const callback of ['add_word', 'upload_csv', 'menu_learn', 'menu_train', 'menu_notifications', 'menu_support', 'menu_more', 'menu_main']) {
+        assert.match(source, new RegExp(callback));
+    }
+});
+
+test('admin health is admin-only and shows safe system sections', () => {
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+
+    assert.match(adminSource, /bot\.command\('admin_health'/);
+    assert.match(adminSource, /bot\.callbackQuery\('admin_health'/);
+    assert.match(adminSource, /await ctx\.answerCallbackQuery\(\)\.catch/);
+    assert.match(adminSource, /if \(!await requireAdmin\(ctx\)\) return/);
+    assert.match(adminSource, /🩺 صحة DeutschDrop/);
+    for (const section of ['المستخدمون', 'الكلمات', 'التدريب والمراجعة', 'الإشعارات', 'TTS', 'AI', 'Database', 'Cron']) {
+        assert.match(adminSource, new RegExp(section));
+    }
+    for (const label of ['🔄 تحديث', '🤖 AI Debug', '🔊 TTS Debug', '🧪 DB Check', '🏠 الرئيسية']) {
+        assert.match(adminSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(adminSource, /safeCount/);
+    assert.match(adminSource, /غير متوفر/);
+    assert.doesNotMatch(adminSource, /GEMINI_API_KEYS|VOICERSS_API_KEYS|GROK_API_KEYS|MISTRAL_API_KEYS|OPENROUTER_API_KEYS/);
+});
+
+test('core fallback errors keep users out of dead ends', () => {
+    const wordPanelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const ttsSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
+    const aiSource = fs.readFileSync(new URL('../src/commands/aiCoach.ts', import.meta.url), 'utf8');
+
+    assert.match(wordPanelSource, /ما قدرت أفتح الكلمة حالياً/);
+    assert.match(wordPanelSource, /قد تكون محذوفة أو غير متاحة/);
+    assert.match(wordPanelSource, /wordOpenErrorKeyboard/);
+    assert.match(wordPanelSource, /📂 كلماتي/);
+    assert.match(addWordSource, /تعذر تحميل الكلمات حالياً/);
+    assert.match(addWordSource, /🔄 إعادة المحاولة/);
+    assert.match(trainSource, /تعذر بدء التدريب حالياً/);
+    assert.match(trainSource, /تأكد أن عندك كلمات كافية/);
+    assert.match(trainSource, /trainingStartErrorKeyboard/);
+    assert.match(ttsSource, /answerCallbackQuery\(\{ text: message, show_alert: true \}/);
+    assert.match(aiSource, /الذكاء الاصطناعي غير متاح حالياً|AI_ERROR_MESSAGES/);
+});
+
 test('word list uses D1 pagination and exposes page controls', () => {
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
     const repositorySource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');

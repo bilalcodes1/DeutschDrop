@@ -53,6 +53,7 @@ export interface User {
     is_deleted?: number;
     deleted_at?: string | null;
     last_active_at?: string | null;
+    onboarding_seen?: number;
     identity: 'bilal' | 'malak' | null;
     created_at: string;
     updated_at: string | null;

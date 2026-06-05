@@ -9,13 +9,13 @@ import { buildYouglishDirectUrl } from '../services/youglish';
 export async function showWordDetailPanel(ctx: BotContext, wordId: number, notice?: string, backCallback = 'list_words'): Promise<void> {
     const word = await getWordById(ctx.db, wordId);
     if (!word) {
-        await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة.', navigationKeyboard(backCallback));
+        await replaceWithText(ctx, 'ما قدرت أفتح الكلمة حالياً.\nقد تكون محذوفة أو غير متاحة.', wordOpenErrorKeyboard());
         return;
     }
 
     const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
     if (user && word.added_by !== user.user_id) {
-        await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة في بنك كلماتك.', navigationKeyboard(backCallback));
+        await replaceWithText(ctx, 'ما قدرت أفتح الكلمة حالياً.\nقد تكون محذوفة أو غير متاحة.', wordOpenErrorKeyboard());
         return;
     }
 
@@ -56,6 +56,12 @@ export async function replaceWithText(
 export function navigationKeyboard(backCallback: string): InlineKeyboard {
     return new InlineKeyboard()
         .text('⬅️ رجوع', backCallback)
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+function wordOpenErrorKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('📂 كلماتي', 'list_words')
         .text('🏠 الرئيسية', 'menu_main');
 }
 

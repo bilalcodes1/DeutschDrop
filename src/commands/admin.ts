@@ -13,6 +13,7 @@ import { deleteAllWordsForUser } from '../repositories/wordRepository';
 import { countAdminUsers as countUsersForAdmin, getAdminUserDetail, getAdminUserList, getUserByTelegramId, logAdminAction, resetUserStreak, resetUserXp, setUserBanned, softDeleteUser } from '../repositories/userRepository';
 import { isAdminTelegramId } from '../services/adminAccess';
 import { sendTelegramMessage } from '../services/notifications';
+import { parseVoiceRssKeys, VOICE_RSS_DAILY_LIMIT_PER_KEY, VOICE_RSS_GERMAN_PROVIDER, VOICE_RSS_GERMAN_VOICE } from '../services/tts/voiceRssGerman';
 import { replaceWithText } from './wordPanel';
 
 interface BroadcastSession {
@@ -32,6 +33,13 @@ interface AdminPrivateMessageSession {
 }
 
 const USERS_PAGE_SIZE = 10;
+const TTS_STALE_CACHE_PREDICATE = `provider = 'cloudflareTts'
+    OR provider IS NULL
+    OR language IS NULL
+    OR voice IS NULL
+    OR provider != '${VOICE_RSS_GERMAN_PROVIDER}'
+    OR language != 'de-de'
+    OR voice != '${VOICE_RSS_GERMAN_VOICE}'`;
 
 export function registerAdminCommand(bot: Bot<BotContext>): void {
     bot.command('admin', async (ctx) => {
@@ -52,6 +60,11 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
     bot.command('admin_word_stats', async (ctx) => {
         if (!await requireAdmin(ctx)) return;
         await showAdminWordStats(ctx);
+    });
+
+    bot.command('admin_health', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await showAdminHealth(ctx);
     });
 
     bot.command('users', async (ctx) => {
@@ -94,6 +107,24 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery('admin_db_check', async (ctx) => {
         if (!await requireAdmin(ctx)) return;
         await showAdminDbCheck(ctx);
+    });
+
+    bot.callbackQuery('admin_health', async (ctx) => {
+        await ctx.answerCallbackQuery().catch(() => {});
+        if (!await requireAdmin(ctx)) return;
+        await showAdminHealth(ctx);
+    });
+
+    bot.callbackQuery('ai_debug_info', async (ctx) => {
+        await ctx.answerCallbackQuery().catch(() => {});
+        if (!await requireAdmin(ctx)) return;
+        await replaceWithText(ctx, '🤖 AI Debug\n\nاستخدم الأمر /ai_debug لعرض فحص مزودي الذكاء الصناعي بدون طباعة مفاتيح.', adminHealthKeyboard());
+    });
+
+    bot.callbackQuery('tts_debug_info', async (ctx) => {
+        await ctx.answerCallbackQuery().catch(() => {});
+        if (!await requireAdmin(ctx)) return;
+        await replaceWithText(ctx, '🔊 TTS Debug\n\nاستخدم الأمر /tts_debug لعرض حالة VoiceRSS والكاش بدون طباعة مفاتيح.', adminHealthKeyboard());
     });
 
     bot.callbackQuery(/^admin_users_(\d+)$/, async (ctx) => {
@@ -266,10 +297,103 @@ function adminPanelKeyboard(): InlineKeyboard {
         .text('📢 إرسال تبليغ', 'admin_broadcast_start').row()
         .text('📌 تثبيت رسالة داخل البوت', 'admin_announcement_start').row()
         .text('📚 إدارة المصادر', 'admin_sources').row()
+        .text('🩺 صحة البوت', 'admin_health')
         .text('🛠 فحص قاعدة البيانات', 'admin_db_check').row()
         .text('💙 طلبات الدعم', 'admin_support_pending_0')
         .text('🚫 المحظورون', 'admin_banned').row()
         .text('🏠 الرئيسية', 'menu_main');
+}
+
+async function showAdminHealth(ctx: BotContext): Promise<void> {
+    const voiceRssKeys = parseVoiceRssKeys(ctx.env);
+    const usersTotal = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM users WHERE display_name IS NOT NULL AND COALESCE(is_deleted, 0) = 0');
+    const users24h = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM users WHERE display_name IS NOT NULL AND COALESCE(is_deleted, 0) = 0 AND last_active_at >= datetime("now", "-1 day")');
+    const users7d = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM users WHERE display_name IS NOT NULL AND COALESCE(is_deleted, 0) = 0 AND last_active_at >= datetime("now", "-7 days")');
+    const banned = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM users WHERE COALESCE(is_banned, 0) = 1 AND COALESCE(is_deleted, 0) = 0');
+    const wordsTotal = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM words');
+    const hardWords = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM word_learning_stats WHERE COALESCE(is_hard, 0) = 1');
+    const focusWords = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM word_learning_stats WHERE COALESCE(difficulty_score, 0) >= 3 OR COALESCE(wrong_count, 0) >= 2');
+    const trainSessions = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM bot_sessions WHERE type = "train" AND date(created_at) = date("now")');
+    const correctToday = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM reviews WHERE is_correct = 1 AND date(reviewed_at) = date("now")');
+    const wrongToday = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM reviews WHERE is_correct = 0 AND date(reviewed_at) = date("now")');
+    const notificationsToday = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM notification_events WHERE date(created_at) = date("now")');
+    const knownToday = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM notification_events WHERE response = "known" AND date(created_at) = date("now")');
+    const forgottenToday = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM notification_events WHERE response = "forgotten" AND date(created_at) = date("now")');
+    const ttsCache = await safeCount(ctx, 'SELECT COUNT(*) AS count FROM word_audio_cache');
+    const ttsStale = await safeCount(ctx, `SELECT COUNT(*) AS count FROM word_audio_cache WHERE ${TTS_STALE_CACHE_PREDICATE}`);
+    const dbCheck = await getDbCheckSummary(ctx);
+
+    const text =
+        `🩺 صحة DeutschDrop\n\n` +
+        `المستخدمون:\n` +
+        `* الكل: ${metric(usersTotal)}\n` +
+        `* النشطون آخر 24 ساعة: ${metric(users24h)}\n` +
+        `* النشطون آخر 7 أيام: ${metric(users7d)}\n` +
+        `* المحظورون: ${metric(banned)}\n\n` +
+        `الكلمات:\n` +
+        `* مجموع الكلمات: ${metric(wordsTotal)}\n` +
+        `* كلمات صعبة: ${metric(hardWords)}\n` +
+        `* كلمات تحتاج تركيز: ${metric(focusWords)}\n\n` +
+        `التدريب والمراجعة:\n` +
+        `* جلسات التدريب اليوم: ${metric(trainSessions)}\n` +
+        `* إجابات صحيحة اليوم: ${metric(correctToday)}\n` +
+        `* إجابات خاطئة اليوم: ${metric(wrongToday)}\n\n` +
+        `الإشعارات:\n` +
+        `* المرسلة اليوم: ${metric(notificationsToday)}\n` +
+        `* known: ${metric(knownToday)}\n` +
+        `* forgotten: ${metric(forgottenToday)}\n\n` +
+        `TTS:\n` +
+        `* VoiceRSS keys: ${voiceRssKeys.length}\n` +
+        `* الاستخدام النظري: ${voiceRssKeys.length * VOICE_RSS_DAILY_LIMIT_PER_KEY}\n` +
+        `* cache records: ${metric(ttsCache)}\n` +
+        `* stale records: ${metric(ttsStale)}\n\n` +
+        `AI:\n` +
+        `* AI_ENABLED: ${ctx.env.AI_ENABLED ?? 'false'}\n` +
+        `* providers order: ${ctx.env.AI_PROVIDER_ORDER ?? 'غير متوفر'}\n` +
+        `* آخر حالة مختصرة: غير متوفر\n\n` +
+        `Database:\n` +
+        `* /health: OK\n` +
+        `* آخر migration معروف: 0024_onboarding_help_admin_health.sql\n` +
+        `* db_check: ${dbCheck}\n\n` +
+        `Cron:\n` +
+        `* آخر تشغيل cron: غير متوفر\n` +
+        `* إشعارات اليوم: ${metric(notificationsToday)}`;
+
+    await replaceWithText(ctx, text, adminHealthKeyboard());
+}
+
+function adminHealthKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('🔄 تحديث', 'admin_health').row()
+        .text('🤖 AI Debug', 'ai_debug_info')
+        .text('🔊 TTS Debug', 'tts_debug_info').row()
+        .text('🧪 DB Check', 'admin_db_check').row()
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+async function safeCount(ctx: BotContext, sql: string): Promise<number | null> {
+    try {
+        const row = await ctx.db.prepare(sql).first<{ count: number }>();
+        return row?.count ?? 0;
+    } catch {
+        return null;
+    }
+}
+
+function metric(value: number | null): string {
+    return value === null ? 'غير متوفر' : String(value);
+}
+
+async function getDbCheckSummary(ctx: BotContext): Promise<string> {
+    try {
+        const requiredColumns = ['user_id', 'display_name', 'onboarding_seen', 'last_active_at'];
+        const rows = await ctx.db.prepare('PRAGMA table_info(users)').all<{ name: string }>();
+        const existing = new Set((rows.results ?? []).map(row => row.name));
+        const missing = requiredColumns.filter(column => !existing.has(column));
+        return missing.length === 0 ? 'OK' : `missing columns count: ${missing.length}`;
+    } catch {
+        return 'غير متوفر';
+    }
 }
 
 async function showAdminDbCheck(ctx: BotContext): Promise<void> {

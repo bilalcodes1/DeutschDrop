@@ -182,11 +182,10 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
         : allWords;
 
     if (words.length === 0) {
-        const label = mode === 'hard' ? 'كلمة صعبة' : 'كلمة';
         await replaceWithText(
             ctx,
-            `⚠️ لا توجد ${label} مناسبة للتدريب حالياً.\nأضف كلمات جديدة أو راجع كلمات أكثر.`,
-            mainMenuKeyboard()
+            `تعذر بدء التدريب حالياً.\nتأكد أن عندك كلمات كافية.`,
+            trainingStartErrorKeyboard()
         );
         return;
     }
@@ -231,6 +230,13 @@ async function clearConflictingTextSessions(ctx: BotContext, userId: number): Pr
     await deleteBotSession(ctx.db, userId, 'word_edit');
     await deleteBotSession(ctx.db, userId, 'add_word');
     await deleteBotSession(ctx.db, userId, 'word_search');
+}
+
+function trainingStartErrorKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('➕ إضافة كلمة', 'add_word')
+        .text('📤 رفع CSV', 'upload_csv').row()
+        .text('🏠 الرئيسية', 'menu_main');
 }
 
 async function startReviewPlanTraining(ctx: BotContext, forcedPlanId?: number): Promise<void> {
