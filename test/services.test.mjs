@@ -692,6 +692,42 @@ test('VoiceRSS debug and cache rules do not leak keys or count cached playback',
     assert.doesNotMatch(`${commandSource}\n${voiceRssSource}`, /console\.warn\([^)]*VOICERSS_API_KEYS?|console\.log\([^)]*VOICERSS_API_KEYS?/);
 });
 
+test('TTS stale cache debug and cleanup use the same predicate', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
+
+    assert.match(commandSource, /bot\.command\('tts_clear_stale_cache'/);
+    assert.match(commandSource, /const VALID_TTS_CACHE_PREDICATE = `provider = '\$\{VOICE_RSS_GERMAN_PROVIDER\}' AND language = 'de-de' AND voice = '\$\{VOICE_RSS_GERMAN_VOICE\}'`/);
+    assert.match(commandSource, /const STALE_TTS_CACHE_PREDICATE = `provider = 'cloudflareTts'/);
+    assert.match(commandSource, /OR provider IS NULL/);
+    assert.match(commandSource, /OR language IS NULL/);
+    assert.match(commandSource, /OR voice IS NULL/);
+    assert.match(commandSource, /OR provider != '\$\{VOICE_RSS_GERMAN_PROVIDER\}'/);
+    assert.match(commandSource, /OR language != 'de-de'/);
+    assert.match(commandSource, /OR voice != '\$\{VOICE_RSS_GERMAN_VOICE\}'/);
+    assert.match(commandSource, /SUM\(CASE WHEN \$\{STALE_TTS_CACHE_PREDICATE\} THEN 1 ELSE 0 END\) AS stale_records/);
+    assert.match(commandSource, /DELETE FROM word_audio_cache WHERE \$\{STALE_TTS_CACHE_PREDICATE\}/);
+    assert.match(commandSource, /VoiceRSS Jonas records المتبقية/);
+    assert.match(commandSource, /stale records المتبقية/);
+    assert.doesNotMatch(commandSource, /stale cloudflare records/);
+});
+
+test('TTS stale predicate keeps only valid VoiceRSS de-de Jonas records', () => {
+    const valid = { provider: 'voiceRssGerman', language: 'de-de', voice: 'Jonas' };
+    const rows = [
+        valid,
+        { provider: 'cloudflareTts', language: 'de-de', voice: 'Jonas' },
+        { provider: null, language: 'de-de', voice: 'Jonas' },
+        { provider: 'voiceRssGerman', language: null, voice: 'Jonas' },
+        { provider: 'voiceRssGerman', language: 'de-de', voice: null },
+        { provider: 'edgeTtsWorker', language: 'de-de', voice: 'Jonas' },
+        { provider: 'voiceRssGerman', language: 'de-DE', voice: 'Jonas' },
+        { provider: 'voiceRssGerman', language: 'de-de', voice: 'Katja' },
+    ];
+    const stale = rows.filter(row => !(row.provider === 'voiceRssGerman' && row.language === 'de-de' && row.voice === 'Jonas'));
+    assert.equal(stale.length, 7);
+    assert.deepEqual(rows.filter(row => !stale.includes(row)), [valid]);
+});
+
 test('learn train notifications and hard words expose TTS without counting answers', () => {
     const learnSource = fs.readFileSync(new URL('../src/commands/learn.ts', import.meta.url), 'utf8');
     const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');

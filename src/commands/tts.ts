@@ -14,6 +14,15 @@ import { orderedTtsProviders, synthesizeGermanTts } from '../services/tts/ttsRou
 import { normalizeTtsText, safeTtsMessage, type TtsProviderResult } from '../services/tts/types';
 import { debugVoiceRssKeyStates, getVoiceRssKeyStates, VOICE_RSS_DAILY_LIMIT_PER_KEY, VOICE_RSS_GERMAN_PROVIDER, VOICE_RSS_GERMAN_VOICE } from '../services/tts/voiceRssGerman';
 
+const VALID_TTS_CACHE_PREDICATE = `provider = '${VOICE_RSS_GERMAN_PROVIDER}' AND language = 'de-de' AND voice = '${VOICE_RSS_GERMAN_VOICE}'`;
+const STALE_TTS_CACHE_PREDICATE = `provider = 'cloudflareTts'
+    OR provider IS NULL
+    OR language IS NULL
+    OR voice IS NULL
+    OR provider != '${VOICE_RSS_GERMAN_PROVIDER}'
+    OR language != 'de-de'
+    OR voice != '${VOICE_RSS_GERMAN_VOICE}'`;
+
 export function registerTtsCommand(bot: Bot<BotContext>): void {
     bot.command('tts_debug', async (ctx) => {
         if (!isAdminTelegramId(ctx.env, ctx.from?.id)) {
@@ -29,6 +38,14 @@ export function registerTtsCommand(bot: Bot<BotContext>): void {
             return;
         }
         await runTtsTest(ctx);
+    });
+
+    bot.command('tts_clear_stale_cache', async (ctx) => {
+        if (!isAdminTelegramId(ctx.env, ctx.from?.id)) {
+            await ctx.reply('غير مصرح لك باستخدام هذا الأمر.');
+            return;
+        }
+        await clearStaleTtsCache(ctx);
     });
 
     bot.callbackQuery(/^tts:word:(\d+)(?::ctx:([a-z_]+))?$/, async (ctx) => {
@@ -133,9 +150,9 @@ async function showTtsDebug(ctx: BotContext): Promise<void> {
         `SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN provider = 'voiceRssGerman' THEN 1 ELSE 0 END) AS voice_rss,
-            SUM(CASE WHEN provider = 'cloudflareTts' THEN 1 ELSE 0 END) AS cloudflare_stale
+            SUM(CASE WHEN ${STALE_TTS_CACHE_PREDICATE} THEN 1 ELSE 0 END) AS stale_records
          FROM word_audio_cache`
-    ).first<{ total: number; voice_rss: number; cloudflare_stale: number }>();
+    ).first<{ total: number; voice_rss: number; stale_records: number }>();
 
     const providerConfigs = providers.map(provider => provider.config(ctx.env));
     const voice = providerConfigs.find(config => config.provider === VOICE_RSS_GERMAN_PROVIDER);
@@ -162,8 +179,32 @@ async function showTtsDebug(ctx: BotContext): Promise<void> {
         `Cache:\n` +
         `total records: ${cache?.total ?? 0}\n` +
         `voiceRss records: ${cache?.voice_rss ?? 0}\n` +
-        `stale cloudflare records: ${cache?.cloudflare_stale ?? 0}`
+        `stale records: ${cache?.stale_records ?? 0}`
     );
+}
+
+async function clearStaleTtsCache(ctx: BotContext): Promise<void> {
+    const before = await getTtsCacheCounts(ctx);
+    await ctx.db.prepare(`DELETE FROM word_audio_cache WHERE ${STALE_TTS_CACHE_PREDICATE}`).run();
+    const after = await getTtsCacheCounts(ctx);
+    await ctx.reply(
+        `تم حذف ${before.stale_records} سجل قديم.\n` +
+        `VoiceRSS Jonas records المتبقية: ${after.valid_records}\n` +
+        `stale records المتبقية: ${after.stale_records}`
+    );
+}
+
+async function getTtsCacheCounts(ctx: BotContext): Promise<{ valid_records: number; stale_records: number }> {
+    const row = await ctx.db.prepare(
+        `SELECT
+            SUM(CASE WHEN ${VALID_TTS_CACHE_PREDICATE} THEN 1 ELSE 0 END) AS valid_records,
+            SUM(CASE WHEN ${STALE_TTS_CACHE_PREDICATE} THEN 1 ELSE 0 END) AS stale_records
+         FROM word_audio_cache`
+    ).first<{ valid_records: number; stale_records: number }>();
+    return {
+        valid_records: row?.valid_records ?? 0,
+        stale_records: row?.stale_records ?? 0,
+    };
 }
 
 async function runTtsTest(ctx: BotContext): Promise<void> {
