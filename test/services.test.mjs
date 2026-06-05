@@ -10,6 +10,7 @@ import { classifyHttpStatus, sanitizeErrorMessage } from '../dist/services/ai/ai
 import { exampleContainsGerman, hasSuspiciousPronunciation, validateExampleSuggestion } from '../dist/services/ai/aiValidation.js';
 import { selectTrainingWords } from '../dist/services/srs.js';
 import { calculateDifficultyScore, shouldBeHard } from '../dist/services/adaptiveReview.js';
+import { buildYouglishDirectUrl, buildYouglishWebAppUrl, renderYouglishHtml } from '../dist/services/youglish.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -304,6 +305,8 @@ test('word panel shows review status and pictogram-specific actions', () => {
     assert.match(source, /🖼 عرض الرمز/);
     assert.match(source, /🖼 تعيين رمز/);
     assert.match(source, /🔄 تغيير الرمز/);
+    assert.match(source, /🎬 النطق من YouGlish/);
+    assert.match(source, /youglish:\$\{wordId\}/);
     assert.match(source, /word\.added_by !== user\.user_id/);
 });
 
@@ -549,6 +552,62 @@ test('pictogram callbacks return to the same word detail screen', () => {
     assert.match(source, /showWordDetailPanel\(ctx, wordId\)/);
     assert.match(source, /showWordDetailPanel\(ctx, word\.word_id, '✅ تم حفظ الرمز\.'\)/);
     assert.match(source, /word_callback_failed/);
+});
+
+test('YouGlish URLs encode German words and phrases', () => {
+    assert.equal(
+        buildYouglishDirectUrl('sprechen', 'german'),
+        'https://youglish.com/pronounce/sprechen/german'
+    );
+    assert.equal(
+        buildYouglishDirectUrl('richtig gut in Schuss', 'german'),
+        'https://youglish.com/pronounce/richtig%20gut%20in%20Schuss/german'
+    );
+    assert.equal(
+        buildYouglishWebAppUrl('https://deutschdrop.aque7x.workers.dev/youglish', 'richtig gut in Schuss', 'german'),
+        'https://deutschdrop.aque7x.workers.dev/youglish?word=richtig%20gut%20in%20Schuss&lang=german'
+    );
+});
+
+test('/youglish route renders sanitized widget HTML without private data', () => {
+    const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+    const routeSource = fs.readFileSync(new URL('../src/routes/youglish.ts', import.meta.url), 'utf8');
+    const html = renderYouglishHtml('<script>alert(1)</script>', 'german');
+
+    assert.match(indexSource, /url\.pathname === '\/youglish'/);
+    assert.match(routeSource, /renderYouglishHtml/);
+    assert.match(html, /youglish-widget/);
+    assert.match(html, /https:\/\/youglish\.com\/public\/emb\/widget\.js/);
+    assert.match(html, /data-lang="german"/);
+    assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
+    assert.match(html, /%3Cscript%3Ealert\(1\)%3C%2Fscript%3E/);
+    assert.doesNotMatch(html, /telegram_id|Telegram ID|user_id|display_name|username/);
+});
+
+test('YouGlish Telegram panel uses WebApp with fallback and returns to word details', () => {
+    const source = fs.readFileSync(new URL('../src/commands/youglish.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+
+    assert.match(botSource, /registerYouglishCommand\(bot\)/);
+    assert.match(wranglerSource, /TELEGRAM_WEBAPP_URL = "https:\/\/deutschdrop\.aque7x\.workers\.dev\/youglish"/);
+    assert.match(source, /ctx\.env\.TELEGRAM_WEBAPP_URL/);
+    assert.match(source, /keyboard\.webApp/);
+    assert.match(source, /webAppUrl \?\? directUrl/);
+    assert.match(source, /word_detail_\$\{word\.word_id\}/);
+    assert.match(source, /🧹 إخفاء هذه الرسالة/);
+});
+
+test('YouGlish feature does not scrape or download videos', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/youglish.ts', import.meta.url), 'utf8');
+    const routeSource = fs.readFileSync(new URL('../src/routes/youglish.ts', import.meta.url), 'utf8');
+    const serviceSource = fs.readFileSync(new URL('../src/services/youglish.ts', import.meta.url), 'utf8');
+    const combined = `${commandSource}\n${routeSource}\n${serviceSource}`;
+
+    assert.doesNotMatch(combined, /youtube-dl|yt-dlp|get_video_info|watch\?v=|sendVideo|replyWithVideo/i);
+    assert.doesNotMatch(commandSource, /fetch\(/);
+    assert.doesNotMatch(routeSource, /fetch\(/);
+    assert.doesNotMatch(serviceSource, /fetch\(/);
 });
 
 test('smart notifications include retrieval practice types and cooldown rules', () => {

@@ -84,6 +84,7 @@ function wordDetailKeyboard(word: Word, hasPictogram: boolean, backCallback: str
         keyboard.text('🗣 توليد اللفظ', `ai_pron_${wordId}`).row();
     }
     keyboard.text('📊 تحديد المستوى', `ai_level_${wordId}`).row();
+    keyboard.text('🎬 النطق من YouGlish', `youglish:${wordId}`).row();
 
     if (hasPictogram) {
         keyboard

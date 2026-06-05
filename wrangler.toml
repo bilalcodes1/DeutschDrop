@@ -5,6 +5,7 @@ compatibility_date = "2024-06-01"
 [vars]
 ENVIRONMENT = "production"
 ADMIN_TELEGRAM_IDS = "8590766269,8014388174"
+TELEGRAM_WEBAPP_URL = "https://deutschdrop.aque7x.workers.dev/youglish"
 AI_ENABLED = "true"
 AI_PROVIDER_ORDER = "cloudflareAi,groqCloud,mistral,openrouter,gemini"
 GEMINI_MODEL = "gemini-2.0-flash"
