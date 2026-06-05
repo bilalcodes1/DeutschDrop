@@ -8,6 +8,12 @@ import {
     releaseTtsRequestLock,
     upsertWordAudioFileId,
 } from '../repositories/wordAudioCacheRepository';
+import {
+    deleteLastTtsMessageRecord,
+    getLastTtsMessage,
+    getTtsMessageTtlSeconds,
+    upsertLastTtsMessage,
+} from '../repositories/ttsLastMessageRepository';
 import { isAdminTelegramId } from '../services/adminAccess';
 import { normalizeReturnContext, type ReturnContext } from '../services/returnContext';
 import { orderedTtsProviders, synthesizeGermanTts } from '../services/tts/ttsRouter';
@@ -86,6 +92,14 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
     }
 
     try {
+        const chatId = ctx.chat?.id;
+        if (typeof chatId !== 'number') {
+            await showTtsUnavailable(ctx);
+            return;
+        }
+
+        await deletePreviousTemporaryTtsMessage(ctx, user.user_id, chatId);
+
         const providerConfigs = orderedTtsProviders(ctx.env).map(provider => provider.config(ctx.env));
         if (providerConfigs.length === 0) {
             await showTtsUnavailable(ctx);
@@ -94,11 +108,12 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
         for (const config of providerConfigs) {
             const cached = await getCachedWordAudio(ctx.db, user.user_id, word.word_id, germanText, config.provider, config.language, config.voice, config.model, config.format);
             if (cached?.telegram_file_id) {
-                await ctx.replyWithAudio(cached.telegram_file_id, {
+                const message = await ctx.replyWithAudio(cached.telegram_file_id, {
                     title: germanText,
                     performer: 'DeutschDrop',
                     caption: `🔊 ${germanText}`,
                 });
+                await trackTemporaryTtsMessage(ctx, user.user_id, chatId, word.word_id, germanText, message.message_id);
                 return;
             }
         }
@@ -114,6 +129,7 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
             performer: 'DeutschDrop',
             caption: `🔊 ${germanText}`,
         });
+        await trackTemporaryTtsMessage(ctx, user.user_id, chatId, word.word_id, germanText, message.message_id);
         const fileId = message.audio?.file_id;
         if (fileId) {
             await upsertWordAudioFileId(ctx.db, {
@@ -142,6 +158,31 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
     } finally {
         await releaseTtsRequestLock(ctx.db, user.user_id, word.word_id, germanText).catch(() => {});
     }
+}
+
+async function deletePreviousTemporaryTtsMessage(ctx: BotContext, userId: number, chatId: number): Promise<void> {
+    const previous = await getLastTtsMessage(ctx.db, userId, chatId);
+    if (!previous) return;
+    await ctx.api.deleteMessage(previous.chat_id, previous.message_id).catch(() => {});
+    await deleteLastTtsMessageRecord(ctx.db, userId, chatId).catch(() => {});
+}
+
+async function trackTemporaryTtsMessage(
+    ctx: BotContext,
+    userId: number,
+    chatId: number,
+    wordId: number,
+    text: string,
+    messageId: number
+): Promise<void> {
+    await upsertLastTtsMessage(ctx.db, {
+        userId,
+        chatId,
+        messageId,
+        wordId,
+        text,
+        ttlSeconds: getTtsMessageTtlSeconds(ctx.env),
+    }).catch(() => {});
 }
 
 async function showTtsDebug(ctx: BotContext): Promise<void> {

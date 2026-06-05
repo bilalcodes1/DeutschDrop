@@ -948,6 +948,52 @@ test('learn train notifications and hard words expose TTS without counting answe
     assert.doesNotMatch(trainSource, /tts:word:[\s\S]{0,120}markQuestionAnswered/);
 });
 
+test('TTS pronunciation messages are temporary and replace the previous audio', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/ttsLastMessageRepository.ts', import.meta.url), 'utf8');
+    const cleanupSource = fs.readFileSync(new URL('../src/services/ttsMessageCleanup.ts', import.meta.url), 'utf8');
+    const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0026_tts_last_messages.sql', import.meta.url), 'utf8');
+    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+    const pronunciationFlow = commandSource.slice(
+        commandSource.indexOf('async function sendWordPronunciation'),
+        commandSource.indexOf('async function showTtsDebug')
+    );
+
+    assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS tts_last_messages/);
+    assert.match(migrationSource, /UNIQUE\(user_id, chat_id\)/);
+    assert.match(migrationSource, /expires_at TEXT NOT NULL/);
+    assert.match(repoSource, /DEFAULT_TTS_MESSAGE_TTL_SECONDS = 60/);
+    assert.match(repoSource, /getLastTtsMessage/);
+    assert.match(repoSource, /upsertLastTtsMessage/);
+    assert.match(repoSource, /datetime\('now', '\+' \|\| \? \|\| ' seconds'\)/);
+    assert.match(repoSource, /deleteLastTtsMessageRecord/);
+    assert.match(commandSource, /deletePreviousTemporaryTtsMessage\(ctx, user\.user_id, chatId\)/);
+    assert.match(commandSource, /ctx\.api\.deleteMessage\(previous\.chat_id, previous\.message_id\)\.catch\(\(\) => \{\}\)/);
+    assert.match(commandSource, /trackTemporaryTtsMessage\(ctx, user\.user_id, chatId, word\.word_id, germanText, message\.message_id\)/);
+    assert.match(commandSource, /replyWithAudio\(cached\.telegram_file_id/);
+    assert.match(commandSource, /upsertWordAudioFileId/);
+    assert.match(cleanupSource, /getExpiredTtsMessages/);
+    assert.match(cleanupSource, /deleteMessage/);
+    assert.match(cleanupSource, /deleteTtsLastMessageById/);
+    assert.match(indexSource, /cleanupExpiredTtsMessages\(env\)/);
+    assert.match(wranglerSource, /TTS_MESSAGE_TTL_SECONDS = "60"/);
+    assert.doesNotMatch(commandSource, /replyWithAudio\([^)]*reply_markup/s);
+    assert.doesNotMatch(pronunciationFlow, /sendMessage\([^)]*🔊|reply\([^)]*🔊/);
+});
+
+test('TTS temporary audio keeps screens and training state untouched', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
+
+    assert.match(commandSource, /await ctx\.answerCallbackQuery\(\)\.catch\(\(\) => \{\}\)/);
+    assert.match(commandSource, /show_alert: true/);
+    assert.match(commandSource, /acquireTtsRequestLock/);
+    assert.match(commandSource, /getCachedWordAudio[\s\S]*synthesizeGermanTts/);
+    assert.doesNotMatch(commandSource, /showCurrentLearnWord|showCurrentTrainingQuestion|question_index|markQuestionAnswered|recordTrainingAnswer|handleTrainingTextAnswer/);
+    assert.doesNotMatch(commandSource, /reply_markup|InlineKeyboard/);
+});
+
 test('YouGlish URLs encode German words and phrases', () => {
     assert.equal(
         buildYouglishDirectUrl('sprechen', 'german'),

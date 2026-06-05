@@ -6,6 +6,7 @@ import { deleteExpiredBotSessions } from './repositories/sessionRepository';
 import { ZAINCASH_QR_BASE64 } from './assets_zaincash_qr';
 import { sendSmartNotification } from './services/smartNotificationService';
 import { getLeaderboardByPeriod, type LeaderboardPeriod } from './services/xpLevels';
+import { cleanupExpiredTtsMessages } from './services/ttsMessageCleanup';
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -42,6 +43,7 @@ export default {
 
         try {
             await deleteExpiredBotSessions(env.DB);
+            await cleanupExpiredTtsMessages(env);
 
             switch (jobName) {
                 case 'check_due_reviews': {

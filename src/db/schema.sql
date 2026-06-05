@@ -474,6 +474,21 @@ CREATE TABLE IF NOT EXISTS ai_usage (
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+-- 30. tts_last_messages
+CREATE TABLE IF NOT EXISTS tts_last_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    word_id INTEGER,
+    text TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, chat_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE SET NULL
+);
+
 -- 20. job_runs (Cron job state tracking)
 CREATE TABLE IF NOT EXISTS job_runs (
     job_name TEXT PRIMARY KEY,
@@ -506,6 +521,7 @@ CREATE INDEX IF NOT EXISTS idx_word_audio_cache_provider_language_voice ON word_
 CREATE INDEX IF NOT EXISTS idx_word_audio_cache_provider_key_created ON word_audio_cache(provider, api_key_hash, created_at);
 CREATE INDEX IF NOT EXISTS idx_words_user_german_search ON words(added_by, german_search);
 CREATE INDEX IF NOT EXISTS idx_words_user_arabic_search ON words(added_by, arabic_search);
+CREATE INDEX IF NOT EXISTS idx_tts_last_messages_expires ON tts_last_messages(expires_at);
 CREATE INDEX IF NOT EXISTS idx_tts_request_locks_expires ON tts_request_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_status ON async_challenges(status);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_users ON async_challenges(creator_user_id, opponent_user_id);
