@@ -558,48 +558,65 @@ test('pictogram callbacks return to the same word detail screen', () => {
     assert.match(source, /word_callback_failed/);
 });
 
-test('Edge TTS German cache and provider are wired as the only TTS path', () => {
+test('Voice RSS German is the primary TTS path with Edge Worker fallback', () => {
     const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
-    const serviceSource = fs.readFileSync(new URL('../src/services/tts/edgeTtsGerman.ts', import.meta.url), 'utf8');
+    const voiceRssSource = fs.readFileSync(new URL('../src/services/tts/voiceRssGerman.ts', import.meta.url), 'utf8');
+    const edgeWorkerSource = fs.readFileSync(new URL('../src/services/tts/edgeTtsWorker.ts', import.meta.url), 'utf8');
+    const routerSource = fs.readFileSync(new URL('../src/services/tts/ttsRouter.ts', import.meta.url), 'utf8');
     const repoSource = fs.readFileSync(new URL('../src/repositories/wordAudioCacheRepository.ts', import.meta.url), 'utf8');
     const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0020_word_audio_cache.sql', import.meta.url), 'utf8');
     const cacheMigrationSource = fs.readFileSync(new URL('../src/db/migrations/0021_tts_german_cache_and_locks.sql', import.meta.url), 'utf8');
+    const formatMigrationSource = fs.readFileSync(new URL('../src/db/migrations/0022_tts_voice_rss_format.sql', import.meta.url), 'utf8');
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 
-    assert.match(wranglerSource, /TTS_PROVIDER_ORDER = "edgeTtsGerman"/);
-    assert.match(wranglerSource, /TTS_LANGUAGE = "de-DE"/);
+    assert.match(wranglerSource, /TTS_PROVIDER_ORDER = "voiceRssGerman,edgeTtsWorker"/);
+    assert.match(wranglerSource, /TTS_LANGUAGE = "de-de"/);
+    assert.match(wranglerSource, /TTS_AUDIO_FORMAT = "mp3"/);
     assert.match(wranglerSource, /EDGE_TTS_VOICE = "de-DE-KatjaNeural"/);
     assert.doesNotMatch(wranglerSource, /CLOUDFLARE_TTS_MODEL|TTS_MODEL|googleTts|piperThorstenService/);
-    assert.match(serviceSource, /EDGE_TTS_GERMAN_PROVIDER = 'edgeTtsGerman'/);
-    assert.match(serviceSource, /DEFAULT_EDGE_TTS_VOICE = 'de-DE-KatjaNeural'/);
-    assert.match(serviceSource, /de-DE-ConradNeural/);
-    assert.match(serviceSource, /isEdgeGermanConfig/);
-    assert.match(serviceSource, /new WebSocket\(EDGE_TTS_URL\)/);
-    assert.match(serviceSource, /outputFormat: 'audio-24khz-48kbitrate-mono-mp3'/);
+    assert.match(routerSource, /DEFAULT_TTS_PROVIDER_ORDER = \['voiceRssGerman', 'edgeTtsWorker'\]/);
+    assert.match(voiceRssSource, /VOICE_RSS_GERMAN_PROVIDER = 'voiceRssGerman'/);
+    assert.match(voiceRssSource, /https:\/\/api\.voicerss\.org\//);
+    assert.match(voiceRssSource, /url\.searchParams\.set\('hl', language\)/);
+    assert.match(voiceRssSource, /url\.searchParams\.set\('src', text\)/);
+    assert.match(voiceRssSource, /url\.searchParams\.set\('c', 'mp3'\)/);
+    assert.match(voiceRssSource, /SKIPPED_NO_KEY/);
+    assert.match(edgeWorkerSource, /EDGE_TTS_WORKER_URL/);
+    assert.match(edgeWorkerSource, /\/api\/tts/);
+    assert.match(edgeWorkerSource, /de-DE-KillianNeural/);
     assert.match(commandSource, /getCachedWordAudio/);
     assert.match(commandSource, /replyWithAudio\(cached\.telegram_file_id/);
     assert.match(commandSource, /upsertWordAudioFileId/);
     assert.match(commandSource, /acquireTtsRequestLock/);
     assert.match(commandSource, /releaseTtsRequestLock/);
-    assert.match(commandSource, /generateEdgeTtsGerman/);
-    assert.match(commandSource, /EDGE_TTS_GERMAN_PROVIDER/);
+    assert.match(commandSource, /synthesizeGermanTts/);
     assert.match(commandSource, /TTS_DAILY_GENERATION_LIMIT = 30/);
     assert.match(repoSource, /telegram_file_id IS NOT NULL/);
     assert.match(repoSource, /language = \? AND voice = \? AND model = \?/);
+    assert.match(repoSource, /format = \?/);
     assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS word_audio_cache/);
     assert.match(cacheMigrationSource, /ALTER TABLE word_audio_cache ADD COLUMN language/);
     assert.match(cacheMigrationSource, /CREATE TABLE IF NOT EXISTS tts_request_locks/);
+    assert.match(formatMigrationSource, /ALTER TABLE word_audio_cache ADD COLUMN format/);
     assert.doesNotMatch(commandSource, /reply_markup/);
     assert.doesNotMatch(commandSource, /InlineKeyboard/);
-    assert.doesNotMatch(`${commandSource}\n${serviceSource}`, /cloudflareTts|generateCloudflareTts|piperThorstenService|googleTts|Google Cloud TTS|texttospeech\.googleapis|en-US|en-GB/i);
+    assert.doesNotMatch(`${commandSource}\n${voiceRssSource}\n${edgeWorkerSource}`, /generateCloudflareTts|piperThorstenService|googleTts|Google Cloud TTS|texttospeech\.googleapis|en-US|en-GB/i);
 });
 
-test('Edge TTS German rejects English or non-German configuration', () => {
-    const serviceSource = fs.readFileSync(new URL('../src/services/tts/edgeTtsGerman.ts', import.meta.url), 'utf8');
-    assert.match(serviceSource, /language === 'de' \|\| language === 'de-de'/);
-    assert.match(serviceSource, /ALLOWED_EDGE_GERMAN_VOICES\.has\(config\.voice\)/);
-    assert.match(serviceSource, /throw new Error\('GERMAN_TTS_UNAVAILABLE'\)/);
-    assert.doesNotMatch(serviceSource, /en-US|en-GB|English/);
+test('TTS debug and test are admin-only and hide secrets', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
+    const voiceRssSource = fs.readFileSync(new URL('../src/services/tts/voiceRssGerman.ts', import.meta.url), 'utf8');
+    const edgeWorkerSource = fs.readFileSync(new URL('../src/services/tts/edgeTtsWorker.ts', import.meta.url), 'utf8');
+
+    assert.match(commandSource, /bot\.command\('tts_debug'/);
+    assert.match(commandSource, /bot\.command\('tts_test'/);
+    assert.match(commandSource, /isAdminTelegramId\(ctx\.env, ctx\.from\?\.id\)/);
+    assert.match(commandSource, /key: \$\{ctx\.env\.VOICERSS_API_KEY \? 'configured' : 'missing'\}/);
+    assert.doesNotMatch(commandSource, /VOICERSS_API_KEY\}/);
+    assert.match(voiceRssSource, /isGermanLanguage\(config\.language\)/);
+    assert.match(edgeWorkerSource, /isGermanVoice\(config\.voice\)/);
+    assert.match(edgeWorkerSource, /ALLOWED_EDGE_WORKER_VOICES\.has\(config\.voice\)/);
+    assert.doesNotMatch(`${voiceRssSource}\n${edgeWorkerSource}`, /en-US|en-GB|English/);
 });
 
 test('learn train notifications and hard words expose TTS without counting answers', () => {

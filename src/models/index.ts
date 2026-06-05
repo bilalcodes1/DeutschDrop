@@ -11,7 +11,10 @@ export interface Env {
     AI_PROVIDER_ORDER?: string;
     TTS_PROVIDER_ORDER?: string;
     TTS_LANGUAGE?: string;
+    TTS_AUDIO_FORMAT?: string;
     EDGE_TTS_VOICE?: string;
+    EDGE_TTS_WORKER_URL?: string;
+    VOICERSS_API_KEY?: string;
     GEMINI_API_KEYS?: string;
     KIMI_API_KEYS?: string;
     GROK_API_KEYS?: string;

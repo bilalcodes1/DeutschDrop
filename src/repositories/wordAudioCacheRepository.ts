@@ -12,6 +12,7 @@ export interface WordAudioCacheRow {
     language: string | null;
     voice: string | null;
     model: string | null;
+    format: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -24,16 +25,18 @@ export async function getCachedWordAudio(
     provider: string,
     language: string,
     voice: string,
-    model: string
+    model: string,
+    format: string
 ): Promise<WordAudioCacheRow | null> {
     return queryOne<WordAudioCacheRow>(
         db,
         `SELECT * FROM word_audio_cache
          WHERE user_id = ? AND word_id = ? AND text = ? AND provider = ?
            AND language = ? AND voice = ? AND model = ?
+           AND format = ?
            AND telegram_file_id IS NOT NULL
          LIMIT 1`,
-        [userId, wordId, text, provider, language, voice, model]
+        [userId, wordId, text, provider, language, voice, model, format]
     );
 }
 
@@ -49,20 +52,22 @@ export async function upsertWordAudioFileId(
         language: string;
         voice: string;
         model: string;
+        format: string;
     }
 ): Promise<void> {
     await run(
         db,
-        `INSERT INTO word_audio_cache (user_id, word_id, text, provider, telegram_file_id, content_hash, language, voice, model)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO word_audio_cache (user_id, word_id, text, provider, telegram_file_id, content_hash, language, voice, model, format)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, word_id, text, provider) DO UPDATE SET
             telegram_file_id = excluded.telegram_file_id,
             content_hash = excluded.content_hash,
             language = excluded.language,
             voice = excluded.voice,
             model = excluded.model,
+            format = excluded.format,
             updated_at = datetime('now')`,
-        [input.userId, input.wordId, input.text, input.provider, input.telegramFileId, input.contentHash, input.language, input.voice, input.model]
+        [input.userId, input.wordId, input.text, input.provider, input.telegramFileId, input.contentHash, input.language, input.voice, input.model, input.format]
     );
 }
 
