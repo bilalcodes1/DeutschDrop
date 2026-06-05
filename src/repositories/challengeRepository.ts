@@ -15,6 +15,9 @@ export interface AsyncChallenge {
     creator_time_ms: number | null;
     opponent_time_ms: number | null;
     winner_user_id: number | null;
+    challenge_source_type: string | null;
+    challenge_source_id: string | null;
+    challenge_word_origin_json: string | null;
 }
 
 export interface ChallengeQuestion {
@@ -31,13 +34,24 @@ export async function createAsyncChallenge(
     db: D1Database,
     creatorUserId: number,
     opponentUserId: number,
-    questions: Array<{ word_id: number; prompt: string; answer: string; options: string[]; direction: 'de_ar' | 'ar_de' }>
+    questions: Array<{ word_id: number; prompt: string; answer: string; options: string[]; direction: 'de_ar' | 'ar_de' }>,
+    metadata?: { sourceType?: string; sourceId?: string | number | null; wordOrigin?: unknown }
 ): Promise<number> {
     const result = await run(
         db,
-        `INSERT INTO async_challenges (creator_user_id, opponent_user_id, question_count, status, expires_at)
-         VALUES (?, ?, ?, 'waiting_opponent', datetime('now', '+24 hours'))`,
-        [creatorUserId, opponentUserId, questions.length]
+        `INSERT INTO async_challenges (
+            creator_user_id, opponent_user_id, question_count, status, expires_at,
+            challenge_source_type, challenge_source_id, challenge_word_origin_json
+         )
+         VALUES (?, ?, ?, 'waiting_opponent', datetime('now', '+24 hours'), ?, ?, ?)`,
+        [
+            creatorUserId,
+            opponentUserId,
+            questions.length,
+            metadata?.sourceType ?? 'all_words',
+            metadata?.sourceId == null ? null : String(metadata.sourceId),
+            metadata?.wordOrigin ? JSON.stringify(metadata.wordOrigin) : null,
+        ]
     );
     const challengeId = (result.meta as { last_row_id?: number })?.last_row_id ?? 0;
 

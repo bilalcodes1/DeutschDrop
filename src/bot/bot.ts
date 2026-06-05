@@ -21,6 +21,7 @@ import { registerSourcesCommand } from '../commands/sources';
 import { registerSmartNotificationCommand } from '../commands/smartNotifications';
 import { registerAiCoachCommand } from '../commands/aiCoach';
 import { registerTtsCommand } from '../commands/tts';
+import { registerSharingCollectionsCommand } from '../commands/sharingCollections';
 import { getUserByTelegramId, isRegisteredUser, updateUserLastActive } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 import { safeAnswerCallback, showCallbackError } from './callbacks';
@@ -84,6 +85,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerMenuCommand(bot);
     registerSupportCommand(bot);
     registerSourcesCommand(bot);
+    registerSharingCollectionsCommand(bot);
     registerAddWordCommand(bot);
     registerUploadCommand(bot);
     registerTrainCommand(bot);

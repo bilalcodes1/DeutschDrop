@@ -4,6 +4,7 @@ import { createAsyncChallenge, getChallenge, getChallengeQuestions, hasOpenChall
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { getChallengeCandidates, getUserByTelegramId } from '../repositories/userRepository';
 import { getWordsForUserWithStatus } from '../repositories/wordRepository';
+import { getCollectionById, getCollectionWords } from '../repositories/wordSharingRepository';
 import { unlockAchievement } from '../services/achievements';
 import { competitionNotificationsEnabled, displayUserName, sendTelegramMessage } from '../services/notifications';
 import { addXp } from '../services/xpLevels';
@@ -26,14 +27,45 @@ export function registerChallengeCommand(bot: Bot<BotContext>): void {
         await showChallengeOptions(ctx);
     });
 
-    bot.callbackQuery(/^challenge_create_(5|10|20)$/, async (ctx) => {
+    bot.callbackQuery(/^challenge_source_(all|mixed)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
-        await showOpponentSelection(ctx, parseInt(ctx.match[1], 10));
+        await showChallengeCountForSource(ctx, ctx.match[1] as 'all' | 'mixed');
     });
 
-    bot.callbackQuery(/^challenge_opp_(5|10|20)_(\d+)$/, async (ctx) => {
+    bot.callbackQuery(/^challenge_source_(all|mixed)_(5|10|20)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
-        await createChallenge(ctx, parseInt(ctx.match[1], 10), parseInt(ctx.match[2], 10));
+        await showOpponentSelection(ctx, parseInt(ctx.match[2], 10), ctx.match[1] as 'all' | 'mixed');
+    });
+
+    bot.callbackQuery(/^challenge_create_(5|10|20)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await showOpponentSelection(ctx, parseInt(ctx.match[1], 10), 'all');
+    });
+
+    bot.callbackQuery(/^challenge_opp_(5|10|20)_(\d+)(?::(all|mixed))?$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await createChallenge(ctx, parseInt(ctx.match[1], 10), parseInt(ctx.match[2], 10), ctx.match[3] as 'all' | 'mixed' | undefined);
+    });
+
+    bot.callbackQuery(/^collection_challenge_count_(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const collectionId = Number(ctx.match[1]);
+        await replaceWithText(ctx, 'اختر عدد أسئلة تحدي المجموعة:', new InlineKeyboard()
+            .text('5', `collection_challenge_count_${collectionId}_5`)
+            .text('10', `collection_challenge_count_${collectionId}_10`)
+            .text('20', `collection_challenge_count_${collectionId}_20`).row()
+            .text('⬅️ رجوع', `collection:view:${collectionId}:page:1`)
+            .text('🏠 الرئيسية', 'menu_main'));
+    });
+
+    bot.callbackQuery(/^collection_challenge_count_(\d+)_(5|10|20)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await showOpponentSelection(ctx, Number(ctx.match[2]), 'collection', Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery(/^challenge_collection_opp_(\d+)_(5|10|20)_(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await createCollectionChallenge(ctx, Number(ctx.match[1]), Number(ctx.match[2]), Number(ctx.match[3]));
     });
 
     bot.callbackQuery(/^challenge_start_(\d+)$/, async (ctx) => {
@@ -70,11 +102,10 @@ async function showChallengeOptions(ctx: BotContext): Promise<void> {
     ).bind(user.user_id, user.user_id, user.user_id, user.user_id, user.user_id).all<{ challenge_id: number; question_count: number; display_name: string | null; name: string }>();
 
     const keyboard = new InlineKeyboard()
-        .text('🎲 تحدي عشوائي', 'challenge_create_5')
-        .text('👥 اختر منافس', 'challenge_create_10').row()
-        .text('5 أسئلة', 'challenge_create_5')
-        .text('10 أسئلة', 'challenge_create_10')
-        .text('20 سؤال', 'challenge_create_20').row()
+        .text('📚 كلماتي كلها', 'challenge_source_all').row()
+        .text('🎲 مختلط من الطرفين', 'challenge_source_mixed').row()
+        .text('🗂 مجموعة كلمات', 'collections:mine:page:1').row()
+        .text('🔥 الكلمات الصعبة', 'hard_words').row()
         .text('📜 سجل التحديات', 'challenge_history_0');
 
     for (const challenge of pending.results ?? []) {
@@ -86,10 +117,20 @@ async function showChallengeOptions(ctx: BotContext): Promise<void> {
 
     keyboard.row().text('⬅️ رجوع', 'menu_main');
 
-    await replaceWithText(ctx, '⚔️ *التحديات*\n\nاختر عدد الأسئلة أو حل تحدياً نشطاً:', keyboard, 'Markdown');
+    await replaceWithText(ctx, '⚔️ *التحديات*\n\nاختر مصدر كلمات التحدي:', keyboard, 'Markdown');
 }
 
-async function showOpponentSelection(ctx: BotContext, count: number): Promise<void> {
+async function showChallengeCountForSource(ctx: BotContext, source: 'all' | 'mixed'): Promise<void> {
+    const label = source === 'mixed' ? 'مختلط تلقائي من الطرفين' : 'كلماتي كلها';
+    await replaceWithText(ctx, `اختر عدد الأسئلة:\n${label}`, new InlineKeyboard()
+        .text('5', `challenge_source_${source}_5`)
+        .text('10', `challenge_source_${source}_10`)
+        .text('20', `challenge_source_${source}_20`).row()
+        .text('⬅️ رجوع', 'menu_challenge')
+        .text('🏠 الرئيسية', 'menu_main'));
+}
+
+async function showOpponentSelection(ctx: BotContext, count: number, source: 'all' | 'mixed' | 'collection' = 'all', collectionId?: number): Promise<void> {
     const user = await getCurrentUser(ctx);
     if (!user) return;
 
@@ -99,11 +140,18 @@ async function showOpponentSelection(ctx: BotContext, count: number): Promise<vo
         return;
     }
 
-    const keyboard = new InlineKeyboard().text('🎲 منافس عشوائي', `challenge_opp_${count}_${candidates[Math.floor(Math.random() * candidates.length)].user_id}`).row();
+    const first = candidates[Math.floor(Math.random() * candidates.length)];
+    const randomCallback = source === 'collection' && collectionId
+        ? `challenge_collection_opp_${collectionId}_${count}_${first.user_id}`
+        : `challenge_opp_${count}_${first.user_id}:${source}`;
+    const keyboard = new InlineKeyboard().text('🎲 منافس عشوائي', randomCallback).row();
     for (const candidate of candidates) {
-        keyboard.text(candidate.display_name ?? candidate.name, `challenge_opp_${count}_${candidate.user_id}`).row();
+        const callback = source === 'collection' && collectionId
+            ? `challenge_collection_opp_${collectionId}_${count}_${candidate.user_id}`
+            : `challenge_opp_${count}_${candidate.user_id}:${source}`;
+        keyboard.text(candidate.display_name ?? candidate.name, callback).row();
     }
-    keyboard.text('⬅️ رجوع', 'menu_challenge');
+    keyboard.text('⬅️ رجوع', source === 'collection' && collectionId ? `collection:view:${collectionId}:page:1` : 'menu_challenge');
     await replaceWithText(ctx, `⚔️ اختر مستخدم للتحدي (${count} أسئلة):`, keyboard);
 }
 
@@ -136,7 +184,7 @@ async function showChallengeHistory(ctx: BotContext, page: number): Promise<void
     await replaceWithText(ctx, text, keyboard, 'Markdown');
 }
 
-async function createChallenge(ctx: BotContext, count: number, opponentUserId: number): Promise<void> {
+async function createChallenge(ctx: BotContext, count: number, opponentUserId: number, source: 'all' | 'mixed' = 'all'): Promise<void> {
     const user = await getCurrentUser(ctx);
     if (!user) return;
 
@@ -158,7 +206,9 @@ async function createChallenge(ctx: BotContext, count: number, opponentUserId: n
         return;
     }
 
-    const words = await getWordsForUserWithStatus(ctx.db, user.user_id);
+    const words = source === 'mixed'
+        ? await getMixedChallengeWords(ctx, user.user_id, peer.user_id, count)
+        : await getWordsForUserWithStatus(ctx.db, user.user_id);
     if (words.length < count) {
         await ctx.reply(`⚠️ تحتاج ${count} كلمات على الأقل لإنشاء التحدي.`, { reply_markup: mainMenuKeyboard() });
         return;
@@ -172,7 +222,10 @@ async function createChallenge(ctx: BotContext, count: number, opponentUserId: n
         return { word_id: word.word_id, prompt, answer, options, direction };
     });
 
-    const challengeId = await createAsyncChallenge(ctx.db, user.user_id, peer.user_id, questions);
+    const challengeId = await createAsyncChallenge(ctx.db, user.user_id, peer.user_id, questions, {
+        sourceType: source === 'mixed' ? 'mixed_users' : 'all_words',
+        wordOrigin: source === 'mixed' ? questions.map(question => ({ word_id: question.word_id })) : undefined,
+    });
     await saveBotSession<ChallengeSessionData>(ctx.db, user.user_id, 'challenge', {
         challengeId,
         questions,
@@ -191,6 +244,46 @@ async function createChallenge(ctx: BotContext, count: number, opponentUserId: n
     }
 
     await replaceWithText(ctx, `⚔️ بدأ التحدي #${challengeId}. جاوب أسئلتك الآن.`, mainMenuKeyboard());
+    await showChallengeQuestion(ctx, user.user_id);
+}
+
+async function createCollectionChallenge(ctx: BotContext, collectionId: number, count: number, opponentUserId: number): Promise<void> {
+    const user = await getCurrentUser(ctx);
+    if (!user) return;
+    const peer = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ? AND display_name IS NOT NULL AND COALESCE(is_banned, 0) = 0 AND COALESCE(is_deleted, 0) = 0')
+        .bind(opponentUserId)
+        .first<typeof user>();
+    const collection = await getCollectionById(ctx.db, collectionId);
+    if (!peer || !collection || (collection.visibility === 'private' && collection.owner_user_id !== user.user_id)) {
+        await replaceWithText(ctx, '⚠️ هذا التحدي غير متاح.', mainMenuKeyboard());
+        return;
+    }
+    const words = await getCollectionWords(ctx.db, collectionId, 100, 0);
+    if (words.length < count) {
+        await replaceWithText(ctx, `هذه المجموعة تحتوي ${words.length} كلمة فقط. اختر عدد أسئلة أقل أو أضف كلمات.`, new InlineKeyboard()
+            .text('⬅️ رجوع', `collection:view:${collectionId}:page:1`)
+            .text('🏠 الرئيسية', 'menu_main'));
+        return;
+    }
+    const questions = buildQuestions(words, count);
+    const challengeId = await createAsyncChallenge(ctx.db, user.user_id, peer.user_id, questions, {
+        sourceType: 'collection',
+        sourceId: collectionId,
+        wordOrigin: questions.map(question => ({ word_id: question.word_id, collection_id: collectionId })),
+    });
+    await saveBotSession<ChallengeSessionData>(ctx.db, user.user_id, 'challenge', {
+        challengeId,
+        questions,
+        currentIndex: 0,
+        correctCount: 0,
+        startTime: Date.now(),
+    }, 120);
+    if (await competitionNotificationsEnabled(ctx.db, peer.user_id)) {
+        await sendTelegramMessage(ctx.env, peer.telegram_id, `⚔️ تحدي مجموعة كلمات!\n\n${displayUserName(user)} تحداك على مجموعة: ${collection.title}`, {
+            inline_keyboard: [[{ text: '▶️ حل التحدي', callback_data: `challenge_start_${challengeId}` }]],
+        });
+    }
+    await replaceWithText(ctx, `⚔️ بدأ تحدي المجموعة #${challengeId}.`, mainMenuKeyboard());
     await showChallengeQuestion(ctx, user.user_id);
 }
 
@@ -321,6 +414,34 @@ function buildDistractors(words: Array<{ word_id: number; german: string; arabic
         .map(word => direction === 'de_ar' ? word.arabic : word.german)
         .filter((value, index, values) => values.indexOf(value) === index)
         .slice(0, count);
+}
+
+function buildQuestions(words: Array<{ word_id: number; german: string; arabic: string }>, count: number): ChallengeSessionData['questions'] {
+    const selected = shuffle(words).slice(0, count);
+    return selected.map((word, index) => {
+        const direction: 'de_ar' | 'ar_de' = index % 2 === 0 ? 'de_ar' : 'ar_de';
+        const answer = direction === 'de_ar' ? word.arabic : word.german;
+        const prompt = direction === 'de_ar' ? word.german : word.arabic;
+        const options = shuffle([answer, ...buildDistractors(words, word.word_id, direction, 2)]);
+        return { word_id: word.word_id, prompt, answer, options, direction };
+    });
+}
+
+async function getMixedChallengeWords(ctx: BotContext, creatorUserId: number, opponentUserId: number, count: number): Promise<Array<{ word_id: number; german: string; arabic: string }>> {
+    const creatorWords = await getWordsForUserWithStatus(ctx.db, creatorUserId);
+    const opponentWords = await getWordsForUserWithStatus(ctx.db, opponentUserId);
+    const creatorCount = Math.ceil(count / 2);
+    const opponentCount = Math.floor(count / 2);
+    const selected = [
+        ...shuffle(creatorWords).slice(0, creatorCount),
+        ...shuffle(opponentWords).slice(0, opponentCount),
+    ];
+    if (selected.length < count) {
+        const used = new Set(selected.map(word => word.word_id));
+        const fallback = shuffle([...creatorWords, ...opponentWords]).filter(word => !used.has(word.word_id));
+        selected.push(...fallback.slice(0, count - selected.length));
+    }
+    return selected;
 }
 
 function shuffle<T>(array: T[]): T[] {

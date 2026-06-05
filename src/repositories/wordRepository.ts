@@ -215,6 +215,55 @@ export async function createWordAndAssignToUser(
     return wordId;
 }
 
+export async function copyWordToUser(
+    db: D1Database,
+    sourceWordId: number,
+    targetUserId: number
+): Promise<{ status: 'copied'; wordId: number } | { status: 'duplicate'; wordId: number }> {
+    const source = await getWordById(db, sourceWordId);
+    if (!source) throw new Error('source_word_not_found');
+    const duplicate = await searchDuplicateWordForUser(db, targetUserId, source.german);
+    if (duplicate) return { status: 'duplicate', wordId: duplicate.word_id };
+
+    const search = buildWordSearchFields(source.german, source.arabic, source.example);
+    const result = await run(
+        db,
+        `INSERT INTO words (
+            german, arabic, example, example_ar, pronunciation_ar, pronunciation_latin, level,
+            added_by, german_search, arabic_search, example_search
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            source.german,
+            source.arabic,
+            source.example,
+            source.example_ar,
+            source.pronunciation_ar,
+            source.pronunciation_latin,
+            source.level,
+            targetUserId,
+            search.german_search,
+            search.arabic_search,
+            search.example_search,
+        ]
+    );
+    const wordId = (result.meta as { last_row_id?: number })?.last_row_id ?? 0;
+    await run(
+        db,
+        'INSERT OR IGNORE INTO user_words (user_id, word_id, status, next_review) VALUES (?, ?, ?, datetime("now"))',
+        [targetUserId, wordId, 'new']
+    );
+    await run(
+        db,
+        `INSERT OR IGNORE INTO word_pictograms (
+            word_id, provider, pictogram_id, image_url, thumbnail_url, title, license, attribution, source_url
+         )
+         SELECT ?, provider, pictogram_id, image_url, thumbnail_url, title, license, attribution, source_url
+         FROM word_pictograms WHERE word_id = ?`,
+        [wordId, sourceWordId]
+    );
+    return { status: 'copied', wordId };
+}
+
 export async function searchDuplicateWordForUser(
     db: D1Database,
     userId: number,

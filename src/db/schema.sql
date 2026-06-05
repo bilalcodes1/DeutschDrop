@@ -330,6 +330,9 @@ CREATE TABLE IF NOT EXISTS async_challenges (
     creator_time_ms INTEGER,
     opponent_time_ms INTEGER,
     winner_user_id INTEGER,
+    challenge_source_type TEXT,
+    challenge_source_id TEXT,
+    challenge_word_origin_json TEXT,
     FOREIGN KEY (creator_user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (opponent_user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (winner_user_id) REFERENCES users(user_id) ON DELETE SET NULL
@@ -508,6 +511,47 @@ CREATE TABLE IF NOT EXISTS temporary_messages (
     FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE SET NULL
 );
 
+-- 32. word_collections
+CREATE TABLE IF NOT EXISTS word_collections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
+    source_label TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_deleted INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1)),
+    FOREIGN KEY (owner_user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS word_collection_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL,
+    word_id INTEGER NOT NULL,
+    owner_user_id INTEGER NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(collection_id, word_id),
+    FOREIGN KEY (collection_id) REFERENCES word_collections(id) ON DELETE CASCADE,
+    FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE CASCADE,
+    FOREIGN KEY (owner_user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS shared_word_offers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_user_id INTEGER NOT NULL,
+    receiver_user_id INTEGER NOT NULL,
+    offer_type TEXT NOT NULL CHECK (offer_type IN ('word', 'words', 'collection')),
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'ignored', 'expired')),
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sender_user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (receiver_user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 -- 20. job_runs (Cron job state tracking)
 CREATE TABLE IF NOT EXISTS job_runs (
     job_name TEXT PRIMARY KEY,
@@ -544,6 +588,11 @@ CREATE INDEX IF NOT EXISTS idx_tts_last_messages_expires ON tts_last_messages(ex
 CREATE INDEX IF NOT EXISTS idx_temporary_messages_user_policy ON temporary_messages(user_id, delete_policy, min_visible_until);
 CREATE INDEX IF NOT EXISTS idx_temporary_messages_expires ON temporary_messages(delete_policy, expires_at);
 CREATE INDEX IF NOT EXISTS idx_temporary_messages_kind ON temporary_messages(user_id, chat_id, kind);
+CREATE INDEX IF NOT EXISTS idx_word_collections_owner ON word_collections(owner_user_id, is_deleted, updated_at);
+CREATE INDEX IF NOT EXISTS idx_word_collections_public ON word_collections(visibility, is_deleted, updated_at);
+CREATE INDEX IF NOT EXISTS idx_word_collection_items_collection ON word_collection_items(collection_id, position);
+CREATE INDEX IF NOT EXISTS idx_shared_word_offers_receiver ON shared_word_offers(receiver_user_id, status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_shared_word_offers_cooldown ON shared_word_offers(sender_user_id, receiver_user_id, offer_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_tts_request_locks_expires ON tts_request_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_status ON async_challenges(status);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_users ON async_challenges(creator_user_id, opponent_user_id);

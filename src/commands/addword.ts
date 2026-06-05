@@ -87,7 +87,13 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
             await ctx.reply('⚔️ عندك تحدي فعال. استخدم أزرار التحدي الحالية أو ارجع للرئيسية.');
             return;
         }
-        if (user && (await getBotSession(ctx.db, user.user_id, 'admin_source_add') || await getBotSession(ctx.db, user.user_id, 'admin_source_edit') || await getBotSession(ctx.db, user.user_id, 'profile_rename'))) {
+        if (user && (
+            await getBotSession(ctx.db, user.user_id, 'admin_source_add') ||
+            await getBotSession(ctx.db, user.user_id, 'admin_source_edit') ||
+            await getBotSession(ctx.db, user.user_id, 'profile_rename') ||
+            await getBotSession(ctx.db, user.user_id, 'collection_create') ||
+            await getBotSession(ctx.db, user.user_id, 'shared_word_search')
+        )) {
             return next();
         }
 
@@ -657,6 +663,8 @@ function wordsPageKeyboard(words: Array<{ word_id: number; german: string; arabi
     }
     keyboard.text('🔍 بحث', 'word_search_start')
         .text('☑️ تحديد', `words:select:page:${page}`).row()
+        .text('👥 كلمات المستخدمين', 'shared_users:page:1').row()
+        .text('🗂 مجموعاتي', 'collections:mine:page:1').row()
         .text('➕ إضافة كلمة', 'add_word')
         .text('📤 رفع CSV', 'upload_csv').row()
         .text('⬅️ رجوع', 'menu_words')

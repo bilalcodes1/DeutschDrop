@@ -372,6 +372,85 @@ test('word list uses D1 pagination and exposes page controls', () => {
     assert.match(addWordSource, /⬅️ السابق/);
 });
 
+test('word sharing lets users browse copy and select other users words safely', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
+    const wordRepoSource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+    const copyWordBlockStart = wordRepoSource.indexOf('export async function copyWordToUser');
+    const copyWordBlockEnd = wordRepoSource.indexOf('export async function searchDuplicateWordForUser');
+    const copyWordBlock = wordRepoSource.slice(copyWordBlockStart, copyWordBlockEnd);
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+
+    assert.match(botSource, /registerSharingCollectionsCommand\(bot\)/);
+    assert.match(addWordSource, /👥 كلمات المستخدمين/);
+    assert.match(commandSource, /shared_users:page:/);
+    assert.match(repoSource, /COALESCE\(u\.is_banned, 0\) = 0/);
+    assert.match(repoSource, /COALESCE\(u\.is_deleted, 0\) = 0/);
+    assert.match(commandSource, /قراءة فقط/);
+    assert.match(commandSource, /لا يمكنك تعديل أو حذف كلمات مستخدم آخر/);
+    assert.doesNotMatch(commandSource, /deleteWordForUser|updateWordForUser|Telegram ID|telegram_id:/);
+    assert.match(commandSource, /shared_word_copy:/);
+    assert.match(copyWordBlock, /copyWordToUser/);
+    assert.match(copyWordBlock, /searchDuplicateWordForUser\(db, targetUserId, source\.german\)/);
+    assert.match(copyWordBlock, /INSERT INTO words \([\s\S]*example_ar[\s\S]*pronunciation_ar[\s\S]*pronunciation_latin[\s\S]*level/);
+    assert.match(copyWordBlock, /INSERT OR IGNORE INTO word_pictograms/);
+    assert.doesNotMatch(copyWordBlock, /correct_count|wrong_count|difficulty_score|word_learning_stats/);
+    assert.match(commandSource, /shared_select:start/);
+    assert.match(commandSource, /shared_select:copy/);
+    assert.match(commandSource, /shared_user_copy_all/);
+    assert.match(repoSource, /slice\(0, 100\)/);
+});
+
+test('word collections support public playlists copy share and ownership rules', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0028_word_sharing_collections_challenges.sql', import.meta.url), 'utf8');
+    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS word_collections/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS word_collection_items/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS shared_word_offers/);
+    assert.match(schemaSource, /visibility TEXT NOT NULL DEFAULT 'public'/);
+    assert.match(commandSource, /🗂 مجموعات الكلمات/);
+    assert.match(commandSource, /مثل Playlist، لكن للكلمات/);
+    assert.match(commandSource, /collections:create/);
+    assert.match(commandSource, /showCollectionWordPicker/);
+    assert.match(repoSource, /createWordCollection/);
+    assert.match(repoSource, /addWordsToCollection/);
+    assert.match(repoSource, /getPublicCollections/);
+    assert.match(commandSource, /collection\.owner_user_id === userId/);
+    assert.match(commandSource, /📥 نسخ المجموعة إلى كلماتي/);
+    assert.match(commandSource, /collection:copy_prompt/);
+    assert.match(commandSource, /\$\{collection\.title\} - نسخة/);
+    assert.match(commandSource, /share_collection:/);
+    assert.match(repoSource, /datetime\('now', '\+7 days'\)/);
+    assert.match(repoSource, /created_at >= datetime\('now', '-1 hour'\)/);
+    assert.match(commandSource, /offer:accept:/);
+    assert.match(commandSource, /offer:ignore:/);
+});
+
+test('collection and mixed challenges store challenge source metadata', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/challenge.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/challengeRepository.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0028_word_sharing_collections_challenges.sql', import.meta.url), 'utf8');
+
+    assert.match(commandSource, /اختر مصدر كلمات التحدي/);
+    assert.match(commandSource, /challenge_source_mixed/);
+    assert.match(commandSource, /collection_challenge_count_/);
+    assert.match(commandSource, /createCollectionChallenge/);
+    assert.match(commandSource, /getMixedChallengeWords/);
+    assert.match(commandSource, /Math\.ceil\(count \/ 2\)/);
+    assert.match(commandSource, /Math\.floor\(count \/ 2\)/);
+    assert.match(commandSource, /هذه المجموعة تحتوي \$\{words\.length\} كلمة فقط/);
+    assert.match(repoSource, /challenge_source_type/);
+    assert.match(repoSource, /challenge_source_id/);
+    assert.match(repoSource, /challenge_word_origin_json/);
+    assert.match(commandSource, /sourceType: 'collection'/);
+    assert.match(commandSource, /sourceType: source === 'mixed' \? 'mixed_users' : 'all_words'/);
+    assert.match(migrationSource, /ALTER TABLE async_challenges ADD COLUMN challenge_source_type TEXT/);
+});
+
 test('word list first and last pages hide unavailable navigation', () => {
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
     assert.match(addWordSource, /if \(page > 1\)/);
