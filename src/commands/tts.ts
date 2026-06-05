@@ -9,7 +9,13 @@ import {
     releaseTtsRequestLock,
     upsertWordAudioFileId,
 } from '../repositories/wordAudioCacheRepository';
-import { CLOUDFLARE_TTS_PROVIDER, generateCloudflareTts, getCloudflareTtsConfig, normalizeTtsText } from '../services/tts/cloudflareTts';
+import {
+    EDGE_TTS_GERMAN_MODEL,
+    EDGE_TTS_GERMAN_PROVIDER,
+    generateEdgeTtsGerman,
+    getEdgeTtsGermanConfig,
+    normalizeTtsText,
+} from '../services/tts/edgeTtsGerman';
 import { normalizeReturnContext, type ReturnContext } from '../services/returnContext';
 
 const TTS_DAILY_GENERATION_LIMIT = 30;
@@ -53,8 +59,8 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
     }
 
     try {
-        const config = getCloudflareTtsConfig(ctx.env);
-        const cached = await getCachedWordAudio(ctx.db, user.user_id, word.word_id, germanText, CLOUDFLARE_TTS_PROVIDER, config.language, config.voice, config.model);
+        const config = getEdgeTtsGermanConfig(ctx.env);
+        const cached = await getCachedWordAudio(ctx.db, user.user_id, word.word_id, germanText, EDGE_TTS_GERMAN_PROVIDER, config.language, config.voice, EDGE_TTS_GERMAN_MODEL);
         if (cached?.telegram_file_id) {
             await ctx.replyWithAudio(cached.telegram_file_id, {
                 title: germanText,
@@ -64,13 +70,13 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
             return;
         }
 
-        const generatedToday = await countGeneratedAudioToday(ctx.db, user.user_id, CLOUDFLARE_TTS_PROVIDER);
+        const generatedToday = await countGeneratedAudioToday(ctx.db, user.user_id, EDGE_TTS_GERMAN_PROVIDER);
         if (generatedToday >= TTS_DAILY_GENERATION_LIMIT) {
             await showTtsUnavailable(ctx);
             return;
         }
 
-        const generated = await generateCloudflareTts(ctx.env, germanText);
+        const generated = await generateEdgeTtsGerman(ctx.env, germanText);
         const message = await ctx.replyWithAudio(new InputFile(generated.audioBytes, `${safeAudioFilename(germanText)}.mp3`), {
             title: germanText,
             performer: 'DeutschDrop',
@@ -95,7 +101,7 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
         console.warn('tts_generation_failed', {
             userId: user.user_id,
             wordId: word.word_id,
-            provider: CLOUDFLARE_TTS_PROVIDER,
+            provider: EDGE_TTS_GERMAN_PROVIDER,
             error: err,
         });
         await showTtsUnavailable(ctx);
