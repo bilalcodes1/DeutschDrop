@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc",
     "test": "npm run build && node --experimental-specifier-resolution=node --test test/*.test.mjs",
+    "generate:stats": "node scripts/generateProjectStats.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:create": "wrangler d1 create deutschdrop-db",

@@ -254,6 +254,37 @@ test('about project page introduces developer and navigation', () => {
     assert.match(source, /\.text\('🏠 الرئيسية', 'menu_main'\)/);
 });
 
+test('about project page shows generated project code line count without internal paths', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const generatedSource = fs.readFileSync(new URL('../src/generated/projectStats.ts', import.meta.url), 'utf8');
+    const aboutTextBlock = menuSource.slice(menuSource.indexOf('function aboutProjectText'), menuSource.indexOf('function aboutProjectKeyboard'));
+
+    assert.match(menuSource, /PROJECT_CODE_LINES_LABEL/);
+    assert.match(aboutTextBlock, /🧾 حجم المشروع/);
+    assert.match(aboutTextBlock, /يتكوّن DeutschDrop حالياً من حوالي \$\{PROJECT_CODE_LINES_LABEL\} سطر برمجي/);
+    assert.match(generatedSource, /export const PROJECT_CODE_LINES = \d+;/);
+    assert.match(generatedSource, /export const PROJECT_CODE_LINES_LABEL = "\d{1,3}(,\d{3})*";/);
+    assert.doesNotMatch(aboutTextBlock, /src\/|scripts\/|migrations\/|wrangler\.toml|package\.json|tsconfig\.json|\.ts|\.sql/);
+});
+
+test('project stats generator includes bot files and ignores generated or dependency output', () => {
+    const scriptSource = fs.readFileSync(new URL('../scripts/generateProjectStats.mjs', import.meta.url), 'utf8');
+    const packageSource = fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8');
+
+    assert.match(packageSource, /"generate:stats": "node scripts\/generateProjectStats\.mjs"/);
+    for (const ignored of ["'node_modules'", "'.wrangler'", "'dist'", "'build'", "'coverage'"]) {
+        assert.match(scriptSource, new RegExp(ignored.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    for (const lockFile of ["'package-lock.json'", "'pnpm-lock.yaml'", "'yarn.lock'"]) {
+        assert.match(scriptSource, new RegExp(lockFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(scriptSource, /normalized\.startsWith\('src\/'\)[\s\S]*codeExtensions\.has\(ext\)/);
+    assert.match(scriptSource, /normalized\.startsWith\('scripts\/'\)[\s\S]*scriptExtensions\.has\(ext\)/);
+    assert.match(scriptSource, /normalized\.startsWith\('migrations\/'\)[\s\S]*ext === '\.sql'/);
+    assert.match(scriptSource, /configFiles/);
+    assert.match(scriptSource, /src\/generated\/projectStats\.ts/);
+});
+
 test('onboarding appears after first level selection and only once', () => {
     const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
     const settingsSource = fs.readFileSync(new URL('../src/commands/settings.ts', import.meta.url), 'utf8');

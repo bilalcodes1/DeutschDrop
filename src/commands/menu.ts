@@ -6,6 +6,7 @@ import { getUserByTelegramId, getUserSettings } from '../repositories/userReposi
 import { deleteBotSession } from '../repositories/sessionRepository';
 import { isAdminTelegramId } from '../services/adminAccess';
 import { formatSupportRemaining, getUserRoleBadge } from '../services/roleUi';
+import { PROJECT_CODE_LINES_LABEL } from '../generated/projectStats';
 import { replaceWithText } from './wordPanel';
 
 export function registerMenuCommand(bot: Bot<BotContext>): void {
@@ -171,6 +172,9 @@ DeutschDrop هو بوت تعليمي لتعلم وحفظ الكلمات الأل
 * جعل التعلم بسيط ومجاني قدر الإمكان.
 
 المشروع صُمم حتى يكون مساعد يومي للمتعلم، مو مجرد قائمة كلمات.
+
+🧾 حجم المشروع:
+يتكوّن DeutschDrop حالياً من حوالي ${PROJECT_CODE_LINES_LABEL} سطر برمجي.
 
 👨‍💻 المطور
 
