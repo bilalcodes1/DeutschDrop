@@ -42,6 +42,11 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
         await ctx.answerCallbackQuery();
     });
 
+    bot.callbackQuery('menu_about', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await replaceWithText(ctx, aboutProjectText(), aboutProjectKeyboard());
+    });
+
     // Back to main menu
     bot.callbackQuery('menu_main', async (ctx) => {
         await ctx.answerCallbackQuery();
@@ -130,11 +135,57 @@ export function moreMenuKeyboard(isAdmin: boolean = false): InlineKeyboard {
         .text('🔔 الإشعارات', 'menu_notifications').row()
         .text('📊 الإحصائيات', 'menu_stats')
         .text('📚 المصادر', 'menu_sources').row()
-        .text('💙 دعم المشروع', 'menu_support').row();
+        .text('💙 دعم المشروع', 'menu_support')
+        .text('ℹ️ عن المشروع', 'menu_about').row();
 
     if (isAdmin) keyboard.text('🛠 لوحة الأدمن', 'admin_panel').row();
 
     return keyboard.text('🏠 الرئيسية', 'menu_main');
+}
+
+function aboutProjectText(): string {
+    return `ℹ️ عن DeutschDrop
+
+DeutschDrop هو بوت تعليمي لتعلم وحفظ الكلمات الألمانية بطريقة عملية داخل تيليگرام.
+
+فكرة المشروع جاءت حتى نبتعد عن التشتت بين تطبيقات كثيرة:
+تطبيق للحفظ، تطبيق للنطق، تطبيق للتدريب، تطبيق للمراجعة، وبعضها مجاني وبعضها مدفوع.
+
+هنا حاولنا نجمع كل الطرق المفيدة في مكان واحد نستخدمه يومياً:
+تيليگرام.
+
+الهدف من DeutschDrop:
+
+* حفظ الكلمات الألمانية.
+* مراجعتها بتكرار ذكي.
+* تثبيت النطق الصحيح.
+* التدريب على الكتابة.
+* ممارسة الترجمة من الألماني للعربي والعكس.
+* التركيز على الكلمات التي تخطئ بها أكثر.
+* جعل التعلم بسيط ومجاني قدر الإمكان.
+
+المشروع صُمم حتى يكون مساعد يومي للمتعلم، مو مجرد قائمة كلمات.
+
+👨‍💻 المطور
+
+بلال زامل
+طالب في جامعة الأنبار
+قسم علوم الحاسوب
+
+Instagram:
+@bilalcodes1
+
+Telegram:
+@bilalcodes1`;
+}
+
+function aboutProjectKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .url('📸 Instagram', 'https://instagram.com/bilalcodes1')
+        .url('✈️ Telegram', 'https://t.me/bilalcodes1').row()
+        .text('💙 دعم المشروع', 'menu_support').row()
+        .text('⬅️ رجوع', 'menu_more')
+        .text('🏠 الرئيسية', 'menu_main');
 }
 
 export function levelSelectionKeyboard(backCallback: string = 'menu_main'): InlineKeyboard {

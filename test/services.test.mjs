@@ -230,10 +230,28 @@ test('main menu is simplified and advanced actions live under more', () => {
         assert.match(source, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(source, /moreMenuKeyboard/);
-    for (const label of ['👤 ملفي', '🏆 الصدارة', '⚔️ التحديات', '🔔 الإشعارات', '📚 المصادر', '💙 دعم المشروع']) {
+    for (const label of ['👤 ملفي', '🏆 الصدارة', '⚔️ التحديات', '🔔 الإشعارات', '📚 المصادر', '💙 دعم المشروع', 'ℹ️ عن المشروع']) {
         assert.match(source, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(source, /menu_main/);
+});
+
+test('about project page introduces developer and navigation', () => {
+    const source = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const aboutBlock = source.slice(source.indexOf("bot.callbackQuery('menu_about'"), source.indexOf("// Back to main menu"));
+
+    assert.match(source, /bot\.callbackQuery\('menu_about'/);
+    assert.match(aboutBlock, /await ctx\.answerCallbackQuery\(\)/);
+    assert.match(source, /ℹ️ عن DeutschDrop/);
+    assert.match(source, /بلال زامل/);
+    assert.match(source, /جامعة الأنبار/);
+    assert.match(source, /قسم علوم الحاسوب/);
+    assert.match(source, /@bilalcodes1/);
+    assert.match(source, /\.url\('📸 Instagram', 'https:\/\/instagram\.com\/bilalcodes1'\)/);
+    assert.match(source, /\.url\('✈️ Telegram', 'https:\/\/t\.me\/bilalcodes1'\)/);
+    assert.match(source, /\.text\('💙 دعم المشروع', 'menu_support'\)/);
+    assert.match(source, /\.text\('⬅️ رجوع', 'menu_more'\)/);
+    assert.match(source, /\.text\('🏠 الرئيسية', 'menu_main'\)/);
 });
 
 test('word list uses D1 pagination and exposes page controls', () => {
