@@ -4,7 +4,7 @@ import { createAsyncChallenge, getChallenge, getChallengeQuestions, hasOpenChall
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { getChallengeCandidates, getUserByTelegramId } from '../repositories/userRepository';
 import { getWordsForUserWithStatus } from '../repositories/wordRepository';
-import { getCollectionById, getCollectionWords } from '../repositories/wordSharingRepository';
+import { countCollectionsByUser, getCollectionById, getCollectionsByUser, getCollectionWords } from '../repositories/wordSharingRepository';
 import { unlockAchievement } from '../services/achievements';
 import { competitionNotificationsEnabled, displayUserName, sendTelegramMessage } from '../services/notifications';
 import { addXp } from '../services/xpLevels';
@@ -58,6 +58,11 @@ export function registerChallengeCommand(bot: Bot<BotContext>): void {
             .text('🏠 الرئيسية', 'menu_main'));
     });
 
+    bot.callbackQuery(/^challenge_collections:page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await showChallengeCollections(ctx, Number(ctx.match[1]));
+    });
+
     bot.callbackQuery(/^collection_challenge_count_(\d+)_(5|10|20)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         await showOpponentSelection(ctx, Number(ctx.match[2]), 'collection', Number(ctx.match[1]));
@@ -104,7 +109,7 @@ async function showChallengeOptions(ctx: BotContext): Promise<void> {
     const keyboard = new InlineKeyboard()
         .text('📚 كلماتي كلها', 'challenge_source_all').row()
         .text('🎲 مختلط من الطرفين', 'challenge_source_mixed').row()
-        .text('🗂 مجموعة كلمات', 'collections:mine:page:1').row()
+        .text('🗂 تحدي على مجموعة كلمات', 'challenge_collections:page:1').row()
         .text('🔥 الكلمات الصعبة', 'hard_words').row()
         .text('📜 سجل التحديات', 'challenge_history_0');
 
@@ -118,6 +123,30 @@ async function showChallengeOptions(ctx: BotContext): Promise<void> {
     keyboard.row().text('⬅️ رجوع', 'menu_main');
 
     await replaceWithText(ctx, '⚔️ *التحديات*\n\nاختر مصدر كلمات التحدي:', keyboard, 'Markdown');
+}
+
+async function showChallengeCollections(ctx: BotContext, page: number): Promise<void> {
+    const user = await getCurrentUser(ctx);
+    if (!user) return;
+    const total = await countCollectionsByUser(ctx.db, user.user_id);
+    const totalPages = Math.max(1, Math.ceil(total / 10));
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    const collections = await getCollectionsByUser(ctx.db, user.user_id, 10, (safePage - 1) * 10);
+    const text = collections.length === 0
+        ? '🗂 تحدي على مجموعة كلمات\n\nلا توجد مجموعات بعد. أنشئ مجموعة من 📂 كلماتي.'
+        : '🗂 تحدي على مجموعة كلمات\n\nاختر مجموعة، بعدها اختار عدد الأسئلة والمنافس:\n\n' +
+            collections.map(item => `• ${item.title}\nكلمات: ${item.word_count ?? 0}`).join('\n\n');
+    const keyboard = new InlineKeyboard();
+    for (const collection of collections) {
+        keyboard.text(`🗂 ${collection.title} (${collection.word_count ?? 0})`, `collection_challenge_count_${collection.id}`).row();
+    }
+    if (safePage > 1) keyboard.text('⬅️ السابق', `challenge_collections:page:${safePage - 1}`);
+    if (safePage < totalPages) keyboard.text('التالي ➡️', `challenge_collections:page:${safePage + 1}`);
+    if (safePage > 1 || safePage < totalPages) keyboard.row();
+    keyboard.text('➕ إنشاء مجموعة', 'collections:create').row()
+        .text('⬅️ رجوع', 'menu_challenge')
+        .text('🏠 الرئيسية', 'menu_main');
+    await replaceWithText(ctx, text, keyboard);
 }
 
 async function showChallengeCountForSource(ctx: BotContext, source: 'all' | 'mixed'): Promise<void> {

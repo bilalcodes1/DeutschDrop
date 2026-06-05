@@ -37,7 +37,8 @@ export interface SharedWordOffer {
     updated_at: string;
 }
 
-export async function countPublicWordUsers(db: D1Database, currentUserId: number): Promise<number> {
+export async function countPublicWordUsers(db: D1Database, currentUserId: number, query?: string): Promise<number> {
+    const like = `%${query ?? ''}%`;
     const row = await queryOne<{ count: number }>(
         db,
         `SELECT COUNT(*) AS count
@@ -46,13 +47,15 @@ export async function countPublicWordUsers(db: D1Database, currentUserId: number
            AND u.display_name IS NOT NULL
            AND COALESCE(u.is_banned, 0) = 0
            AND COALESCE(u.is_deleted, 0) = 0
+           AND (? = '%%' OR u.display_name LIKE ? OR u.username LIKE ?)
            AND EXISTS (SELECT 1 FROM words w WHERE w.added_by = u.user_id)`,
-        [currentUserId]
+        [currentUserId, like, like, like]
     );
     return row?.count ?? 0;
 }
 
-export async function getPublicWordUsers(db: D1Database, currentUserId: number, limit: number, offset: number): Promise<PublicUserWordSummary[]> {
+export async function getPublicWordUsers(db: D1Database, currentUserId: number, limit: number, offset: number, query?: string): Promise<PublicUserWordSummary[]> {
+    const like = `%${query ?? ''}%`;
     return queryAll<PublicUserWordSummary>(
         db,
         `SELECT u.user_id, u.display_name, COUNT(w.word_id) AS word_count, s.german_level, u.last_active_at
@@ -63,10 +66,11 @@ export async function getPublicWordUsers(db: D1Database, currentUserId: number, 
            AND u.display_name IS NOT NULL
            AND COALESCE(u.is_banned, 0) = 0
            AND COALESCE(u.is_deleted, 0) = 0
+           AND (? = '%%' OR u.display_name LIKE ? OR u.username LIKE ?)
          GROUP BY u.user_id
          ORDER BY COALESCE(u.last_active_at, u.updated_at, u.created_at) DESC
          LIMIT ? OFFSET ?`,
-        [currentUserId, limit, offset]
+        [currentUserId, like, like, like, limit, offset]
     );
 }
 
@@ -246,6 +250,36 @@ export async function createSharedWordOffer(db: D1Database, senderUserId: number
 
 export async function getSharedWordOffer(db: D1Database, offerId: number): Promise<SharedWordOffer | null> {
     return queryOne<SharedWordOffer>(db, 'SELECT * FROM shared_word_offers WHERE id = ?', [offerId]);
+}
+
+export async function countIncomingSharedWordOffers(db: D1Database, receiverUserId: number): Promise<number> {
+    const row = await queryOne<{ count: number }>(
+        db,
+        `SELECT COUNT(*) AS count
+         FROM shared_word_offers
+         WHERE receiver_user_id = ?
+           AND status = 'pending'
+           AND expires_at > datetime('now')`,
+        [receiverUserId]
+    );
+    return row?.count ?? 0;
+}
+
+export async function getIncomingSharedWordOffers(db: D1Database, receiverUserId: number, limit: number, offset: number): Promise<Array<SharedWordOffer & { sender_name: string | null }>> {
+    return queryAll<SharedWordOffer & { sender_name: string | null }>(
+        db,
+        `SELECT o.*, COALESCE(u.display_name, u.name) AS sender_name
+         FROM shared_word_offers o
+         INNER JOIN users u ON u.user_id = o.sender_user_id
+         WHERE o.receiver_user_id = ?
+           AND o.status = 'pending'
+           AND o.expires_at > datetime('now')
+           AND COALESCE(u.is_banned, 0) = 0
+           AND COALESCE(u.is_deleted, 0) = 0
+         ORDER BY o.created_at DESC
+         LIMIT ? OFFSET ?`,
+        [receiverUserId, limit, offset]
+    );
 }
 
 export async function isSharedWordOfferExpired(db: D1Database, offerId: number): Promise<boolean> {

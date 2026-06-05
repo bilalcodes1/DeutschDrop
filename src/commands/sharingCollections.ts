@@ -5,6 +5,7 @@ import { getChallengeCandidates, getUserByTelegramId } from '../repositories/use
 import { copyWordToUser, countSearchWordsByUser, countWordsByUser, getWordById, getWordsByUserPaginated, searchDuplicateWordForUser } from '../repositories/wordRepository';
 import {
     addWordsToCollection,
+    countIncomingSharedWordOffers,
     copyWordsToUser,
     countCollectionsByUser,
     countPublicCollections,
@@ -14,6 +15,7 @@ import {
     getCollectionById,
     getCollectionsByUser,
     getCollectionWords,
+    getIncomingSharedWordOffers,
     getPublicCollections,
     getPublicWordOwner,
     getPublicWordUsers,
@@ -45,6 +47,7 @@ interface CollectionCreateSession {
 interface ShareSearchSession {
     ownerUserId?: number;
     collectionSearch?: boolean;
+    userSearch?: boolean;
 }
 
 export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
@@ -64,6 +67,8 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
             await deleteBotSession(ctx.db, user.user_id, 'shared_word_search');
             if (search.data.collectionSearch) {
                 await showPublicCollections(ctx, user.user_id, 1, query);
+            } else if (search.data.userSearch) {
+                await showPublicUsers(ctx, user.user_id, 1, query);
             } else if (search.data.ownerUserId) {
                 await showOtherUserWords(ctx, user.user_id, search.data.ownerUserId, 1, query);
             }
@@ -78,6 +83,14 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
         const user = await currentUser(ctx);
         if (!user) return;
         await showPublicUsers(ctx, user.user_id, Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery('shared_users_search', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await saveBotSession<ShareSearchSession>(ctx.db, user.user_id, 'shared_word_search', { userSearch: true }, 30);
+        await replaceWithText(ctx, '🔍 اكتب اسم المستخدم الذي تريد البحث عنه:', backHomeKeyboard('shared_users:page:1'));
     });
 
     bot.callbackQuery(/^shared_user:(\d+):page:(\d+)$/, async (ctx) => {
@@ -181,6 +194,18 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
         const user = await currentUser(ctx);
         if (!user) return;
         await showMyCollections(ctx, user.user_id, Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery('collections:menu', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await showCollectionsMenu(ctx);
+    });
+
+    bot.callbackQuery(/^shared_offers:page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await showSharedOffers(ctx, user.user_id, Number(ctx.match[1]));
     });
 
     bot.callbackQuery('collections:create', async (ctx) => {
@@ -317,21 +342,22 @@ async function currentUser(ctx: BotContext) {
     return user;
 }
 
-async function showPublicUsers(ctx: BotContext, currentUserId: number, page: number): Promise<void> {
-    const total = await countPublicWordUsers(ctx.db, currentUserId);
+async function showPublicUsers(ctx: BotContext, currentUserId: number, page: number, query?: string): Promise<void> {
+    const total = await countPublicWordUsers(ctx.db, currentUserId, query);
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     const safePage = Math.max(1, Math.min(page, totalPages));
-    const users = await getPublicWordUsers(ctx.db, currentUserId, PAGE_SIZE, (safePage - 1) * PAGE_SIZE);
+    const users = await getPublicWordUsers(ctx.db, currentUserId, PAGE_SIZE, (safePage - 1) * PAGE_SIZE, query);
     const text = users.length === 0
-        ? '👥 لا يوجد مستخدمون لديهم كلمات عامة حالياً.'
-        : `👥 كلمات المستخدمين\n\nالصفحة: ${safePage}/${totalPages}\n\n` + users.map(user =>
+        ? '👥 كلمات المستخدمين\n\nلا يوجد مستخدمون لديهم كلمات عامة حالياً.'
+        : `👥 كلمات المستخدمين\n\nاختر مستخدم حتى تشوف كلماته وتنسخ منها.\n\nالصفحة: ${safePage}/${totalPages}\n\n` + users.map(user =>
             `• ${user.display_name}\nكلمات: ${user.word_count}${user.german_level ? ` | مستوى: ${user.german_level}` : ''}${user.last_active_at ? `\nآخر نشاط: ${formatRelativeDate(user.last_active_at)}` : ''}`
         ).join('\n\n');
     const keyboard = new InlineKeyboard();
-    for (const user of users) keyboard.text(`${user.display_name} (${user.word_count})`, `shared_user:${user.user_id}:page:1`).row();
+    for (const user of users) keyboard.text(`👤 ${user.display_name} — ${user.word_count} كلمة`, `shared_user:${user.user_id}:page:1`).row();
     if (safePage > 1) keyboard.text('⬅️ السابق', `shared_users:page:${safePage - 1}`);
     if (safePage < totalPages) keyboard.text('التالي ➡️', `shared_users:page:${safePage + 1}`);
     if (safePage > 1 || safePage < totalPages) keyboard.row();
+    keyboard.text('🔍 بحث عن مستخدم', 'shared_users_search').row();
     keyboard.text('⬅️ رجوع', 'list_words').text('🏠 الرئيسية', 'menu_main');
     await replaceWithText(ctx, text, keyboard);
 }
@@ -441,8 +467,19 @@ async function showMyCollections(ctx: BotContext, userId: number, page: number):
     if (safePage > 1) keyboard.text('⬅️ السابق', `collections:mine:page:${safePage - 1}`);
     if (safePage < totalPages) keyboard.text('التالي ➡️', `collections:mine:page:${safePage + 1}`);
     if (safePage > 1 || safePage < totalPages) keyboard.row();
-    keyboard.text('⬅️ رجوع', 'list_words').text('🏠 الرئيسية', 'menu_main');
+    keyboard.text('⬅️ رجوع', 'collections:menu').text('🏠 الرئيسية', 'menu_main');
     await replaceWithText(ctx, text, keyboard);
+}
+
+async function showCollectionsMenu(ctx: BotContext): Promise<void> {
+    await replaceWithText(ctx, '🗂 مجموعات الكلمات\n\nالمجموعة مثل Playlist، لكن للكلمات.', new InlineKeyboard()
+        .text('📚 مجموعاتي', 'collections:mine:page:1').row()
+        .text('➕ إنشاء مجموعة', 'collections:create').row()
+        .text('🌍 مجموعات المستخدمين', 'collections:public:page:1').row()
+        .text('🔍 بحث عن مجموعة', 'collections:public_search').row()
+        .text('📥 مجموعات شاركوها معي', 'shared_offers:page:1').row()
+        .text('⬅️ رجوع إلى كلماتي', 'menu_words')
+        .text('🏠 الرئيسية', 'menu_main'));
 }
 
 async function handleCollectionCreateText(ctx: BotContext, userId: number, data: CollectionCreateSession, text: string): Promise<void> {
@@ -518,7 +555,33 @@ async function showPublicCollections(ctx: BotContext, userId: number, page: numb
     if (safePage < totalPages) keyboard.text('التالي ➡️', `collections:public:page:${safePage + 1}`);
     if (safePage > 1 || safePage < totalPages) keyboard.row();
     keyboard.text('🔍 بحث عن مجموعة', 'collections:public_search').row()
-        .text('⬅️ رجوع', 'collections:mine:page:1').text('🏠 الرئيسية', 'menu_main');
+        .text('⬅️ رجوع', 'collections:menu').text('🏠 الرئيسية', 'menu_main');
+    await replaceWithText(ctx, text, keyboard);
+}
+
+async function showSharedOffers(ctx: BotContext, userId: number, page: number): Promise<void> {
+    const total = await countIncomingSharedWordOffers(ctx.db, userId);
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    const offers = await getIncomingSharedWordOffers(ctx.db, userId, PAGE_SIZE, (safePage - 1) * PAGE_SIZE);
+    const text = offers.length === 0
+        ? '📥 العروض المشتركة\n\nلا توجد عروض كلمات أو مجموعات بانتظارك حالياً.'
+        : '📥 العروض المشتركة\n\nهذه كلمات أو مجموعات شاركها مستخدمون آخرون معك:\n\n' + offers.map((offer, index) => {
+            const payload = JSON.parse(offer.payload_json) as { wordIds?: number[]; collectionId?: number };
+            const kind = offer.offer_type === 'collection' || payload.collectionId ? 'مجموعة كلمات' : 'كلمات';
+            return `${index + 1}. ${kind}\nمن: ${offer.sender_name ?? 'مستخدم'}\nتنتهي: ${formatRelativeDate(offer.expires_at)}`;
+        }).join('\n\n');
+    const keyboard = new InlineKeyboard();
+    for (const offer of offers) {
+        const payload = JSON.parse(offer.payload_json) as { wordIds?: number[]; collectionId?: number };
+        const kind = offer.offer_type === 'collection' || payload.collectionId ? 'مجموعة' : 'كلمات';
+        keyboard.text(`📥 قبول ${kind} #${offer.id}`, `offer:accept:${offer.id}`).row()
+            .text(`❌ تجاهل #${offer.id}`, `offer:ignore:${offer.id}`).row();
+    }
+    if (safePage > 1) keyboard.text('⬅️ السابق', `shared_offers:page:${safePage - 1}`);
+    if (safePage < totalPages) keyboard.text('التالي ➡️', `shared_offers:page:${safePage + 1}`);
+    if (safePage > 1 || safePage < totalPages) keyboard.row();
+    keyboard.text('⬅️ رجوع إلى كلماتي', 'menu_words').text('🏠 الرئيسية', 'menu_main');
     await replaceWithText(ctx, text, keyboard);
 }
 

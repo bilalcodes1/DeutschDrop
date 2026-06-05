@@ -402,6 +402,46 @@ test('word sharing lets users browse copy and select other users words safely', 
     assert.match(repoSource, /slice\(0, 100\)/);
 });
 
+test('word sharing and collection entry points are visible in user menus', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
+    const challengeSource = fs.readFileSync(new URL('../src/commands/challenge.ts', import.meta.url), 'utf8');
+
+    for (const label of ['📋 عرض كل الكلمات', '➕ إضافة كلمة', '📤 رفع CSV', '🔍 بحث', '☑️ تحديد وحذف', '👥 كلمات المستخدمين', '🗂 مجموعات الكلمات', '📥 العروض المشتركة']) {
+        assert.match(menuSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(menuSource, /shared_users:page:1/);
+    assert.match(menuSource, /collections:menu/);
+    assert.match(menuSource, /shared_offers:page:1/);
+    assert.match(addWordSource, /🗂 مجموعات الكلمات/);
+    assert.match(addWordSource, /📥 العروض المشتركة/);
+
+    assert.match(sharingSource, /اختر مستخدم حتى تشوف كلماته وتنسخ منها/);
+    assert.match(sharingSource, /👤 \$\{user\.display_name\} — \$\{user\.word_count\} كلمة/);
+    assert.match(sharingSource, /shared_users_search/);
+    assert.match(sharingSource, /قراءة فقط/);
+    assert.match(sharingSource, /📥 نسخ هذه الكلمة/);
+    assert.match(sharingSource, /collections:menu/);
+    assert.match(sharingSource, /📚 مجموعاتي/);
+    assert.match(sharingSource, /➕ إنشاء مجموعة/);
+    assert.match(sharingSource, /🌍 مجموعات المستخدمين/);
+    assert.match(sharingSource, /🔍 بحث عن مجموعة/);
+    assert.match(sharingSource, /📥 مجموعات شاركوها معي/);
+    assert.match(sharingSource, /collections:create/);
+    assert.match(sharingSource, /shared_offers:page:/);
+    assert.match(sharingSource, /await ctx\.answerCallbackQuery\(\)/);
+
+    assert.match(challengeSource, /🗂 تحدي على مجموعة كلمات/);
+    assert.match(challengeSource, /challenge_collections:page:1/);
+    assert.match(challengeSource, /showChallengeCollections/);
+
+    assert.match(repoSource, /COALESCE\(u\.is_banned, 0\) = 0/);
+    assert.match(repoSource, /COALESCE\(u\.is_deleted, 0\) = 0/);
+    assert.doesNotMatch(sharingSource, /isAdminTelegramId/);
+});
+
 test('word collections support public playlists copy share and ownership rules', () => {
     const commandSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
     const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');

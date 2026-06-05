@@ -123,11 +123,15 @@ function trainCountKeyboard(): InlineKeyboard {
 
 function wordsMenuKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
-        .text('➕ إضافة كلمة', 'add_word')
-        .text('📤 رفع CSV', 'upload_csv').row()
         .text('📋 عرض كل الكلمات', 'list_words')
+        .text('➕ إضافة كلمة', 'add_word').row()
+        .text('📤 رفع CSV', 'upload_csv')
+        .text('🔍 بحث', 'word_search_start').row()
+        .text('☑️ تحديد وحذف', 'select_words_0')
         .text('📌 الكلمات الصعبة', 'hard_words').row()
-        .text('☑️ تحديد الكلمات', 'select_words_0').row()
+        .text('👥 كلمات المستخدمين', 'shared_users:page:1').row()
+        .text('🗂 مجموعات الكلمات', 'collections:menu').row()
+        .text('📥 العروض المشتركة', 'shared_offers:page:1').row()
         .text('💡 اقتراحات', 'suggest_peer_words').row()
         .text('⬅️ رجوع', 'menu_main')
         .text('🏠 الرئيسية', 'menu_main');
@@ -141,6 +145,7 @@ export function moreMenuKeyboard(isAdmin: boolean = false): InlineKeyboard {
         .text('🔔 الإشعارات', 'menu_notifications').row()
         .text('📊 الإحصائيات', 'menu_stats')
         .text('📚 المصادر', 'menu_sources').row()
+        .text('🗂 مجموعات الكلمات', 'collections:menu').row()
         .text('❓ طريقة الاستخدام', 'menu_help').row()
         .text('💙 دعم المشروع', 'menu_support')
         .text('ℹ️ عن المشروع', 'menu_about').row();
