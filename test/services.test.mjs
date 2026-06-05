@@ -408,6 +408,7 @@ test('shared word multi-select copy flow uses source ownership and safe callback
     const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
 
     assert.match(commandSource, /shared_words:select:start:\$\{ownerUserId\}:page:\$\{safePage\}/);
+    assert.match(commandSource, /startSharedWordSelection\(ctx, user\.user_id, ctx\.match\[1\], ctx\.match\[2\]/);
     for (const callback of [
         'shared_words:select:start',
         'shared_words:select:page',
@@ -430,17 +431,37 @@ test('shared word multi-select copy flow uses source ownership and safe callback
     assert.match(commandSource, /selectedWordIds: number\[\]/);
     assert.match(commandSource, /createdAt: string/);
 
+    assert.match(commandSource, /loadSharedSourceUserStatus/);
+    assert.match(commandSource, /LEFT JOIN words w ON w\.added_by = u\.user_id/);
+    assert.match(commandSource, /COALESCE\(u\.is_banned, 0\) AS is_banned/);
+    assert.match(commandSource, /COALESCE\(u\.is_deleted, 0\) AS is_deleted/);
+    assert.match(commandSource, /COUNT\(w\.word_id\) AS words_count/);
     assert.match(commandSource, /getWordsByUserPaginated\(ctx\.db, sourceUserId/);
     assert.match(commandSource, /word\.added_by !== sourceUserId/);
+    assert.doesNotMatch(commandSource, /word\.added_by !== sourceUserId \|\| sourceUserId === targetUserId/);
     assert.match(commandSource, /copyWordsToUser\(ctx\.db, ownedIds, targetUserId\)/);
     assert.match(commandSource, /SELECT word_id FROM words[\s\S]*WHERE added_by = \?/);
     assert.match(commandSource, /if \(selected\.has\(wordId\)\) selected\.delete\(wordId\)/);
     assert.match(commandSource, /for \(const word of visible\) selected\.add\(word\.word_id\)/);
     assert.match(commandSource, /selectedWordIds: \[\]/);
     assert.match(commandSource, /لم تحدد أي كلمة بعد/);
+    assert.match(commandSource, /لا توجد كلمات لدى هذا المستخدم حالياً/);
     assert.match(commandSource, /normalizeSharedPage/);
+    assert.match(commandSource, /Number\.isFinite\(value\) && value > 0 \? Math\.floor\(value\) : 1/);
     assert.match(commandSource, /showSharedSelectionError/);
     assert.match(commandSource, /shared_word_selection_failed/);
+    assert.match(commandSource, /shared_word_selection_open_failed/);
+    for (const field of ['parsedSourceUserId', 'parsedPage', 'step', 'sourceUserFound', 'sourceUserBanned', 'sourceUserDeleted', 'wordsCount', 'sessionCreated']) {
+        assert.match(commandSource, new RegExp(field));
+    }
+    for (const step of ['parse_callback', 'load_source_user', 'count_source_words', 'load_source_words', 'create_selection_session', 'render_selection', 'edit_message']) {
+        assert.match(commandSource, new RegExp(step));
+    }
+    assert.match(commandSource, /deleteBotSession\(ctx\.db, targetUserId, 'shared_word_copy_selection'\)\.catch/);
+    assert.match(commandSource, /shared_words:select:start:\$\{sourceUserId\}:page:\$\{page\}/);
+    assert.match(commandSource, /shared_user:\$\{sourceUserId\}:page:\$\{page\}/);
+    assert.match(commandSource, /replaceSharedSelectionText/);
+    assert.match(commandSource, /await ctx\.reply\(text, \{ reply_markup: keyboard \}\)/);
     assert.match(commandSource, /await ctx\.answerCallbackQuery\(\)/);
     assert.doesNotMatch(commandSource, /حدث خطأ بسيط/);
     assert.match(repoSource, /COALESCE\(u\.is_banned, 0\) = 0/);
