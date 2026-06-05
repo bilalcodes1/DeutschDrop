@@ -146,7 +146,7 @@ test('CSV upload flow does not call ARASAAC pictogram search', () => {
 
 test('saved pictogram view path does not call ARASAAC search directly', () => {
     const source = fs.readFileSync(new URL('../src/commands/pictograms.ts', import.meta.url), 'utf8');
-    const viewBlock = source.slice(source.indexOf("bot.callbackQuery(/^pictogram_view_"), source.indexOf("bot.callbackQuery(/^pictogram_use_"));
+    const viewBlock = source.slice(source.indexOf("bot.callbackQuery(/^pictogram_view_"), source.indexOf("bot.callbackQuery(/^(?:pictogram_nav_"));
     assert.match(viewBlock, /showSavedPictogram/);
     assert.doesNotMatch(viewBlock, /searchEducationalPictograms/);
 });
@@ -254,7 +254,8 @@ test('word list first and last pages hide unavailable navigation', () => {
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
     assert.match(addWordSource, /if \(page > 1\)/);
     assert.match(addWordSource, /if \(page < totalPages\)/);
-    assert.match(addWordSource, /word_detail_\$\{word\.word_id\}/);
+    assert.match(addWordSource, /words:detail:\$\{word\.word_id\}:page:\$\{page\}/);
+    assert.match(addWordSource, /words:detail:\$\{word\.word_id\}:search:\$\{page\}/);
 });
 
 test('word list handles invalid pages and DB errors with retry navigation', () => {
@@ -511,15 +512,43 @@ test('word selection bulk delete is limited to current user', () => {
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
     const wordSource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
 
-    for (const callback of ['select_words', 'word_select_all', 'word_delete_selected', 'word_delete_all']) {
+    for (const callback of ['select_words', 'bulk_select', 'manage_words_select', 'word_select', 'word_select_all', 'word_delete_selected', 'word_delete_all']) {
         assert.match(addWordSource, new RegExp(callback));
     }
     assert.match(addWordSource, /saveBotSession<WordSelectionSession>/);
+    assert.match(addWordSource, /selected_word_ids: selectedIds/);
+    assert.match(addWordSource, /mode: 'word_bulk_select'/);
+    assert.match(addWordSource, /user_id: userId/);
     assert.match(addWordSource, /getWordsByUserPaginated\(ctx\.db, userId, WORDS_PAGE_SIZE/);
     assert.match(addWordSource, /⬅️ رجوع للعرض/);
     assert.match(wordSource, /deleteWordsForUser/);
     assert.match(wordSource, /deleteAllWordsForUser/);
     assert.match(wordSource, /deleteWordForUser\(db, userId, wordId\)/);
+});
+
+test('word detail callbacks preserve page context and verify ownership', () => {
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const panelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
+
+    assert.match(addWordSource, /words:detail:/);
+    assert.match(addWordSource, /returnMode === 'search'/);
+    assert.match(addWordSource, /word_search_page_\$\{page - 1\}/);
+    assert.match(addWordSource, /words:list:page:\$\{page\}/);
+    assert.match(addWordSource, /word\.added_by !== user\.user_id/);
+    assert.match(addWordSource, /word_callback_failed/);
+    assert.match(panelSource, /backCallback = 'list_words'/);
+    assert.match(panelSource, /wordDetailKeyboard\(word, Boolean\(pictogram\), backCallback\)/);
+});
+
+test('pictogram callbacks return to the same word detail screen', () => {
+    const source = fs.readFileSync(new URL('../src/commands/pictograms.ts', import.meta.url), 'utf8');
+
+    for (const callback of ['pictogram:view:', 'pictogram:change:', 'pictogram:next:', 'pictogram:prev:', 'pictogram:use:', 'pictogram:back:']) {
+        assert.match(source, new RegExp(callback.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(source, /showWordDetailPanel\(ctx, wordId\)/);
+    assert.match(source, /showWordDetailPanel\(ctx, word\.word_id, '✅ تم حفظ الرمز\.'\)/);
+    assert.match(source, /word_callback_failed/);
 });
 
 test('smart notifications include retrieval practice types and cooldown rules', () => {

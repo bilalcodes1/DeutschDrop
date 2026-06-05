@@ -5,16 +5,16 @@ import { getWordById } from '../repositories/wordRepository';
 import type { Word } from '../models';
 import { getUserByTelegramId } from '../repositories/userRepository';
 
-export async function showWordDetailPanel(ctx: BotContext, wordId: number, notice?: string): Promise<void> {
+export async function showWordDetailPanel(ctx: BotContext, wordId: number, notice?: string, backCallback = 'list_words'): Promise<void> {
     const word = await getWordById(ctx.db, wordId);
     if (!word) {
-        await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة.', navigationKeyboard('list_words'));
+        await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة.', navigationKeyboard(backCallback));
         return;
     }
 
     const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
     if (user && word.added_by !== user.user_id) {
-        await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة في بنك كلماتك.', navigationKeyboard('list_words'));
+        await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة في بنك كلماتك.', navigationKeyboard(backCallback));
         return;
     }
 
@@ -23,7 +23,7 @@ export async function showWordDetailPanel(ctx: BotContext, wordId: number, notic
         ? await ctx.db.prepare('SELECT status FROM user_words WHERE user_id = ? AND word_id = ?').bind(user.user_id, word.word_id).first<{ status: string }>()
         : null;
     const text = (notice ? `${notice}\n\n` : '') + formatWordDetail(word, Boolean(pictogram), progress?.status ?? 'new');
-    await replaceWithText(ctx, text, wordDetailKeyboard(word, Boolean(pictogram)), 'Markdown');
+    await replaceWithText(ctx, text, wordDetailKeyboard(word, Boolean(pictogram), backCallback));
 }
 
 export async function replaceWithText(
@@ -59,11 +59,11 @@ export function navigationKeyboard(backCallback: string): InlineKeyboard {
 }
 
 function formatWordDetail(word: Word, hasPictogram: boolean, reviewStatus: string): string {
-    return `📄 *الكلمة*\n\n` +
-        `🇩🇪 *${word.german}*\n` +
+    return `📄 الكلمة\n\n` +
+        `🇩🇪 ${word.german}\n` +
         `🇮🇶 ${word.arabic}` +
-        (word.example ? `\n💬 _${word.example}_` : '') +
-        (word.example_ar ? `\n🇮🇶 _${word.example_ar}_` : '') +
+        (word.example ? `\n💬 ${word.example}` : '') +
+        (word.example_ar ? `\n🇮🇶 ${word.example_ar}` : '') +
         (word.pronunciation_latin || word.pronunciation_ar
             ? `\n🗣 اللفظ:` +
                 (word.pronunciation_latin ? `\nLatin: ${word.pronunciation_latin}` : '') +
@@ -74,7 +74,7 @@ function formatWordDetail(word: Word, hasPictogram: boolean, reviewStatus: strin
         `\n🔁 حالة المراجعة: ${reviewStatusLabel(reviewStatus)}`;
 }
 
-function wordDetailKeyboard(word: Word, hasPictogram: boolean): InlineKeyboard {
+function wordDetailKeyboard(word: Word, hasPictogram: boolean, backCallback: string): InlineKeyboard {
     const wordId = word.word_id;
     const keyboard = new InlineKeyboard();
     if (!word.example || !word.pronunciation_ar || !word.pronunciation_latin) {
@@ -87,17 +87,17 @@ function wordDetailKeyboard(word: Word, hasPictogram: boolean): InlineKeyboard {
 
     if (hasPictogram) {
         keyboard
-            .text('🖼 عرض الرمز', `pictogram_view_${wordId}`)
-            .text('🔄 تغيير الرمز', `pictogram_change_${wordId}`)
+            .text('🖼 عرض الرمز', `pictogram:view:${wordId}`)
+            .text('🔄 تغيير الرمز', `pictogram:change:${wordId}`)
             .row();
     } else {
-        keyboard.text('🖼 تعيين رمز', `pictogram_assign_${wordId}`).row();
+        keyboard.text('🖼 تعيين رمز', `pictogram:change:${wordId}`).row();
     }
 
     return keyboard
         .text('✏️ تعديل', `edit_word_${wordId}`)
         .text('🗑 حذف', `delete_word_${wordId}`).row()
-        .text('⬅️ رجوع', 'list_words')
+        .text('⬅️ رجوع', backCallback)
         .text('🏠 الرئيسية', 'menu_main');
 }
 

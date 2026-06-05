@@ -37,6 +37,10 @@ interface WordEditSessionData {
 
 interface WordSelectionSession {
     selectedIds: number[];
+    selected_word_ids?: number[];
+    user_id?: number;
+    page?: number;
+    mode?: 'word_bulk_select';
 }
 
 interface WordSearchSession {
@@ -217,6 +221,14 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         await showUserWords(ctx, user.user_id, parseSafePage(ctx.match[1]), ctx.callbackQuery?.data);
     });
 
+    bot.callbackQuery(/^words:list:page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return;
+        await deleteBotSession(ctx.db, user.user_id, 'word_search');
+        await showUserWords(ctx, user.user_id, normalizeRequestedPage(Number(ctx.match[1])), ctx.callbackQuery?.data);
+    });
+
     bot.callbackQuery('word_search_start', async (ctx) => {
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) {
@@ -244,95 +256,108 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         await ctx.answerCallbackQuery();
     });
 
-    bot.callbackQuery(/^select_words(?:_(\d+))?$/, async (ctx) => {
+    bot.callbackQuery(/^(?:words:select:page:|select_words_?|bulk_select_?|manage_words_select_?|word_select_?)(\d+)?$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) {
             await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
             return;
         }
-        await ensureSelectionSession(ctx, user.user_id);
-        await showSelectionPanel(ctx, user.user_id, Number(ctx.match[1] ?? 0));
-        await ctx.answerCallbackQuery();
+        const page = normalizeRequestedPage(Number(ctx.match[1] ?? 1));
+        await ensureSelectionSession(ctx, user.user_id, page);
+        await runWordCallback(ctx, user.user_id, 'bulk_select', undefined, page, () => showSelectionPanel(ctx, user.user_id, page));
     });
 
-    bot.callbackQuery(/^word_select_toggle_(\d+)_(\d+)$/, async (ctx) => {
+    bot.callbackQuery(/^(?:words:select:toggle:|word_select_toggle_)(\d+)(?::page:|_)(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) {
             await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
             return;
         }
         const wordId = Number(ctx.match[1]);
-        const page = Number(ctx.match[2]);
-        const word = await getWordById(ctx.db, wordId);
-        if (!word || word.added_by !== user.user_id) {
-            await ctx.answerCallbackQuery('الكلمة غير موجودة');
-            return;
-        }
-        const session = await ensureSelectionSession(ctx, user.user_id);
-        const selected = new Set(session.selectedIds);
-        if (selected.has(wordId)) selected.delete(wordId);
-        else selected.add(wordId);
-        await saveSelectionSession(ctx, user.user_id, [...selected]);
-        await showSelectionPanel(ctx, user.user_id, page);
+        const page = normalizeRequestedPage(Number(ctx.match[2]));
+        await runWordCallback(ctx, user.user_id, 'toggle_select', wordId, page, async () => {
+            const word = await getWordById(ctx.db, wordId);
+            if (!word || word.added_by !== user.user_id) {
+                await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة في بنك كلماتك.', safeWordErrorKeyboard(page));
+                return;
+            }
+            const session = await ensureSelectionSession(ctx, user.user_id, page);
+            const selected = new Set(session.selectedIds);
+            if (selected.has(wordId)) selected.delete(wordId);
+            else selected.add(wordId);
+            await saveSelectionSession(ctx, user.user_id, [...selected], page);
+            await showSelectionPanel(ctx, user.user_id, page);
+        });
+    });
+
+    bot.callbackQuery(/^(?:words:select:all:|word_select_all_?)(\d+)?$/, async (ctx) => {
         await ctx.answerCallbackQuery();
-    });
-
-    bot.callbackQuery('word_select_all', async (ctx) => {
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) {
             await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
             return;
         }
-        const words = await getWordsByUser(ctx.db, user.user_id);
-        await saveSelectionSession(ctx, user.user_id, words.map(word => word.word_id));
-        await showSelectionPanel(ctx, user.user_id, 0);
-        await ctx.answerCallbackQuery('تم تحديد كل كلماتك');
+        const page = normalizeRequestedPage(Number(ctx.match[1] ?? 1));
+        await runWordCallback(ctx, user.user_id, 'select_all', undefined, page, async () => {
+            const visible = await getWordsByUserPaginated(ctx.db, user.user_id, WORDS_PAGE_SIZE, (page - 1) * WORDS_PAGE_SIZE);
+            const session = await ensureSelectionSession(ctx, user.user_id, page);
+            const selected = new Set(session.selectedIds);
+            for (const word of visible) selected.add(word.word_id);
+            await saveSelectionSession(ctx, user.user_id, [...selected], page);
+            await showSelectionPanel(ctx, user.user_id, page);
+        });
     });
 
-    bot.callbackQuery('word_select_clear', async (ctx) => {
+    bot.callbackQuery(/^(?:words:select:clear:|word_select_clear_?)(\d+)?$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) {
             await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
             return;
         }
-        await saveSelectionSession(ctx, user.user_id, []);
-        await showSelectionPanel(ctx, user.user_id, 0);
-        await ctx.answerCallbackQuery('تم إلغاء التحديد');
+        const page = normalizeRequestedPage(Number(ctx.match[1] ?? 1));
+        await saveSelectionSession(ctx, user.user_id, [], page);
+        await showSelectionPanel(ctx, user.user_id, page);
     });
 
-    bot.callbackQuery('word_delete_selected', async (ctx) => {
+    bot.callbackQuery(/^(?:words:select:delete_confirm:|word_delete_selected_?)(\d+)?$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) {
             await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
             return;
         }
-        const session = await ensureSelectionSession(ctx, user.user_id);
+        const page = normalizeRequestedPage(Number(ctx.match[1] ?? 1));
+        const session = await ensureSelectionSession(ctx, user.user_id, page);
         if (session.selectedIds.length === 0) {
-            await replaceWithText(ctx, 'لم تحدد أي كلمة.', selectionActionsKeyboard());
-            await ctx.answerCallbackQuery();
+            await replaceWithText(ctx, 'لم تحدد أي كلمة بعد.', selectionActionsKeyboard(page));
             return;
         }
         await replaceWithText(
             ctx,
             `هل تريد حذف ${session.selectedIds.length} كلمة؟`,
             new InlineKeyboard()
-                .text('✅ نعم احذف', 'word_delete_selected_confirm')
-                .text('❌ إلغاء', 'select_words_0')
+                .text('✅ حذف المحدد', `words:select:delete_do:${page}`).row()
+                .text('❌ إلغاء', `words:select:page:${page}`)
         );
-        await ctx.answerCallbackQuery();
     });
 
-    bot.callbackQuery('word_delete_selected_confirm', async (ctx) => {
+    bot.callbackQuery(/^(?:words:select:delete_do:|word_delete_selected_confirm_?)(\d+)?$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) {
             await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
             return;
         }
-        const session = await ensureSelectionSession(ctx, user.user_id);
-        const deleted = await deleteWordsForUser(ctx.db, user.user_id, session.selectedIds);
-        await saveSelectionSession(ctx, user.user_id, []);
-        await replaceWithText(ctx, `تم حذف ${deleted} كلمة ✅`, selectionActionsKeyboard());
-        await ctx.answerCallbackQuery();
+        const page = normalizeRequestedPage(Number(ctx.match[1] ?? 1));
+        await runWordCallback(ctx, user.user_id, 'delete_selected', undefined, page, async () => {
+            const session = await ensureSelectionSession(ctx, user.user_id, page);
+            const deleted = await deleteWordsForUser(ctx.db, user.user_id, session.selectedIds);
+            await saveSelectionSession(ctx, user.user_id, [], page);
+            await replaceWithText(ctx, `تم حذف ${deleted} كلمة ✅`, selectionActionsKeyboard(page));
+        });
     });
 
     bot.callbackQuery('word_delete_all', async (ctx) => {
@@ -347,7 +372,7 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
             `سيتم حذف كل كلماتك وعددها ${words.length}. هل أنت متأكد؟`,
             new InlineKeyboard()
                 .text('✅ نعم احذف كل كلماتي', 'word_delete_all_confirm').row()
-                .text('❌ إلغاء', 'select_words_0')
+                .text('❌ إلغاء', 'words:select:page:1')
         );
         await ctx.answerCallbackQuery();
     });
@@ -360,16 +385,33 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         }
         const deleted = await deleteAllWordsForUser(ctx.db, user.user_id);
         await saveSelectionSession(ctx, user.user_id, []);
-        await replaceWithText(ctx, `تم حذف ${deleted} كلمة من حسابك ✅`, selectionActionsKeyboard());
+        await replaceWithText(ctx, `تم حذف ${deleted} كلمة من حسابك ✅`, selectionActionsKeyboard(1));
         await ctx.answerCallbackQuery();
     });
 
-    bot.callbackQuery(/^word_detail_(\d+)$/, async (ctx) => {
+    bot.callbackQuery(/^(?:word_detail_|words:detail:)(\d+)(?::(page|search):(\d+))?$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
         const wordId = parseInt(ctx.match[1], 10);
+        const returnMode = ctx.match[2];
+        const page = normalizeRequestedPage(Number(ctx.match[3] ?? 1));
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (user) await deleteBotSession(ctx.db, user.user_id, 'word_edit');
-        await ctx.answerCallbackQuery();
-        await showWordDetailPanel(ctx, wordId);
+        if (!user) return;
+        await runWordCallback(ctx, user.user_id, 'word_details', wordId, page, async () => {
+            if (!Number.isInteger(wordId) || wordId <= 0) {
+                await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة.', safeWordErrorKeyboard(page));
+                return;
+            }
+            const word = await getWordById(ctx.db, wordId);
+            if (!word || word.added_by !== user.user_id) {
+                await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة في بنك كلماتك.', safeWordErrorKeyboard(page));
+                return;
+            }
+            const backCallback = returnMode === 'search'
+                ? `word_search_page_${page - 1}`
+                : `words:list:page:${page}`;
+            await showWordDetailPanel(ctx, wordId, undefined, backCallback);
+        });
     });
 
     bot.callbackQuery(/^delete_word_(\d+)$/, async (ctx) => {
@@ -586,7 +628,10 @@ function formatWordsPage(title: string, words: Array<{ german: string; arabic: s
 function wordsPageKeyboard(words: Array<{ word_id: number; german: string; arabic: string }>, page: number, totalPages: number, search: boolean): InlineKeyboard {
     const keyboard = new InlineKeyboard();
     words.forEach((word, index) => {
-        keyboard.text(`${index + 1}. ${word.german} — ${word.arabic}`, `word_detail_${word.word_id}`).row();
+        const detailCallback = search
+            ? `words:detail:${word.word_id}:search:${page}`
+            : `words:detail:${word.word_id}:page:${page}`;
+        keyboard.text(`${index + 1}. ${word.german} — ${word.arabic}`, detailCallback).row();
     });
 
     if (page > 1) {
@@ -597,7 +642,7 @@ function wordsPageKeyboard(words: Array<{ word_id: number; german: string; arabi
     }
     if (page > 1 || page < totalPages) keyboard.row();
     keyboard.text('🔍 بحث', 'word_search_start')
-        .text('☑️ تحديد', `select_words_${page - 1}`).row()
+        .text('☑️ تحديد', `words:select:page:${page}`).row()
         .text('➕ إضافة كلمة', 'add_word')
         .text('📤 رفع CSV', 'upload_csv').row()
         .text('⬅️ رجوع', 'menu_words')
@@ -605,51 +650,57 @@ function wordsPageKeyboard(words: Array<{ word_id: number; german: string; arabi
     return keyboard;
 }
 
-async function ensureSelectionSession(ctx: BotContext, userId: number): Promise<WordSelectionSession> {
+async function ensureSelectionSession(ctx: BotContext, userId: number, page = 1): Promise<WordSelectionSession> {
     const session = await getBotSession<WordSelectionSession>(ctx.db, userId, 'word_selection');
     if (session) return session.data;
-    const data: WordSelectionSession = { selectedIds: [] };
-    await saveSelectionSession(ctx, userId, data.selectedIds);
+    const data: WordSelectionSession = { selectedIds: [], selected_word_ids: [], user_id: userId, page, mode: 'word_bulk_select' };
+    await saveSelectionSession(ctx, userId, data.selectedIds, page);
     return data;
 }
 
-async function saveSelectionSession(ctx: BotContext, userId: number, selectedIds: number[]): Promise<void> {
-    await saveBotSession<WordSelectionSession>(ctx.db, userId, 'word_selection', { selectedIds }, 120);
+async function saveSelectionSession(ctx: BotContext, userId: number, selectedIds: number[], page = 1): Promise<void> {
+    await saveBotSession<WordSelectionSession>(ctx.db, userId, 'word_selection', {
+        selectedIds,
+        selected_word_ids: selectedIds,
+        user_id: userId,
+        page,
+        mode: 'word_bulk_select',
+    }, 120);
 }
 
 async function showSelectionPanel(ctx: BotContext, userId: number, page: number): Promise<void> {
-    const session = await ensureSelectionSession(ctx, userId);
+    const session = await ensureSelectionSession(ctx, userId, page);
     const selected = new Set(session.selectedIds);
     const totalWords = await countWordsByUser(ctx.db, userId);
     const totalPages = Math.max(1, Math.ceil(totalWords / WORDS_PAGE_SIZE));
-    const safePage = Math.min(Math.max(page, 0), totalPages - 1);
-    const visible = await getWordsByUserPaginated(ctx.db, userId, WORDS_PAGE_SIZE, safePage * WORDS_PAGE_SIZE);
+    const safePage = Math.min(Math.max(page, 1), totalPages);
+    const visible = totalWords > 0 ? await getWordsByUserPaginated(ctx.db, userId, WORDS_PAGE_SIZE, (safePage - 1) * WORDS_PAGE_SIZE) : [];
 
     const text = visible.length === 0
-        ? '☑️ *تحديد الكلمات*\n\nلا توجد كلمات.'
-        : '☑️ *تحديد الكلمات*\n\n' + visible.map(word =>
-            `${selected.has(word.word_id) ? '✅' : '☐'} ${word.german} — ${word.arabic}`
+        ? '☑️ وضع التحديد\n\n📭 لا توجد كلمات بعد.'
+        : '☑️ وضع التحديد\n\nاختر الكلمات التي تريد حذفها أو إدارتها:\n\n' + visible.map(word =>
+            `${selected.has(word.word_id) ? '☑' : '☐'} ${word.german} — ${word.arabic}`
         ).join('\n');
 
     const keyboard = new InlineKeyboard();
     for (const word of visible) {
-        keyboard.text(`${selected.has(word.word_id) ? '✅' : '☐'} ${word.german}`, `word_select_toggle_${word.word_id}_${safePage}`).row();
+        keyboard.text(`${selected.has(word.word_id) ? '☑' : '☐'} ${word.german}`, `words:select:toggle:${word.word_id}:page:${safePage}`).row();
     }
     keyboard
-        .text('✅ تحديد الكل', 'word_select_all')
-        .text('❎ إلغاء التحديد', 'word_select_clear').row()
-        .text('🗑 حذف المحدد', 'word_delete_selected').row();
-    if (safePage > 0) keyboard.text('⬅️ السابق', `select_words_${safePage - 1}`);
-    if (safePage < totalPages - 1) keyboard.text('التالي ➡️', `select_words_${safePage + 1}`);
-    if (safePage > 0 || safePage < totalPages - 1) keyboard.row();
-    keyboard.text('⬅️ رجوع للعرض', `list_words_${safePage}`).text('🏠 الرئيسية', 'menu_main');
+        .text('✅ حذف المحدد', `words:select:delete_confirm:${safePage}`).row()
+        .text('☑️ تحديد الكل في الصفحة', `words:select:all:${safePage}`).row()
+        .text('🧹 إلغاء التحديد', `words:select:clear:${safePage}`).row();
+    if (safePage > 1) keyboard.text('⬅️ السابق', `words:select:page:${safePage - 1}`);
+    if (safePage < totalPages) keyboard.text('التالي ➡️', `words:select:page:${safePage + 1}`);
+    if (safePage > 1 || safePage < totalPages) keyboard.row();
+    keyboard.text('⬅️ رجوع للعرض', `words:list:page:${safePage}`).text('🏠 الرئيسية', 'menu_main');
 
-    await replaceWithText(ctx, `${text}\n\nالمحدد: ${selected.size}\nصفحة ${safePage + 1}/${totalPages}`, keyboard, 'Markdown');
+    await replaceWithText(ctx, `${text}\n\nالمحدد: ${selected.size}\nصفحة ${safePage}/${totalPages}`, keyboard);
 }
 
-function selectionActionsKeyboard(): InlineKeyboard {
+function selectionActionsKeyboard(page = 1): InlineKeyboard {
     return new InlineKeyboard()
-        .text('☑️ تحديد', 'select_words_0').row()
+        .text('☑️ تحديد', `words:select:page:${page}`).row()
         .text('⬅️ رجوع', 'menu_words')
         .text('🏠 الرئيسية', 'menu_main');
 }
@@ -696,6 +747,62 @@ function logWordListFailure(input: {
         errorName: error.name,
         errorMessage: error.message.slice(0, 200),
     });
+}
+
+async function runWordCallback(
+    ctx: BotContext,
+    userId: number,
+    action: string,
+    wordId: number | undefined,
+    page: number,
+    run: () => Promise<void>
+): Promise<void> {
+    try {
+        await run();
+    } catch (error) {
+        logWordCallbackFailure({
+            userId,
+            callbackData: ctx.callbackQuery?.data,
+            action,
+            wordId,
+            page,
+            error,
+        });
+        const errorMessage = error instanceof Error ? error.message.slice(0, 160) : 'unknown';
+        const debug = isCurrentUserAdmin(ctx) ? `\n\nDebug: ${errorMessage}` : '';
+        await replaceWithText(ctx, `حدث خطأ بسيط، جرّب مرة ثانية.${debug}`, safeWordErrorKeyboard(page));
+    }
+}
+
+function logWordCallbackFailure(input: {
+    userId: number;
+    callbackData?: string;
+    action: string;
+    wordId?: number;
+    page?: number;
+    error: unknown;
+}): void {
+    const error = input.error instanceof Error ? input.error : new Error('unknown');
+    console.warn('word_callback_failed', {
+        userId: input.userId,
+        callbackData: input.callbackData,
+        action: input.action,
+        wordId: input.wordId,
+        page: input.page,
+        errorName: error.name,
+        errorMessage: error.message.slice(0, 200),
+    });
+}
+
+function safeWordErrorKeyboard(page = 1): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('🔄 إعادة المحاولة', `words:list:page:${page}`).row()
+        .text('📂 كلماتي', `words:list:page:${page}`)
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+function isCurrentUserAdmin(ctx: BotContext): boolean {
+    return ctx.env.ADMIN_TELEGRAM_IDS?.split(',').map(id => id.trim()).includes(String(ctx.from?.id)) ?? false;
 }
 
 function wordListErrorKeyboard(isAdmin: boolean): InlineKeyboard {
