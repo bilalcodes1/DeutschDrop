@@ -1,5 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '../models';
+import { IMPORTANT_MIN_VISIBLE_SECONDS, IMPORTANT_TEMP_FALLBACK_TTL_SECONDS, recordTemporaryMessage } from '../repositories/temporaryMessageRepository';
 
 export type SmartNotificationType =
     'no_words' | 'quick_recall' | 'arabic_to_german' | 'missing_letters' | 'first_last_hint' | 'due_word' | 'hard_word' | 'context_example' | 'pictogram_recall' | 'review_plan' | 'motivational' | 'daily_summary';
@@ -113,19 +114,30 @@ export async function sendSmartNotification(env: Env, user: UserForNotification)
         const eventId = await createNotificationEvent(env.DB, user.user_id, notification.type, notification.word?.word_id ?? null);
         const replyMarkup = withEventCallbacks(notification.replyMarkup, eventId, Boolean(notification.word));
 
-        if (notification.photoUrl) {
-            await telegramCall(env, 'sendPhoto', {
+        const sent = notification.photoUrl
+            ? await telegramCall(env, 'sendPhoto', {
                 chat_id: user.telegram_id,
                 photo: notification.photoUrl,
                 caption: notification.text,
                 reply_markup: replyMarkup,
-            });
-        } else {
-            await telegramCall(env, 'sendMessage', {
+            })
+            : await telegramCall(env, 'sendMessage', {
                 chat_id: user.telegram_id,
                 text: notification.text,
                 reply_markup: replyMarkup,
             });
+        if (sent?.message_id) {
+            await recordTemporaryMessage(env.DB, {
+                userId: user.user_id,
+                chatId: sent.chat?.id ?? user.telegram_id,
+                messageId: sent.message_id,
+                kind: 'notification_answer',
+                text: notification.text,
+                wordId: notification.word?.word_id ?? null,
+                deletePolicy: 'after_seen_or_ttl',
+                minVisibleSeconds: IMPORTANT_MIN_VISIBLE_SECONDS,
+                ttlSeconds: IMPORTANT_TEMP_FALLBACK_TTL_SECONDS,
+            }).catch(() => undefined);
         }
 
         await env.DB.prepare('UPDATE settings SET last_notification_at = datetime("now"), last_notified_word_id = ? WHERE user_id = ?').bind(notification.word?.word_id ?? null, user.user_id).run();
@@ -513,10 +525,12 @@ function maskGerman(value: string): string {
     }).join(' ');
 }
 
-async function telegramCall(env: Env, method: string, body: unknown): Promise<void> {
-    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
+async function telegramCall(env: Env, method: string, body: unknown): Promise<{ message_id: number; chat?: { id: number } } | null> {
+    const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
+    const payload = await response.json<{ ok?: boolean; result?: { message_id: number; chat?: { id: number } } }>().catch(() => null);
+    return payload?.ok ? payload.result ?? null : null;
 }

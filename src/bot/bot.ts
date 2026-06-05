@@ -24,6 +24,7 @@ import { registerTtsCommand } from '../commands/tts';
 import { getUserByTelegramId, isRegisteredUser, updateUserLastActive } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 import { safeAnswerCallback, showCallbackError } from './callbacks';
+import { cleanupTemporaryMessagesForUserInteraction } from '../services/temporaryMessageCleanup';
 
 export function createBot(token: string, env: Env): Bot<BotContext> {
     const bot = new Bot<BotContext>(token);
@@ -54,12 +55,13 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
         if (!telegramId) return next();
 
         const text = ctx.message?.text;
-        if (text?.startsWith('/start')) return next();
-
         const user = await getUserByTelegramId(ctx.db, telegramId);
         if (user) {
             await updateUserLastActive(ctx.db, user.user_id);
+            await cleanupTemporaryMessagesForUserInteraction(ctx.env, user.user_id).catch(() => {});
         }
+
+        if (text?.startsWith('/start')) return next();
         if (user?.is_banned) {
             await ctx.reply('تم إيقاف حسابك من استخدام البوت.');
             return;

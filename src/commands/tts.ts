@@ -9,16 +9,15 @@ import {
     upsertWordAudioFileId,
 } from '../repositories/wordAudioCacheRepository';
 import {
-    deleteLastTtsMessageRecord,
-    getLastTtsMessage,
-    getTtsMessageTtlSeconds,
-    upsertLastTtsMessage,
-} from '../repositories/ttsLastMessageRepository';
+    ACTIVE_TEMP_TTL_SECONDS,
+    recordTemporaryMessage,
+} from '../repositories/temporaryMessageRepository';
 import { isAdminTelegramId } from '../services/adminAccess';
 import { normalizeReturnContext, type ReturnContext } from '../services/returnContext';
 import { orderedTtsProviders, synthesizeGermanTts } from '../services/tts/ttsRouter';
 import { normalizeTtsText, safeTtsMessage, type TtsProviderResult } from '../services/tts/types';
 import { debugVoiceRssKeyStates, getVoiceRssKeyStates, VOICE_RSS_DAILY_LIMIT_PER_KEY, VOICE_RSS_GERMAN_PROVIDER, VOICE_RSS_GERMAN_VOICE } from '../services/tts/voiceRssGerman';
+import { deleteTemporaryMessagesByKind } from '../services/temporaryMessageCleanup';
 
 const VALID_TTS_CACHE_PREDICATE = `provider = '${VOICE_RSS_GERMAN_PROVIDER}' AND language = 'de-de' AND voice = '${VOICE_RSS_GERMAN_VOICE}'`;
 const STALE_TTS_CACHE_PREDICATE = `provider = 'cloudflareTts'
@@ -161,10 +160,7 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
 }
 
 async function deletePreviousTemporaryTtsMessage(ctx: BotContext, userId: number, chatId: number): Promise<void> {
-    const previous = await getLastTtsMessage(ctx.db, userId, chatId);
-    if (!previous) return;
-    await ctx.api.deleteMessage(previous.chat_id, previous.message_id).catch(() => {});
-    await deleteLastTtsMessageRecord(ctx.db, userId, chatId).catch(() => {});
+    await deleteTemporaryMessagesByKind(ctx.env, userId, chatId, 'tts_audio').catch(() => {});
 }
 
 async function trackTemporaryTtsMessage(
@@ -175,13 +171,15 @@ async function trackTemporaryTtsMessage(
     text: string,
     messageId: number
 ): Promise<void> {
-    await upsertLastTtsMessage(ctx.db, {
+    await recordTemporaryMessage(ctx.db, {
         userId,
         chatId,
         messageId,
+        kind: 'tts_audio',
         wordId,
         text,
-        ttlSeconds: getTtsMessageTtlSeconds(ctx.env),
+        deletePolicy: 'after_ttl',
+        ttlSeconds: ACTIVE_TEMP_TTL_SECONDS,
     }).catch(() => {});
 }
 

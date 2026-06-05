@@ -1,5 +1,6 @@
 import type { BotContext } from '../bot/context';
 import { queryAll, queryOne, run } from '../db/queries';
+import { IMPORTANT_TEMP_FALLBACK_TTL_SECONDS, recordTemporaryMessage } from '../repositories/temporaryMessageRepository';
 import { addXp } from './xpLevels';
 
 const DAILY_TASK_XP = 50;
@@ -50,7 +51,17 @@ export async function incrementDailyTask(ctx: BotContext, userId: number, taskTy
              WHERE user_id = ? AND task_date = date('now') AND task_type = ?`,
             [userId, taskType]
         );
-        await ctx.reply(`🎯 اكتملت مهمة اليوم! +${DAILY_TASK_XP} XP\n${TASK_LABELS[taskType]}`);
+        const text = `🎯 اكتملت مهمة اليوم! +${DAILY_TASK_XP} XP\n${TASK_LABELS[taskType]}`;
+        const message = await ctx.reply(text);
+        await recordTemporaryMessage(ctx.db, {
+            userId,
+            chatId: message.chat.id,
+            messageId: message.message_id,
+            kind: 'daily_task_completed',
+            text,
+            deletePolicy: 'after_next_interaction',
+            ttlSeconds: IMPORTANT_TEMP_FALLBACK_TTL_SECONDS,
+        }).catch(() => {});
     }
 }
 

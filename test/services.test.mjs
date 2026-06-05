@@ -950,37 +950,74 @@ test('learn train notifications and hard words expose TTS without counting answe
 
 test('TTS pronunciation messages are temporary and replace the previous audio', () => {
     const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
-    const repoSource = fs.readFileSync(new URL('../src/repositories/ttsLastMessageRepository.ts', import.meta.url), 'utf8');
-    const cleanupSource = fs.readFileSync(new URL('../src/services/ttsMessageCleanup.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/temporaryMessageRepository.ts', import.meta.url), 'utf8');
+    const cleanupSource = fs.readFileSync(new URL('../src/services/temporaryMessageCleanup.ts', import.meta.url), 'utf8');
     const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
     const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
-    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0026_tts_last_messages.sql', import.meta.url), 'utf8');
-    const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0027_temporary_message_visibility.sql', import.meta.url), 'utf8');
     const pronunciationFlow = commandSource.slice(
         commandSource.indexOf('async function sendWordPronunciation'),
         commandSource.indexOf('async function showTtsDebug')
     );
 
-    assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS tts_last_messages/);
-    assert.match(migrationSource, /UNIQUE\(user_id, chat_id\)/);
+    assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS temporary_messages/);
+    assert.match(migrationSource, /delete_policy TEXT NOT NULL DEFAULT 'after_ttl'/);
+    assert.match(migrationSource, /seen_after_interaction INTEGER NOT NULL DEFAULT 0/);
+    assert.match(migrationSource, /min_visible_until TEXT/);
     assert.match(migrationSource, /expires_at TEXT NOT NULL/);
-    assert.match(repoSource, /DEFAULT_TTS_MESSAGE_TTL_SECONDS = 60/);
-    assert.match(repoSource, /getLastTtsMessage/);
-    assert.match(repoSource, /upsertLastTtsMessage/);
+    assert.match(repoSource, /ACTIVE_TEMP_TTL_SECONDS = 5/);
+    assert.match(repoSource, /recordTemporaryMessage/);
+    assert.match(repoSource, /deletePolicy: TemporaryDeletePolicy/);
     assert.match(repoSource, /datetime\('now', '\+' \|\| \? \|\| ' seconds'\)/);
-    assert.match(repoSource, /deleteLastTtsMessageRecord/);
     assert.match(commandSource, /deletePreviousTemporaryTtsMessage\(ctx, user\.user_id, chatId\)/);
-    assert.match(commandSource, /ctx\.api\.deleteMessage\(previous\.chat_id, previous\.message_id\)\.catch\(\(\) => \{\}\)/);
+    assert.match(commandSource, /deleteTemporaryMessagesByKind\(ctx\.env, userId, chatId, 'tts_audio'\)/);
     assert.match(commandSource, /trackTemporaryTtsMessage\(ctx, user\.user_id, chatId, word\.word_id, germanText, message\.message_id\)/);
+    assert.match(commandSource, /kind: 'tts_audio'/);
+    assert.match(commandSource, /deletePolicy: 'after_ttl'/);
+    assert.match(commandSource, /ttlSeconds: ACTIVE_TEMP_TTL_SECONDS/);
     assert.match(commandSource, /replyWithAudio\(cached\.telegram_file_id/);
     assert.match(commandSource, /upsertWordAudioFileId/);
-    assert.match(cleanupSource, /getExpiredTtsMessages/);
+    assert.match(cleanupSource, /getExpiredTemporaryMessages/);
+    assert.match(cleanupSource, /getMessagesForUserInteraction/);
     assert.match(cleanupSource, /deleteMessage/);
-    assert.match(cleanupSource, /deleteTtsLastMessageById/);
-    assert.match(indexSource, /cleanupExpiredTtsMessages\(env\)/);
-    assert.match(wranglerSource, /TTS_MESSAGE_TTL_SECONDS = "60"/);
+    assert.match(cleanupSource, /deleteTemporaryMessageRecord/);
+    assert.match(indexSource, /cleanupExpiredTemporaryMessages\(env\)/);
     assert.doesNotMatch(commandSource, /replyWithAudio\([^)]*reply_markup/s);
     assert.doesNotMatch(pronunciationFlow, /sendMessage\([^)]*🔊|reply\([^)]*🔊/);
+});
+
+test('temporary cleanup policies respect user visibility', () => {
+    const repoSource = fs.readFileSync(new URL('../src/repositories/temporaryMessageRepository.ts', import.meta.url), 'utf8');
+    const cleanupSource = fs.readFileSync(new URL('../src/services/temporaryMessageCleanup.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const dailyTaskSource = fs.readFileSync(new URL('../src/services/dailyTasks.ts', import.meta.url), 'utf8');
+    const achievementSource = fs.readFileSync(new URL('../src/services/achievements.ts', import.meta.url), 'utf8');
+    const notificationSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+    const wordPanelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
+
+    assert.match(repoSource, /ACTIVE_TEMP_TTL_SECONDS = 5/);
+    assert.match(repoSource, /IMPORTANT_TEMP_FALLBACK_TTL_SECONDS = 300/);
+    assert.match(repoSource, /IMPORTANT_MIN_VISIBLE_SECONDS = 30/);
+    assert.match(repoSource, /delete_policy = 'after_ttl' AND expires_at <= datetime\('now'\)/);
+    assert.match(repoSource, /delete_policy = 'after_next_interaction' AND \(min_visible_until IS NULL OR min_visible_until <= datetime\('now'\)\)/);
+    assert.match(repoSource, /delete_policy = 'after_seen_or_ttl' AND \(min_visible_until IS NULL OR min_visible_until <= datetime\('now'\)\)/);
+    assert.match(repoSource, /kind != 'active_panel'/);
+    assert.match(cleanupSource, /cleanupTemporaryMessagesForUserInteraction/);
+    assert.match(cleanupSource, /cleanupExpiredTemporaryMessages/);
+    assert.match(cleanupSource, /markTemporaryMessageSeenAfterInteraction/);
+    assert.match(botSource, /cleanupTemporaryMessagesForUserInteraction\(ctx\.env, user\.user_id\)/);
+    assert.match(trainSource, /kind: 'training_user_answer'/);
+    assert.match(trainSource, /deletePolicy: 'after_ttl'/);
+    assert.match(dailyTaskSource, /kind: 'daily_task_completed'/);
+    assert.match(dailyTaskSource, /deletePolicy: 'after_next_interaction'/);
+    assert.match(achievementSource, /kind: 'achievement_temp'/);
+    assert.match(achievementSource, /deletePolicy: 'after_seen_or_ttl'/);
+    assert.match(achievementSource, /minVisibleSeconds: IMPORTANT_MIN_VISIBLE_SECONDS/);
+    assert.match(notificationSource, /kind: 'notification_answer'/);
+    assert.match(notificationSource, /deletePolicy: 'after_seen_or_ttl'/);
+    assert.match(notificationSource, /minVisibleSeconds: IMPORTANT_MIN_VISIBLE_SECONDS/);
+    assert.doesNotMatch(wordPanelSource, /recordTemporaryMessage/);
 });
 
 test('TTS temporary audio keeps screens and training state untouched', () => {

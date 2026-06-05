@@ -1,6 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { BotContext } from '../bot/context';
 import { queryAll, queryOne, run } from '../db/queries';
+import { IMPORTANT_MIN_VISIBLE_SECONDS, IMPORTANT_TEMP_FALLBACK_TTL_SECONDS, recordTemporaryMessage } from '../repositories/temporaryMessageRepository';
 import { addXp } from './xpLevels';
 import { sendTelegramMessage } from './notifications';
 
@@ -40,9 +41,31 @@ export async function unlockAchievement(ctx: BotContext, userId: number, key: st
     const currentTelegramId = ctx.from?.id;
     const achievementMessage = `🏅 تم فتح إنجاز: ${definition.name} +${ACHIEVEMENT_XP} XP`;
     if (user && currentTelegramId !== user.telegram_id) {
-        await sendTelegramMessage(ctx.env, user.telegram_id, achievementMessage);
+        const sent = await sendTelegramMessage(ctx.env, user.telegram_id, achievementMessage);
+        if (sent?.message_id) {
+            await recordTemporaryMessage(ctx.db, {
+                userId,
+                chatId: sent.chat?.id ?? user.telegram_id,
+                messageId: sent.message_id,
+                kind: 'achievement_temp',
+                text: achievementMessage,
+                deletePolicy: 'after_seen_or_ttl',
+                minVisibleSeconds: IMPORTANT_MIN_VISIBLE_SECONDS,
+                ttlSeconds: IMPORTANT_TEMP_FALLBACK_TTL_SECONDS,
+            }).catch(() => {});
+        }
     } else {
-        await ctx.reply(achievementMessage);
+        const message = await ctx.reply(achievementMessage);
+        await recordTemporaryMessage(ctx.db, {
+            userId,
+            chatId: message.chat.id,
+            messageId: message.message_id,
+            kind: 'achievement_temp',
+            text: achievementMessage,
+            deletePolicy: 'after_seen_or_ttl',
+            minVisibleSeconds: IMPORTANT_MIN_VISIBLE_SECONDS,
+            ttlSeconds: IMPORTANT_TEMP_FALLBACK_TTL_SECONDS,
+        }).catch(() => {});
     }
 
     return true;

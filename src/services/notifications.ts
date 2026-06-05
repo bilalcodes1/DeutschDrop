@@ -2,17 +2,24 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { Env, User } from '../models';
 import { queryAll, queryOne } from '../db/queries';
 
+export interface TelegramSentMessage {
+    message_id: number;
+    chat?: { id: number };
+}
+
 export async function sendTelegramMessage(
     env: Env,
     telegramId: number,
     text: string,
     replyMarkup?: unknown
-): Promise<void> {
-    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+): Promise<TelegramSentMessage | null> {
+    const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: telegramId, text, parse_mode: 'Markdown', reply_markup: replyMarkup }),
     });
+    const payload = await response.json<{ ok?: boolean; result?: TelegramSentMessage }>().catch(() => null);
+    return payload?.ok ? payload.result ?? null : null;
 }
 
 export async function sendTelegramPhoto(

@@ -489,6 +489,25 @@ CREATE TABLE IF NOT EXISTS tts_last_messages (
     FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE SET NULL
 );
 
+-- 31. temporary_messages
+CREATE TABLE IF NOT EXISTS temporary_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    word_id INTEGER,
+    text TEXT,
+    delete_policy TEXT NOT NULL DEFAULT 'after_ttl'
+        CHECK (delete_policy IN ('after_ttl', 'after_next_interaction', 'after_seen_or_ttl')),
+    seen_after_interaction INTEGER NOT NULL DEFAULT 0,
+    min_visible_until TEXT,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE SET NULL
+);
+
 -- 20. job_runs (Cron job state tracking)
 CREATE TABLE IF NOT EXISTS job_runs (
     job_name TEXT PRIMARY KEY,
@@ -522,6 +541,9 @@ CREATE INDEX IF NOT EXISTS idx_word_audio_cache_provider_key_created ON word_aud
 CREATE INDEX IF NOT EXISTS idx_words_user_german_search ON words(added_by, german_search);
 CREATE INDEX IF NOT EXISTS idx_words_user_arabic_search ON words(added_by, arabic_search);
 CREATE INDEX IF NOT EXISTS idx_tts_last_messages_expires ON tts_last_messages(expires_at);
+CREATE INDEX IF NOT EXISTS idx_temporary_messages_user_policy ON temporary_messages(user_id, delete_policy, min_visible_until);
+CREATE INDEX IF NOT EXISTS idx_temporary_messages_expires ON temporary_messages(delete_policy, expires_at);
+CREATE INDEX IF NOT EXISTS idx_temporary_messages_kind ON temporary_messages(user_id, chat_id, kind);
 CREATE INDEX IF NOT EXISTS idx_tts_request_locks_expires ON tts_request_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_status ON async_challenges(status);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_users ON async_challenges(creator_user_id, opponent_user_id);

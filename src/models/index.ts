@@ -12,7 +12,6 @@ export interface Env {
     TTS_PROVIDER_ORDER?: string;
     TTS_LANGUAGE?: string;
     TTS_AUDIO_FORMAT?: string;
-    TTS_MESSAGE_TTL_SECONDS?: string;
     EDGE_TTS_VOICE?: string;
     EDGE_TTS_WORKER_URL?: string;
     VOICERSS_API_KEY?: string;

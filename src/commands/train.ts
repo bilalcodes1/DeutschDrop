@@ -12,6 +12,7 @@ import { incrementDailyTask } from '../services/dailyTasks';
 import { gradeTrainingAnswer } from '../services/trainingAnswerGrader';
 import { updateWordLearningAfterAnswer } from '../services/adaptiveReview';
 import { buildYouglishDirectUrl } from '../services/youglish';
+import { ACTIVE_TEMP_TTL_SECONDS, recordTemporaryMessage } from '../repositories/temporaryMessageRepository';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
 import type { TrainExplainSession } from './aiCoach';
@@ -413,6 +414,17 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
         source: 'train',
     });
     await checkAchievements(ctx, user.user_id);
+    if (ctx.chat?.id && ctx.message?.message_id) {
+        await recordTemporaryMessage(ctx.db, {
+            userId: user.user_id,
+            chatId: ctx.chat.id,
+            messageId: ctx.message.message_id,
+            kind: 'training_user_answer',
+            text: answerText,
+            deletePolicy: 'after_ttl',
+            ttlSeconds: ACTIVE_TEMP_TTL_SECONDS,
+        }).catch(() => {});
+    }
 
     if (!isCorrect) {
         if (word) {
