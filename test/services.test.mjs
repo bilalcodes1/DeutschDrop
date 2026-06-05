@@ -579,7 +579,7 @@ test('word collections support public playlists copy share and ownership rules',
     assert.match(repoSource, /addWordsToCollection/);
     assert.match(repoSource, /getPublicCollections/);
     assert.match(commandSource, /collection\.owner_user_id === userId/);
-    assert.match(commandSource, /📥 نسخ المجموعة إلى كلماتي/);
+    assert.match(commandSource, /📥 نسخ المجموعة/);
     assert.match(commandSource, /collection:copy_prompt/);
     assert.match(commandSource, /\$\{collection\.title\} - نسخة/);
     assert.match(commandSource, /share_collection:/);
@@ -587,6 +587,72 @@ test('word collections support public playlists copy share and ownership rules',
     assert.match(repoSource, /created_at >= datetime\('now', '-1 hour'\)/);
     assert.match(commandSource, /offer:accept:/);
     assert.match(commandSource, /offer:ignore:/);
+});
+
+test('collection owner can add direct words CSV and existing words into a collection', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+    const uploadSource = fs.readFileSync(new URL('../src/commands/upload.ts', import.meta.url), 'utf8');
+    const sessionSource = fs.readFileSync(new URL('../src/repositories/sessionRepository.ts', import.meta.url), 'utf8');
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0030_collection_direct_add_csv.sql', import.meta.url), 'utf8');
+    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+
+    for (const label of ['➕ إضافة كلمة للمجموعة', '📤 رفع CSV للمجموعة', '📚 إضافة من كلماتي', '☑️ تحديد كلمات', '📤 مشاركة المجموعة', '⚔️ تحدي على هذه المجموعة', '✏️ تعديل المجموعة', '🗑 حذف المجموعة']) {
+        assert.match(commandSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(commandSource, /if \(isOwner\) \{/);
+    assert.match(commandSource, /else \{\s*keyboard\.text\('📥 نسخ المجموعة'/s);
+    assert.match(commandSource, /collection:add_direct:\$\{collectionId\}/);
+    assert.match(commandSource, /collection:csv_upload:\$\{collectionId\}/);
+    assert.match(commandSource, /collection:add_existing:\$\{collectionId\}:page:1/);
+
+    for (const type of ['collection_add_word_direct', 'collection_csv_upload', 'collection_add_existing_words']) {
+        assert.match(sessionSource, new RegExp(`'${type}'`));
+        assert.match(addWordSource, new RegExp(`getBotSession\\(ctx\\.db, user\\.user_id, '${type}'\\)`));
+        assert.match(menuSource, new RegExp(`deleteBotSession\\(ctx\\.db, user\\.user_id, '${type}'\\)`));
+        assert.match(trainSource, new RegExp(`deleteBotSession\\(ctx\\.db, userId, '${type}'\\)`));
+    }
+
+    assert.match(commandSource, /interface CollectionDirectAddSession/);
+    assert.match(commandSource, /saveBotSession<CollectionDirectAddSession>/);
+    assert.match(commandSource, /handleCollectionDirectAddText/);
+    assert.match(commandSource, /parseCollectionWordInput/);
+    assert.match(commandSource, /Deutsch = عربي \| مثال ألماني/);
+    assert.match(commandSource, /searchDuplicateWordForUser\(ctx\.db, userId, parsed\.german\)/);
+    assert.match(commandSource, /createWordAndAssignToUser\(ctx\.db, parsed\.german, parsed\.arabic, parsed\.example, userId\)/);
+    assert.match(commandSource, /addWordsToCollection\(ctx\.db, data\.collectionId, userId, \[wordId\]\)/);
+    assert.match(commandSource, /هذه الكلمة موجودة داخل المجموعة مسبقاً/);
+
+    assert.match(uploadSource, /getBotSession<CollectionCsvUploadSession>\(ctx\.db, user\.user_id, 'collection_csv_upload'\)/);
+    assert.match(uploadSource, /handleCollectionCsvUpload/);
+    assert.match(uploadSource, /importCsvToCollection/);
+    assert.match(uploadSource, /parseWordCsv\(content\)/);
+    assert.match(uploadSource, /searchDuplicateWordForUser\(ctx\.db, userId, row\.german\)/);
+    assert.match(uploadSource, /createWordAndAssignToUser\(ctx\.db, row\.german, row\.arabic, row\.example, userId, listId\)/);
+    assert.match(uploadSource, /addWordsToCollection\(ctx\.db, collectionId, userId, \[wordId\]\)/);
+    for (const field of ['created', 'reused', 'linked', 'skippedInCollection', 'errors']) {
+        assert.match(uploadSource, new RegExp(field));
+    }
+    assert.match(uploadSource, /الكلمات الجديدة: \$\{result\.created\}/);
+    assert.match(uploadSource, /الكلمات الموجودة مسبقاً في حسابك: \$\{result\.reused\}/);
+    assert.match(uploadSource, /تم ربطها بالمجموعة: \$\{result\.linked\}/);
+    assert.match(uploadSource, /تخطينا داخل المجموعة: \$\{result\.skippedInCollection\}/);
+
+    assert.match(commandSource, /interface CollectionExistingWordsSession/);
+    assert.match(commandSource, /showCollectionExistingWordPicker/);
+    assert.match(commandSource, /selectAllCollectionExistingWordsOnPage/);
+    assert.match(commandSource, /collection:add_existing:all:\$\{collectionId\}:page:\$\{page\}/);
+    assert.match(commandSource, /collection:add_existing:save:\$\{collectionId\}:page:\$\{page\}/);
+    assert.match(commandSource, /searchWordsByUser\(ctx\.db, userId, query, PAGE_SIZE/);
+    assert.match(commandSource, /for \(const word of words\) selected\.add\(word\.word_id\)/);
+    assert.match(commandSource, /addWordsToCollection\(ctx\.db, collectionId, userId, session\.selectedIds\)/);
+
+    assert.match(commandSource, /requireOwnedCollection/);
+    assert.match(commandSource, /collection\.owner_user_id !== userId/);
+    assert.match(migrationSource, /CREATE UNIQUE INDEX IF NOT EXISTS idx_word_collection_items_collection_word ON word_collection_items\(collection_id, word_id\)/);
+    assert.match(schemaSource, /CREATE UNIQUE INDEX IF NOT EXISTS idx_word_collection_items_collection_word ON word_collection_items\(collection_id, word_id\)/);
 });
 
 test('collection and mixed challenges store challenge source metadata', () => {

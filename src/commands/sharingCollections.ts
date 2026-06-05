@@ -2,7 +2,7 @@ import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { getChallengeCandidates, getUserByTelegramId } from '../repositories/userRepository';
-import { copyWordToUser, countSearchWordsByUser, countWordsByUser, getWordById, getWordsByUserPaginated, searchDuplicateWordForUser } from '../repositories/wordRepository';
+import { copyWordToUser, countSearchWordsByUser, countWordsByUser, createWordAndAssignToUser, getWordById, getWordsByUserPaginated, searchDuplicateWordForUser, searchWordsByUser } from '../repositories/wordRepository';
 import {
     addWordsToCollection,
     countIncomingSharedWordOffers,
@@ -25,6 +25,10 @@ import {
     updateSharedWordOfferStatus,
 } from '../repositories/wordSharingRepository';
 import { isAdminTelegramId } from '../services/adminAccess';
+import { parseWordCsv, type ParsedWordRow } from '../services/csvParser';
+import { addXp } from '../services/xpLevels';
+import { checkAchievements } from '../services/achievements';
+import { incrementDailyTask } from '../services/dailyTasks';
 import { displayUserName, sendTelegramMessage } from '../services/notifications';
 import { replaceWithText } from './wordPanel';
 import { mainMenuKeyboard } from './menu';
@@ -45,6 +49,27 @@ interface CollectionCreateSession {
     description?: string | null;
     selectedIds?: number[];
     page?: number;
+}
+
+interface CollectionDirectAddSession {
+    collectionId: number;
+    userId: number;
+    step: 'waiting_word';
+}
+
+interface CollectionCsvUploadSession {
+    collectionId: number;
+    userId: number;
+    step: 'waiting_csv';
+}
+
+interface CollectionExistingWordsSession {
+    collectionId: number;
+    userId: number;
+    selectedIds: number[];
+    page: number;
+    query?: string | null;
+    awaitingSearch?: boolean;
 }
 
 interface ShareSearchSession {
@@ -81,6 +106,29 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
     bot.on('message:text', async (ctx, next) => {
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) return next();
+
+        if (await getBotSession(ctx.db, user.user_id, 'train')) return next();
+        if (await getBotSession(ctx.db, user.user_id, 'challenge')) return next();
+
+        const directAddSession = await getBotSession<CollectionDirectAddSession>(ctx.db, user.user_id, 'collection_add_word_direct');
+        if (directAddSession) {
+            await handleCollectionDirectAddText(ctx, user.user_id, directAddSession.data, ctx.message.text.trim());
+            return;
+        }
+
+        const addExistingSession = await getBotSession<CollectionExistingWordsSession>(ctx.db, user.user_id, 'collection_add_existing_words');
+        if (addExistingSession?.data.awaitingSearch) {
+            const query = ctx.message.text.trim();
+            await saveBotSession<CollectionExistingWordsSession>(
+                ctx.db,
+                user.user_id,
+                'collection_add_existing_words',
+                { ...addExistingSession.data, query, awaitingSearch: false, page: 1 },
+                120
+            );
+            await showCollectionExistingWordPicker(ctx, user.user_id, addExistingSession.data.collectionId, 1);
+            return;
+        }
 
         const collectionSession = await getBotSession<CollectionCreateSession>(ctx.db, user.user_id, 'collection_create');
         if (collectionSession) {
@@ -380,6 +428,93 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
         const user = await currentUser(ctx);
         if (!user) return;
         await showCollection(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]));
+    });
+
+    bot.callbackQuery(/^collection:add_direct:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await startCollectionDirectAdd(ctx, user.user_id, Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery(/^collection:add_direct_cancel:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await deleteBotSession(ctx.db, user.user_id, 'collection_add_word_direct');
+        await showCollection(ctx, user.user_id, Number(ctx.match[1]), 1);
+    });
+
+    bot.callbackQuery(/^collection:csv_upload:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await startCollectionCsvUpload(ctx, user.user_id, Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery(/^collection:csv_cancel:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await deleteBotSession(ctx.db, user.user_id, 'collection_csv_upload');
+        await showCollection(ctx, user.user_id, Number(ctx.match[1]), 1);
+    });
+
+    bot.callbackQuery(/^collection:add_words:(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await startCollectionExistingWords(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]));
+    });
+
+    bot.callbackQuery(/^collection:add_existing:(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await startCollectionExistingWords(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]));
+    });
+
+    bot.callbackQuery(/^collection:add_existing:toggle:(\d+):(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await toggleCollectionExistingWord(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), Number(ctx.match[3]));
+    });
+
+    bot.callbackQuery(/^collection:add_existing:all:(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await selectAllCollectionExistingWordsOnPage(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]));
+    });
+
+    bot.callbackQuery(/^collection:add_existing:clear:(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await clearCollectionExistingWordsSelection(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]));
+    });
+
+    bot.callbackQuery(/^collection:add_existing:search:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await requestCollectionExistingWordSearch(ctx, user.user_id, Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery(/^collection:add_existing:save:(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await saveCollectionExistingWords(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]));
+    });
+
+    bot.callbackQuery(/^collection:add_existing:cancel:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await deleteBotSession(ctx.db, user.user_id, 'collection_add_existing_words');
+        await showCollection(ctx, user.user_id, Number(ctx.match[1]), 1);
     });
 
     bot.callbackQuery(/^collections:public:page:(\d+)$/, async (ctx) => {
@@ -946,22 +1081,274 @@ async function showCollection(ctx: BotContext, userId: number, collectionId: num
         await replaceWithText(ctx, 'لم أجد هذه المجموعة.', backHomeKeyboard('collections:mine:page:1'));
         return;
     }
+    const isOwner = collection.owner_user_id === userId;
     const total = collection.word_count ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     const safePage = Math.max(1, Math.min(page, totalPages));
     const words = await getCollectionWords(ctx.db, collectionId, PAGE_SIZE, (safePage - 1) * PAGE_SIZE);
     const text = `🗂 ${collection.title}\n\nالمالك:\n${collection.owner_name ?? '-'}\n\nالوصف:\n${collection.description ?? 'بدون وصف'}\n\nعدد الكلمات:\n${total}\n\n` +
         words.map((word, index) => `${index + 1}. 🇩🇪 ${word.german}\n   🇮🇶 ${word.arabic}`).join('\n\n');
-    const keyboard = new InlineKeyboard()
-        .text('📥 نسخ المجموعة إلى كلماتي', `collection:copy_prompt:${collectionId}`).row()
-        .text('📤 مشاركة المجموعة', `share_collection:${collectionId}`).row()
-        .text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row();
-    if (collection.owner_user_id === userId) keyboard.text('✏️ تعديل المجموعة', `collection:edit:${collectionId}`).text('🗑 حذف المجموعة', `collection:delete:${collectionId}`).row();
+    const keyboard = new InlineKeyboard();
+    if (isOwner) {
+        keyboard.text('➕ إضافة كلمة للمجموعة', `collection:add_direct:${collectionId}`).row()
+            .text('📤 رفع CSV للمجموعة', `collection:csv_upload:${collectionId}`).row()
+            .text('📚 إضافة من كلماتي', `collection:add_existing:${collectionId}:page:1`).row()
+            .text('☑️ تحديد كلمات', `collection:add_existing:${collectionId}:page:1`).row()
+            .text('📤 مشاركة المجموعة', `share_collection:${collectionId}`).row()
+            .text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row()
+            .text('✏️ تعديل المجموعة', `collection:edit:${collectionId}`)
+            .text('🗑 حذف المجموعة', `collection:delete:${collectionId}`).row();
+    } else {
+        keyboard.text('📥 نسخ المجموعة', `collection:copy_prompt:${collectionId}`).row()
+            .text('📤 مشاركة المجموعة', `share_collection:${collectionId}`).row()
+            .text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row();
+    }
     if (safePage > 1) keyboard.text('⬅️ السابق', `collection:view:${collectionId}:page:${safePage - 1}`);
     if (safePage < totalPages) keyboard.text('التالي ➡️', `collection:view:${collectionId}:page:${safePage + 1}`);
     if (safePage > 1 || safePage < totalPages) keyboard.row();
-    keyboard.text('⬅️ رجوع', collection.owner_user_id === userId ? 'collections:mine:page:1' : 'collections:public:page:1').text('🏠 الرئيسية', 'menu_main');
+    keyboard.text('⬅️ رجوع', isOwner ? 'collections:mine:page:1' : 'collections:public:page:1').text('🏠 الرئيسية', 'menu_main');
     await replaceWithText(ctx, text, keyboard);
+}
+
+async function startCollectionDirectAdd(ctx: BotContext, userId: number, collectionId: number): Promise<void> {
+    const collection = await requireOwnedCollection(ctx, userId, collectionId);
+    if (!collection) return;
+    await deleteBotSession(ctx.db, userId, 'collection_add_existing_words');
+    await deleteBotSession(ctx.db, userId, 'collection_csv_upload');
+    await saveBotSession<CollectionDirectAddSession>(
+        ctx.db,
+        userId,
+        'collection_add_word_direct',
+        { collectionId, userId, step: 'waiting_word' },
+        30
+    );
+    await replaceWithText(
+        ctx,
+        `➕ إضافة كلمة للمجموعة\n\n🗂 ${collection.title}\n\nأرسل الكلمة بهذه الصيغة:\n\nDeutsch = عربي\n\nأو:\nDeutsch = عربي | مثال ألماني\n\nمثال:\nHaus = بيت\nHaus = بيت | Das Haus ist groß.`,
+        collectionFlowKeyboard(collectionId, 'collection:add_direct_cancel')
+    );
+}
+
+async function handleCollectionDirectAddText(ctx: BotContext, userId: number, data: CollectionDirectAddSession, text: string): Promise<void> {
+    if (data.userId !== userId) return;
+    const collection = await getCollectionById(ctx.db, data.collectionId);
+    if (!collection || collection.owner_user_id !== userId) {
+        await deleteBotSession(ctx.db, userId, 'collection_add_word_direct');
+        await ctx.reply('لا يمكنك إضافة كلمات إلى هذه المجموعة.', { reply_markup: mainMenuKeyboard() });
+        return;
+    }
+    const parsed = parseCollectionWordInput(text);
+    if (!parsed) {
+        await ctx.reply(
+            `الصيغة غير صحيحة.\n\nانسخ وعدّل:\nHaus = بيت\nHaus = بيت | Das Haus ist groß.`,
+            { reply_markup: collectionFlowKeyboard(data.collectionId, 'collection:add_direct_cancel') }
+        );
+        return;
+    }
+
+    const existing = await searchDuplicateWordForUser(ctx.db, userId, parsed.german);
+    let wordId = existing?.word_id ?? 0;
+    let created = false;
+    if (!existing) {
+        wordId = await createWordAndAssignToUser(ctx.db, parsed.german, parsed.arabic, parsed.example, userId);
+        created = true;
+        await addXp(ctx.db, userId, 5, 'new_word');
+        await incrementDailyTask(ctx, userId, 'learn_words');
+        await checkAchievements(ctx, userId);
+    }
+
+    const linked = await addWordsToCollection(ctx.db, data.collectionId, userId, [wordId]);
+    await deleteBotSession(ctx.db, userId, 'collection_add_word_direct');
+
+    const message = linked > 0
+        ? `✅ تمت إضافة الكلمة إلى المجموعة.\n\n🇩🇪 ${parsed.german}\n🇮🇶 ${parsed.arabic}${created ? '\n\n+5 XP' : '\n\nاستخدمت الكلمة الموجودة مسبقاً في حسابك.'}`
+        : 'هذه الكلمة موجودة داخل المجموعة مسبقاً.';
+    await ctx.reply(message, { reply_markup: collectionDirectAddDoneKeyboard(data.collectionId) });
+}
+
+async function startCollectionCsvUpload(ctx: BotContext, userId: number, collectionId: number): Promise<void> {
+    const collection = await requireOwnedCollection(ctx, userId, collectionId);
+    if (!collection) return;
+    await deleteBotSession(ctx.db, userId, 'collection_add_word_direct');
+    await deleteBotSession(ctx.db, userId, 'collection_add_existing_words');
+    await saveBotSession<CollectionCsvUploadSession>(
+        ctx.db,
+        userId,
+        'collection_csv_upload',
+        { collectionId, userId, step: 'waiting_csv' },
+        30
+    );
+    await replaceWithText(
+        ctx,
+        `📤 رفع CSV للمجموعة\n\n🗂 ${collection.title}\n\nارفع ملف CSV لإضافته مباشرة إلى هذه المجموعة.\n\nالصيغة:\nGerman,Arabic,Example\n\nExample اختياري.`,
+        collectionFlowKeyboard(collectionId, 'collection:csv_cancel')
+    );
+}
+
+async function startCollectionExistingWords(ctx: BotContext, userId: number, collectionId: number, page: number): Promise<void> {
+    const collection = await requireOwnedCollection(ctx, userId, collectionId);
+    if (!collection) return;
+    await deleteBotSession(ctx.db, userId, 'collection_add_word_direct');
+    await deleteBotSession(ctx.db, userId, 'collection_csv_upload');
+    const existing = await getBotSession<CollectionExistingWordsSession>(ctx.db, userId, 'collection_add_existing_words');
+    if (!existing || existing.data.collectionId !== collectionId) {
+        await saveBotSession<CollectionExistingWordsSession>(
+            ctx.db,
+            userId,
+            'collection_add_existing_words',
+            { collectionId, userId, selectedIds: [], page: Math.max(1, page), query: null },
+            120
+        );
+    }
+    await showCollectionExistingWordPicker(ctx, userId, collectionId, page);
+}
+
+async function showCollectionExistingWordPicker(ctx: BotContext, userId: number, collectionId: number, page: number): Promise<void> {
+    const collection = await requireOwnedCollection(ctx, userId, collectionId);
+    if (!collection) return;
+    const session = await getCollectionExistingWordsSession(ctx, userId, collectionId, page);
+    const query = session.query?.trim() || null;
+    const total = query ? await countSearchWordsByUser(ctx.db, userId, query) : await countWordsByUser(ctx.db, userId);
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    const words = query
+        ? await searchWordsByUser(ctx.db, userId, query, PAGE_SIZE, (safePage - 1) * PAGE_SIZE)
+        : await getWordsByUserPaginated(ctx.db, userId, PAGE_SIZE, (safePage - 1) * PAGE_SIZE);
+    const selected = new Set(session.selectedIds);
+    const text = `📚 إضافة من كلماتي\n\n🗂 ${collection.title}\n\nاختر كلمات من كلماتي لإضافتها إلى المجموعة:\n\nالصفحة: ${safePage}/${totalPages}\nعدد الكلمات: ${total}\n${query ? `بحث: ${query}\n` : ''}\n` +
+        (words.length ? words.map(word => `${selected.has(word.word_id) ? '☑' : '☐'} ${word.german} — ${word.arabic}`).join('\n') : 'لا توجد كلمات مطابقة.') +
+        `\n\nالمحدد: ${selected.size}`;
+    await replaceWithText(ctx, text, collectionExistingWordsKeyboard(words, selected, collectionId, safePage, totalPages));
+}
+
+async function toggleCollectionExistingWord(ctx: BotContext, userId: number, collectionId: number, wordId: number, page: number): Promise<void> {
+    const collection = await requireOwnedCollection(ctx, userId, collectionId);
+    if (!collection) return;
+    const word = await getWordById(ctx.db, wordId);
+    if (!word || word.added_by !== userId) {
+        await replaceWithText(ctx, 'لم أجد هذه الكلمة ضمن كلماتك.', backHomeKeyboard(`collection:view:${collectionId}:page:1`));
+        return;
+    }
+    const session = await getCollectionExistingWordsSession(ctx, userId, collectionId, page);
+    const selected = new Set(session.selectedIds);
+    if (selected.has(wordId)) selected.delete(wordId); else selected.add(wordId);
+    await saveBotSession<CollectionExistingWordsSession>(ctx.db, userId, 'collection_add_existing_words', { ...session, selectedIds: [...selected], page }, 120);
+    await showCollectionExistingWordPicker(ctx, userId, collectionId, page);
+}
+
+async function selectAllCollectionExistingWordsOnPage(ctx: BotContext, userId: number, collectionId: number, page: number): Promise<void> {
+    const session = await getCollectionExistingWordsSession(ctx, userId, collectionId, page);
+    const query = session.query?.trim() || null;
+    const words = query
+        ? await searchWordsByUser(ctx.db, userId, query, PAGE_SIZE, (Math.max(1, page) - 1) * PAGE_SIZE)
+        : await getWordsByUserPaginated(ctx.db, userId, PAGE_SIZE, (Math.max(1, page) - 1) * PAGE_SIZE);
+    const selected = new Set(session.selectedIds);
+    for (const word of words) selected.add(word.word_id);
+    await saveBotSession<CollectionExistingWordsSession>(ctx.db, userId, 'collection_add_existing_words', { ...session, selectedIds: [...selected], page }, 120);
+    await showCollectionExistingWordPicker(ctx, userId, collectionId, page);
+}
+
+async function clearCollectionExistingWordsSelection(ctx: BotContext, userId: number, collectionId: number, page: number): Promise<void> {
+    const session = await getCollectionExistingWordsSession(ctx, userId, collectionId, page);
+    await saveBotSession<CollectionExistingWordsSession>(ctx.db, userId, 'collection_add_existing_words', { ...session, selectedIds: [], page }, 120);
+    await showCollectionExistingWordPicker(ctx, userId, collectionId, page);
+}
+
+async function requestCollectionExistingWordSearch(ctx: BotContext, userId: number, collectionId: number): Promise<void> {
+    const collection = await requireOwnedCollection(ctx, userId, collectionId);
+    if (!collection) return;
+    const session = await getCollectionExistingWordsSession(ctx, userId, collectionId, 1);
+    await saveBotSession<CollectionExistingWordsSession>(ctx.db, userId, 'collection_add_existing_words', { ...session, awaitingSearch: true }, 30);
+    await replaceWithText(ctx, `🔍 بحث في كلماتي\n\n🗂 ${collection.title}\n\nاكتب جزء من الألماني أو العربي:`, backHomeKeyboard(`collection:add_existing:${collectionId}:page:1`));
+}
+
+async function saveCollectionExistingWords(ctx: BotContext, userId: number, collectionId: number, page: number): Promise<void> {
+    const collection = await requireOwnedCollection(ctx, userId, collectionId);
+    if (!collection) return;
+    const session = await getCollectionExistingWordsSession(ctx, userId, collectionId, page);
+    if (session.selectedIds.length === 0) {
+        await replaceWithText(ctx, 'لم تحدد أي كلمة بعد.', backHomeKeyboard(`collection:add_existing:${collectionId}:page:${page}`));
+        return;
+    }
+    const added = await addWordsToCollection(ctx.db, collectionId, userId, session.selectedIds);
+    const skipped = session.selectedIds.length - added;
+    await deleteBotSession(ctx.db, userId, 'collection_add_existing_words');
+    await replaceWithText(
+        ctx,
+        `✅ تمت إضافة ${added} كلمة للمجموعة.\n⏭ تم تخطي ${skipped} لأنها موجودة مسبقاً.`,
+        new InlineKeyboard()
+            .text('👁 عرض المجموعة', `collection:view:${collectionId}:page:1`).row()
+            .text('📚 إضافة من كلماتي', `collection:add_existing:${collectionId}:page:1`).row()
+            .text('🏠 الرئيسية', 'menu_main')
+    );
+}
+
+async function getCollectionExistingWordsSession(ctx: BotContext, userId: number, collectionId: number, page: number): Promise<CollectionExistingWordsSession> {
+    const session = await getBotSession<CollectionExistingWordsSession>(ctx.db, userId, 'collection_add_existing_words');
+    if (session?.data.collectionId === collectionId && session.data.userId === userId) {
+        return { ...session.data, page };
+    }
+    return { collectionId, userId, selectedIds: [], page, query: null };
+}
+
+async function requireOwnedCollection(ctx: BotContext, userId: number, collectionId: number) {
+    const collection = await getCollectionById(ctx.db, collectionId);
+    if (!collection || collection.owner_user_id !== userId) {
+        await replaceWithText(ctx, 'لا يمكنك تعديل هذه المجموعة.', backHomeKeyboard('collections:mine:page:1'));
+        return null;
+    }
+    return collection;
+}
+
+function parseCollectionWordInput(text: string): ParsedWordRow | null {
+    const trimmed = text.trim();
+    const pipeIndex = trimmed.indexOf('|');
+    if (pipeIndex !== -1) {
+        const left = trimmed.slice(0, pipeIndex).trim();
+        const example = trimmed.slice(pipeIndex + 1).trim() || null;
+        const match = left.match(/^(.+?)\s*=\s*(.+)$/);
+        if (!match) return null;
+        return { german: match[1].trim(), arabic: match[2].trim(), example };
+    }
+    const parsed = parseWordCsv(trimmed);
+    if (parsed.errors > 0 || parsed.words.length !== 1) return null;
+    return parsed.words[0];
+}
+
+function collectionFlowKeyboard(collectionId: number, cancelPrefix: string): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('❌ إلغاء', `${cancelPrefix}:${collectionId}`).row()
+        .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+function collectionDirectAddDoneKeyboard(collectionId: number): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('➕ إضافة كلمة أخرى', `collection:add_direct:${collectionId}`).row()
+        .text('📤 رفع CSV للمجموعة', `collection:csv_upload:${collectionId}`).row()
+        .text('👁 عرض المجموعة', `collection:view:${collectionId}:page:1`).row()
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+function collectionExistingWordsKeyboard(
+    words: Array<{ word_id: number; german: string; arabic: string }>,
+    selected: Set<number>,
+    collectionId: number,
+    page: number,
+    totalPages: number
+): InlineKeyboard {
+    const keyboard = new InlineKeyboard();
+    for (const word of words) keyboard.text(`${selected.has(word.word_id) ? '☑' : '☐'} ${word.german}`, `collection:add_existing:toggle:${collectionId}:${word.word_id}:page:${page}`).row();
+    keyboard.text('✅ إضافة المحدد للمجموعة', `collection:add_existing:save:${collectionId}:page:${page}`).row()
+        .text('☑️ تحديد الكل في الصفحة', `collection:add_existing:all:${collectionId}:page:${page}`).row()
+        .text('🧹 إلغاء التحديد', `collection:add_existing:clear:${collectionId}:page:${page}`).row()
+        .text('🔍 بحث في كلماتي', `collection:add_existing:search:${collectionId}`).row();
+    if (page > 1) keyboard.text('⬅️ السابق', `collection:add_existing:${collectionId}:page:${page - 1}`);
+    if (page < totalPages) keyboard.text('التالي ➡️', `collection:add_existing:${collectionId}:page:${page + 1}`);
+    if (page > 1 || page < totalPages) keyboard.row();
+    keyboard.text('⬅️ رجوع للمجموعة', `collection:add_existing:cancel:${collectionId}`).row()
+        .text('🏠 الرئيسية', 'menu_main');
+    return keyboard;
 }
 
 async function showPublicCollections(ctx: BotContext, userId: number, page: number, query?: string): Promise<void> {

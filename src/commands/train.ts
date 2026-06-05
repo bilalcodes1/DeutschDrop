@@ -231,6 +231,9 @@ async function clearConflictingTextSessions(ctx: BotContext, userId: number): Pr
     await deleteBotSession(ctx.db, userId, 'word_edit');
     await deleteBotSession(ctx.db, userId, 'add_word');
     await deleteBotSession(ctx.db, userId, 'word_search');
+    await deleteBotSession(ctx.db, userId, 'collection_add_word_direct');
+    await deleteBotSession(ctx.db, userId, 'collection_csv_upload');
+    await deleteBotSession(ctx.db, userId, 'collection_add_existing_words');
 }
 
 function trainingStartErrorKeyboard(): InlineKeyboard {

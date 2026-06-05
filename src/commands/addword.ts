@@ -92,6 +92,9 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
             await getBotSession(ctx.db, user.user_id, 'admin_source_edit') ||
             await getBotSession(ctx.db, user.user_id, 'profile_rename') ||
             await getBotSession(ctx.db, user.user_id, 'collection_create') ||
+            await getBotSession(ctx.db, user.user_id, 'collection_add_word_direct') ||
+            await getBotSession(ctx.db, user.user_id, 'collection_csv_upload') ||
+            await getBotSession(ctx.db, user.user_id, 'collection_add_existing_words') ||
             await getBotSession(ctx.db, user.user_id, 'shared_word_search')
         )) {
             return next();

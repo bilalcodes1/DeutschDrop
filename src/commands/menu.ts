@@ -306,6 +306,9 @@ async function clearTrainingAndEditSessions(ctx: BotContext): Promise<void> {
     await deleteBotSession(ctx.db, user.user_id, 'word_search');
     await deleteBotSession(ctx.db, user.user_id, 'train');
     await deleteBotSession(ctx.db, user.user_id, 'train_explain');
+    await deleteBotSession(ctx.db, user.user_id, 'collection_add_word_direct');
+    await deleteBotSession(ctx.db, user.user_id, 'collection_csv_upload');
+    await deleteBotSession(ctx.db, user.user_id, 'collection_add_existing_words');
 }
 
 async function clearTextInteractionSessions(ctx: BotContext): Promise<void> {
@@ -314,4 +317,7 @@ async function clearTextInteractionSessions(ctx: BotContext): Promise<void> {
     await deleteBotSession(ctx.db, user.user_id, 'word_edit');
     await deleteBotSession(ctx.db, user.user_id, 'add_word');
     await deleteBotSession(ctx.db, user.user_id, 'word_search');
+    await deleteBotSession(ctx.db, user.user_id, 'collection_add_word_direct');
+    await deleteBotSession(ctx.db, user.user_id, 'collection_csv_upload');
+    await deleteBotSession(ctx.db, user.user_id, 'collection_add_existing_words');
 }

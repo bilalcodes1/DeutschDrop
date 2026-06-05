@@ -8,6 +8,7 @@ import {
     updateExistingWordFieldsForUser,
 } from '../repositories/wordRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
+import { addWordsToCollection, getCollectionById } from '../repositories/wordSharingRepository';
 import { addXp } from '../services/xpLevels';
 import { parseWordCsv, type ParsedWordRow } from '../services/csvParser';
 import { checkAchievements, unlockAchievement } from '../services/achievements';
@@ -16,6 +17,12 @@ import { mainMenuKeyboard } from './menu';
 
 interface CsvUpdateSession {
     duplicates: ParsedWordRow[];
+}
+
+interface CollectionCsvUploadSession {
+    collectionId: number;
+    userId: number;
+    step: 'waiting_csv';
 }
 
 const CSV_UPLOAD_INSTRUCTIONS =
@@ -85,6 +92,19 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
         const doc = ctx.message.document;
         const fileName = doc?.file_name ?? '';
         const extension = getFileExtension(fileName);
+
+        const collectionCsvSession = await getBotSession<CollectionCsvUploadSession>(ctx.db, user.user_id, 'collection_csv_upload');
+        if (collectionCsvSession) {
+            if (extension !== 'csv') {
+                await ctx.reply('⚠️ الصيغة المدعومة حالياً هي CSV فقط.\nرجاءً ارفع ملف بصيغة .csv فقط.', {
+                    reply_markup: collectionCsvKeyboard(collectionCsvSession.data.collectionId),
+                });
+                return;
+            }
+            await handleCollectionCsvUpload(ctx, user.user_id, collectionCsvSession.data, doc.file_id);
+            return;
+        }
+
         if (extension !== 'csv') {
             await ctx.reply(CSV_ONLY_ERROR);
             return;
@@ -119,6 +139,100 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
             reply_markup: uploadSummaryKeyboard(result.duplicateRows.length > 0),
         });
     });
+}
+
+interface CollectionCsvImportResult {
+    created: number;
+    reused: number;
+    linked: number;
+    skippedInCollection: number;
+    errors: number;
+}
+
+async function handleCollectionCsvUpload(ctx: BotContext, userId: number, session: CollectionCsvUploadSession, fileId: string): Promise<void> {
+    const collection = await getCollectionById(ctx.db, session.collectionId);
+    if (!collection || collection.owner_user_id !== userId || session.userId !== userId) {
+        await deleteBotSession(ctx.db, userId, 'collection_csv_upload');
+        await ctx.reply('لا يمكنك رفع CSV إلى هذه المجموعة.', { reply_markup: mainMenuKeyboard() });
+        return;
+    }
+
+    const file = await ctx.api.getFile(fileId);
+    if (!file.file_path) {
+        await ctx.reply('⚠️ تعذر تحميل الملف.', { reply_markup: collectionCsvKeyboard(session.collectionId) });
+        return;
+    }
+
+    const fileUrl = `https://api.telegram.org/file/bot${ctx.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+    const response = await fetch(fileUrl);
+    const content = await response.text();
+    const result = await importCsvToCollection(ctx, content, userId, session.collectionId);
+    await deleteBotSession(ctx.db, userId, 'collection_csv_upload');
+
+    await ctx.reply(formatCollectionCsvSummary(result), {
+        reply_markup: collectionCsvSummaryKeyboard(session.collectionId),
+    });
+}
+
+async function importCsvToCollection(ctx: BotContext, content: string, userId: number, collectionId: number): Promise<CollectionCsvImportResult> {
+    const parsed = parseWordCsv(content);
+    const result: CollectionCsvImportResult = {
+        created: 0,
+        reused: 0,
+        linked: 0,
+        skippedInCollection: 0,
+        errors: parsed.errors,
+    };
+    const listId = await createUploadedList(ctx.db, userId, `Collection import ${new Date().toLocaleDateString()}`);
+
+    for (const row of parsed.words) {
+        try {
+            const existing = await searchDuplicateWordForUser(ctx.db, userId, row.german);
+            let wordId = existing?.word_id ?? 0;
+            if (existing) {
+                result.reused++;
+            } else {
+                wordId = await createWordAndAssignToUser(ctx.db, row.german, row.arabic, row.example, userId, listId);
+                result.created++;
+                await addXp(ctx.db, userId, 5, 'new_word');
+            }
+            const linked = await addWordsToCollection(ctx.db, collectionId, userId, [wordId]);
+            if (linked > 0) result.linked++;
+            else result.skippedInCollection++;
+        } catch {
+            result.errors++;
+        }
+    }
+
+    if (result.created > 0) {
+        await incrementDailyTask(ctx, userId, 'learn_words', result.created);
+        await checkAchievements(ctx, userId);
+    }
+    return result;
+}
+
+function formatCollectionCsvSummary(result: CollectionCsvImportResult): string {
+    return `✅ تم رفع الملف وإضافة الكلمات للمجموعة.\n\n` +
+        `الكلمات الجديدة: ${result.created}\n` +
+        `الكلمات الموجودة مسبقاً في حسابك: ${result.reused}\n` +
+        `تم ربطها بالمجموعة: ${result.linked}\n` +
+        `تخطينا داخل المجموعة: ${result.skippedInCollection}\n` +
+        `الأخطاء: ${result.errors}`;
+}
+
+function collectionCsvKeyboard(collectionId: number): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+function collectionCsvSummaryKeyboard(collectionId: number): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('👁 عرض المجموعة', `collection:view:${collectionId}:page:1`).row()
+        .text('➕ إضافة كلمة للمجموعة', `collection:add_direct:${collectionId}`).row()
+        .text('📤 رفع CSV آخر', `collection:csv_upload:${collectionId}`).row()
+        .text('📚 راجع الآن', 'menu_learn').row()
+        .text('🏠 الرئيسية', 'menu_main');
 }
 
 function getFileExtension(fileName: string): string {

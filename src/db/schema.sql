@@ -579,6 +579,8 @@ CREATE INDEX IF NOT EXISTS idx_list_words_word_id ON list_words(word_id);
 CREATE INDEX IF NOT EXISTS idx_words_added_by ON words(added_by);
 CREATE INDEX IF NOT EXISTS idx_bot_sessions_user_type ON bot_sessions(user_id, type);
 CREATE INDEX IF NOT EXISTS idx_bot_sessions_expires_at ON bot_sessions(expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_word_collection_items_collection_word ON word_collection_items(collection_id, word_id);
+CREATE INDEX IF NOT EXISTS idx_word_collection_items_owner_collection ON word_collection_items(owner_user_id, collection_id);
 CREATE INDEX IF NOT EXISTS idx_word_audio_cache_lookup ON word_audio_cache(user_id, word_id, provider, content_hash);
 CREATE INDEX IF NOT EXISTS idx_word_audio_cache_user_created ON word_audio_cache(user_id, provider, created_at);
 CREATE INDEX IF NOT EXISTS idx_word_audio_cache_provider_language_voice ON word_audio_cache(provider, language, voice, format);
