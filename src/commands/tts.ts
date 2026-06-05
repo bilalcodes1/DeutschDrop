@@ -1,22 +1,22 @@
-import { Bot, InlineKeyboard, InputFile } from 'grammy';
+import { Bot, InputFile } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { getUserByTelegramId } from '../repositories/userRepository';
 import { getWordById } from '../repositories/wordRepository';
 import {
+    acquireTtsRequestLock,
     countGeneratedAudioToday,
     getCachedWordAudio,
+    releaseTtsRequestLock,
     upsertWordAudioFileId,
 } from '../repositories/wordAudioCacheRepository';
-import { buildYouglishDirectUrl } from '../services/youglish';
-import { CLOUDFLARE_TTS_PROVIDER, generateCloudflareTts, normalizeTtsText } from '../services/tts/cloudflareTts';
-import { normalizeReturnContext, sideFlowBackCallback, type ReturnContext } from '../services/returnContext';
-import { replaceWithText } from './wordPanel';
+import { CLOUDFLARE_TTS_PROVIDER, generateCloudflareTts, getCloudflareTtsConfig, normalizeTtsText } from '../services/tts/cloudflareTts';
+import { normalizeReturnContext, type ReturnContext } from '../services/returnContext';
 
 const TTS_DAILY_GENERATION_LIMIT = 30;
 
 export function registerTtsCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery(/^tts:word:(\d+)(?::ctx:([a-z_]+))?$/, async (ctx) => {
-        await ctx.answerCallbackQuery('جاري تجهيز النطق...');
+        await ctx.answerCallbackQuery().catch(() => {});
         const wordId = Number(ctx.match[1]);
         const context = normalizeReturnContext(ctx.match[2]);
         await sendWordPronunciation(ctx, wordId, context);
@@ -30,48 +30,51 @@ export function ttsButton(wordId: number, context: ReturnContext = 'word_details
 async function sendWordPronunciation(ctx: BotContext, wordId: number, context: ReturnContext): Promise<void> {
     const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
     if (!user) {
-        await ctx.reply('يرجى استخدام /start أولاً.');
+        await showTtsUnavailable(ctx);
         return;
     }
 
     const word = await getWordById(ctx.db, wordId);
     if (!word || word.added_by !== user.user_id) {
-        await replaceWithText(ctx, '⚠️ لم أجد هذه الكلمة في بنك كلماتك.', ttsFailureKeyboard(wordId, context));
+        await showTtsUnavailable(ctx);
         return;
     }
 
     const germanText = normalizeTtsText(word.german);
     if (!germanText) {
-        await ctx.reply('النطق الصوتي غير متاح حالياً.', { reply_markup: ttsFailureKeyboard(wordId, context) });
+        await showTtsUnavailable(ctx);
         return;
     }
 
-    const cached = await getCachedWordAudio(ctx.db, user.user_id, word.word_id, germanText, CLOUDFLARE_TTS_PROVIDER);
-    if (cached?.telegram_file_id) {
-        await ctx.replyWithAudio(cached.telegram_file_id, {
-            title: germanText,
-            performer: 'DeutschDrop',
-            caption: `🔊 ${germanText}`,
-            reply_markup: ttsSuccessKeyboard(word.word_id, germanText, context),
-        });
-        return;
-    }
-
-    const generatedToday = await countGeneratedAudioToday(ctx.db, user.user_id, CLOUDFLARE_TTS_PROVIDER);
-    if (generatedToday >= TTS_DAILY_GENERATION_LIMIT) {
-        await ctx.reply('وصلت حد توليد النطق اليومي. النطق المخزن يبقى متاحاً.', {
-            reply_markup: ttsFailureKeyboard(word.word_id, context),
-        });
+    const locked = await acquireTtsRequestLock(ctx.db, { userId: user.user_id, wordId: word.word_id, text: germanText });
+    if (!locked) {
+        await ctx.answerCallbackQuery('جاري تجهيز النطق...').catch(() => {});
         return;
     }
 
     try {
+        const config = getCloudflareTtsConfig(ctx.env);
+        const cached = await getCachedWordAudio(ctx.db, user.user_id, word.word_id, germanText, CLOUDFLARE_TTS_PROVIDER, config.language, config.voice, config.model);
+        if (cached?.telegram_file_id) {
+            await ctx.replyWithAudio(cached.telegram_file_id, {
+                title: germanText,
+                performer: 'DeutschDrop',
+                caption: `🔊 ${germanText}`,
+            });
+            return;
+        }
+
+        const generatedToday = await countGeneratedAudioToday(ctx.db, user.user_id, CLOUDFLARE_TTS_PROVIDER);
+        if (generatedToday >= TTS_DAILY_GENERATION_LIMIT) {
+            await showTtsUnavailable(ctx);
+            return;
+        }
+
         const generated = await generateCloudflareTts(ctx.env, germanText);
         const message = await ctx.replyWithAudio(new InputFile(generated.audioBytes, `${safeAudioFilename(germanText)}.mp3`), {
             title: germanText,
             performer: 'DeutschDrop',
             caption: `🔊 ${germanText}`,
-            reply_markup: ttsSuccessKeyboard(word.word_id, germanText, context),
         });
         const fileId = message.audio?.file_id;
         if (fileId) {
@@ -82,6 +85,9 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
                 provider: generated.provider,
                 telegramFileId: fileId,
                 contentHash: generated.contentHash,
+                language: generated.language,
+                voice: generated.voice,
+                model: generated.model,
             });
         }
     } catch (error) {
@@ -92,26 +98,16 @@ async function sendWordPronunciation(ctx: BotContext, wordId: number, context: R
             provider: CLOUDFLARE_TTS_PROVIDER,
             error: err,
         });
-        await ctx.reply('النطق الصوتي غير متاح حالياً.', {
-            reply_markup: ttsFailureKeyboard(word.word_id, context),
-        });
+        await showTtsUnavailable(ctx);
+    } finally {
+        await releaseTtsRequestLock(ctx.db, user.user_id, word.word_id, germanText).catch(() => {});
     }
 }
 
-function ttsSuccessKeyboard(wordId: number, germanText: string, context: ReturnContext): InlineKeyboard {
-    return new InlineKeyboard()
-        .text('🔁 إعادة النطق', `tts:word:${wordId}:ctx:${context}`).row()
-        .url('🎬 YouGlish', buildYouglishDirectUrl(germanText, 'german')).row()
-        .text('⬅️ رجوع', sideFlowBackCallback(wordId, context))
-        .text('🏠 الرئيسية', 'menu_main');
-}
-
-function ttsFailureKeyboard(wordId: number, context: ReturnContext): InlineKeyboard {
-    return new InlineKeyboard()
-        .text('🔁 حاول مرة ثانية', `tts:word:${wordId}:ctx:${context}`).row()
-        .text('🎬 YouGlish', `youglish:${wordId}:ctx:${context}`).row()
-        .text('⬅️ رجوع', sideFlowBackCallback(wordId, context))
-        .text('🏠 الرئيسية', 'menu_main');
+async function showTtsUnavailable(ctx: BotContext): Promise<void> {
+    await ctx.answerCallbackQuery({ text: 'النطق الألماني غير متاح حالياً.', show_alert: true }).catch(async () => {
+        await ctx.reply('النطق الألماني غير متاح حالياً.').catch(() => {});
+    });
 }
 
 function safeAudioFilename(value: string): string {

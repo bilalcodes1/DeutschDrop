@@ -11,6 +11,7 @@ import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
 import { gradeTrainingAnswer } from '../services/trainingAnswerGrader';
 import { updateWordLearningAfterAnswer } from '../services/adaptiveReview';
+import { buildYouglishDirectUrl } from '../services/youglish';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
 import type { TrainExplainSession } from './aiCoach';
@@ -21,6 +22,7 @@ export interface TrainingQuestion {
     type: TrainingQuestionType;
     prompt: string;
     answer: string;
+    german: string;
     options: string[];
     direction: 'de_ar' | 'ar_de';
     helper?: string;
@@ -268,9 +270,10 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
 
     const q = session.data.questions[session.data.currentIndex];
     const progress = `${session.data.currentIndex + 1}/${session.data.questions.length}`;
+    const questionGerman = q.german ?? (q.direction === 'ar_de' ? q.answer : q.prompt);
     const keyboard = new InlineKeyboard();
     keyboard.text('🔊 نطق', `tts:word:${q.word_id}:ctx:training_session`)
-        .text('🎬 YouGlish', `youglish:${q.word_id}:ctx:training_session`).row();
+        .url('🎬 YouGlish', buildYouglishDirectUrl(questionGerman, 'german')).row();
     for (let i = 0; i < q.options.length; i++) {
         const opt = q.options[i];
         const isCorrect = normalizeAnswer(opt) === normalizeAnswer(q.answer);
@@ -520,10 +523,10 @@ function buildTrainingQuestion(
 ): TrainingQuestion {
     const type = chooseQuestionType(mode, index, Boolean(word.example));
     if (type === 'typing_de') {
-        return { question_index: index, word_id: word.word_id, type, prompt: word.arabic, answer: word.german, direction: 'ar_de', options: [] };
+        return { question_index: index, word_id: word.word_id, type, prompt: word.arabic, answer: word.german, german: word.german, direction: 'ar_de', options: [] };
     }
     if (type === 'typing_ar') {
-        return { question_index: index, word_id: word.word_id, type, prompt: word.german, answer: word.arabic, direction: 'de_ar', options: [] };
+        return { question_index: index, word_id: word.word_id, type, prompt: word.german, answer: word.arabic, german: word.german, direction: 'de_ar', options: [] };
     }
     if (type === 'missing_letters') {
         return {
@@ -532,6 +535,7 @@ function buildTrainingQuestion(
             type,
             prompt: `${maskGerman(word.german)}`,
             answer: word.german,
+            german: word.german,
             direction: 'ar_de',
             options: [],
             helper: `المعنى: ${word.arabic}`,
@@ -544,6 +548,7 @@ function buildTrainingQuestion(
             type,
             prompt: word.arabic,
             answer: word.german,
+            german: word.german,
             direction: 'ar_de',
             options: [],
             helper: `أول حرف: ${word.german[0] ?? '-'}\nآخر حرف: ${word.german[word.german.length - 1] ?? '-'}`,
@@ -557,6 +562,7 @@ function buildTrainingQuestion(
             type,
             prompt: word.example,
             answer: word.arabic,
+            german: word.german,
             direction: 'de_ar',
             options: shuffle([word.arabic, ...distractors]),
             helper: `شنو معنى "${word.german}" من السياق؟`,
@@ -573,6 +579,7 @@ function buildTrainingQuestion(
         type,
         prompt,
         answer,
+        german: word.german,
         direction,
         options: shuffle([answer, ...distractors]),
     };

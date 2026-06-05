@@ -8,6 +8,7 @@ import { addXp } from '../services/xpLevels';
 import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
 import { updateWordLearningAfterAnswer } from '../services/adaptiveReview';
+import { buildYouglishDirectUrl } from '../services/youglish';
 import { replaceWithText } from './wordPanel';
 
 interface LearnSessionData {
@@ -115,7 +116,7 @@ async function showWord(ctx: BotContext, userId: number): Promise<void> {
 
     const keyboard = new InlineKeyboard()
         .text('🔊 نطق', `tts:word:${word.word_id}:ctx:learn_session`)
-        .text('🎬 YouGlish', `youglish:${word.word_id}:ctx:learn_session`).row()
+        .url('🎬 YouGlish', buildYouglishDirectUrl(word.german, 'german')).row()
         .text('🖼 رمز تعليمي', `pictogram:change:${word.word_id}:ctx:learn_session`).row()
         .text('👍 أعرفها', `review_known_${word.word_id}`).row()
         .text('😊 سهلة', `review_easy_${word.word_id}`)

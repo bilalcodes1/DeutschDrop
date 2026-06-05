@@ -1,7 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import { handleWebhook } from './routes/webhook';
-import { handleYouglishPage } from './routes/youglish';
 import type { Env } from './models';
 import { deleteExpiredBotSessions } from './repositories/sessionRepository';
 import { ZAINCASH_QR_BASE64 } from './assets_zaincash_qr';
@@ -22,10 +21,6 @@ export default {
             return new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
                 headers: { 'Content-Type': 'application/json' },
             });
-        }
-
-        if (url.pathname === '/youglish' && request.method === 'GET') {
-            return handleYouglishPage(request);
         }
 
         if (url.pathname === '/support/zaincash-qr') {

@@ -75,6 +75,33 @@ CREATE TABLE IF NOT EXISTS word_audio (
     FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS word_audio_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    word_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    telegram_file_id TEXT,
+    content_hash TEXT NOT NULL,
+    language TEXT,
+    voice TEXT,
+    model TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, word_id, text, provider),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tts_request_locks (
+    lock_key TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    word_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- 4.1. word_pictograms
 CREATE TABLE IF NOT EXISTS word_pictograms (
     word_id INTEGER PRIMARY KEY,
@@ -467,6 +494,9 @@ CREATE INDEX IF NOT EXISTS idx_list_words_word_id ON list_words(word_id);
 CREATE INDEX IF NOT EXISTS idx_words_added_by ON words(added_by);
 CREATE INDEX IF NOT EXISTS idx_bot_sessions_user_type ON bot_sessions(user_id, type);
 CREATE INDEX IF NOT EXISTS idx_bot_sessions_expires_at ON bot_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_word_audio_cache_lookup ON word_audio_cache(user_id, word_id, provider, content_hash);
+CREATE INDEX IF NOT EXISTS idx_word_audio_cache_user_created ON word_audio_cache(user_id, provider, created_at);
+CREATE INDEX IF NOT EXISTS idx_tts_request_locks_expires ON tts_request_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_status ON async_challenges(status);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_users ON async_challenges(creator_user_id, opponent_user_id);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_expires ON async_challenges(status, expires_at);

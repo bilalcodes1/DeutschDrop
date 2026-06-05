@@ -9,6 +9,7 @@ import {
     recordNotificationResponse,
 } from '../services/smartNotificationService';
 import { updateWordLearningAfterAnswer } from '../services/adaptiveReview';
+import { buildYouglishDirectUrl } from '../services/youglish';
 import { replaceWithText } from './wordPanel';
 
 export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
@@ -31,7 +32,8 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
             (word.example ? `\n\nمثال:\n${word.example}` : '') +
             `\n\nهل كنت تعرفها؟`,
             new InlineKeyboard()
-                .text('🔊 نطق', `tts:word:${word.word_id}:ctx:notification_answer`).row()
+                .text('🔊 نطق', `tts:word:${word.word_id}:ctx:notification_answer`)
+                .url('🎬 YouGlish', buildYouglishDirectUrl(word.german, 'german')).row()
                 .text('✅ نعم عرفتها', `notif_known_${eventId}`)
                 .text('❌ لا نسيتها', `notif_forgot_${eventId}`).row()
                 .text('🏋️ تدريبها', 'train_quick')

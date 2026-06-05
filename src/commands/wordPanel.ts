@@ -4,6 +4,7 @@ import { getPictogramByWordId } from '../repositories/pictogramRepository';
 import { getWordById } from '../repositories/wordRepository';
 import type { Word } from '../models';
 import { getUserByTelegramId } from '../repositories/userRepository';
+import { buildYouglishDirectUrl } from '../services/youglish';
 
 export async function showWordDetailPanel(ctx: BotContext, wordId: number, notice?: string, backCallback = 'list_words'): Promise<void> {
     const word = await getWordById(ctx.db, wordId);
@@ -84,7 +85,7 @@ function wordDetailKeyboard(word: Word, hasPictogram: boolean, backCallback: str
         keyboard.text('🗣 توليد اللفظ', `ai_pron_${wordId}`).row();
     }
     keyboard.text('🔊 نطق', `tts:word:${wordId}:ctx:word_details`)
-        .text('🎬 YouGlish', `youglish:${wordId}:ctx:word_details`).row();
+        .url('🎬 YouGlish', buildYouglishDirectUrl(word.german, 'german')).row();
     keyboard.text('📊 تحديد المستوى', `ai_level_${wordId}`).row();
 
     if (hasPictogram) {

@@ -10,7 +10,7 @@ import { classifyHttpStatus, sanitizeErrorMessage } from '../dist/services/ai/ai
 import { exampleContainsGerman, hasSuspiciousPronunciation, validateExampleSuggestion } from '../dist/services/ai/aiValidation.js';
 import { selectTrainingWords } from '../dist/services/srs.js';
 import { calculateDifficultyScore, shouldBeHard } from '../dist/services/adaptiveReview.js';
-import { buildYouglishDirectUrl, buildYouglishWebAppUrl, renderYouglishHtml } from '../dist/services/youglish.js';
+import { buildYouglishDirectUrl } from '../dist/services/youglish.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -308,7 +308,7 @@ test('word panel shows review status and pictogram-specific actions', () => {
     assert.match(source, /🔊 نطق/);
     assert.match(source, /tts:word:\$\{wordId\}:ctx:word_details/);
     assert.match(source, /🎬 YouGlish/);
-    assert.match(source, /youglish:\$\{wordId\}:ctx:word_details/);
+    assert.match(source, /buildYouglishDirectUrl\(word\.german, 'german'\)/);
     assert.match(source, /word\.added_by !== user\.user_id/);
 });
 
@@ -563,19 +563,33 @@ test('Cloudflare TTS cache and provider are wired without Google TTS', () => {
     const serviceSource = fs.readFileSync(new URL('../src/services/tts/cloudflareTts.ts', import.meta.url), 'utf8');
     const repoSource = fs.readFileSync(new URL('../src/repositories/wordAudioCacheRepository.ts', import.meta.url), 'utf8');
     const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0020_word_audio_cache.sql', import.meta.url), 'utf8');
+    const cacheMigrationSource = fs.readFileSync(new URL('../src/db/migrations/0021_tts_german_cache_and_locks.sql', import.meta.url), 'utf8');
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 
     assert.match(wranglerSource, /TTS_PROVIDER_ORDER = "cloudflareTts"/);
+    assert.match(wranglerSource, /TTS_LANGUAGE = "de-DE"/);
+    assert.match(wranglerSource, /TTS_VOICE = "de-DE"/);
+    assert.match(wranglerSource, /TTS_MODEL = "@cf\/myshell-ai\/melotts"/);
     assert.match(wranglerSource, /CLOUDFLARE_TTS_MODEL = "@cf\/myshell-ai\/melotts"/);
-    assert.match(serviceSource, /env\.AI\.run\(model, \{/);
+    assert.match(serviceSource, /env\.AI\.run\(config\.model, \{/);
     assert.match(serviceSource, /prompt: text/);
-    assert.match(serviceSource, /lang: 'de'/);
+    assert.match(serviceSource, /lang: config\.language/);
+    assert.match(serviceSource, /language: config\.language/);
+    assert.match(serviceSource, /voice: config\.voice/);
+    assert.match(serviceSource, /isGermanTtsConfig/);
     assert.match(commandSource, /getCachedWordAudio/);
     assert.match(commandSource, /replyWithAudio\(cached\.telegram_file_id/);
     assert.match(commandSource, /upsertWordAudioFileId/);
+    assert.match(commandSource, /acquireTtsRequestLock/);
+    assert.match(commandSource, /releaseTtsRequestLock/);
     assert.match(commandSource, /TTS_DAILY_GENERATION_LIMIT = 30/);
     assert.match(repoSource, /telegram_file_id IS NOT NULL/);
+    assert.match(repoSource, /language = \? AND voice = \? AND model = \?/);
     assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS word_audio_cache/);
+    assert.match(cacheMigrationSource, /ALTER TABLE word_audio_cache ADD COLUMN language/);
+    assert.match(cacheMigrationSource, /CREATE TABLE IF NOT EXISTS tts_request_locks/);
+    assert.doesNotMatch(commandSource, /reply_markup/);
+    assert.doesNotMatch(commandSource, /InlineKeyboard/);
     assert.doesNotMatch(`${commandSource}\n${serviceSource}`, /googleTts|Google Cloud TTS|texttospeech\.googleapis/i);
 });
 
@@ -588,11 +602,14 @@ test('learn train notifications and hard words expose TTS without counting answe
 
     assert.match(botSource, /registerTtsCommand\(bot\)/);
     assert.match(learnSource, /tts:word:\$\{word\.word_id\}:ctx:learn_session/);
+    assert.match(learnSource, /buildYouglishDirectUrl\(word\.german, 'german'\)/);
     assert.match(learnSource, /learn:back:/);
     assert.match(trainSource, /tts:word:\$\{q\.word_id\}:ctx:training_session/);
+    assert.match(trainSource, /buildYouglishDirectUrl\(questionGerman, 'german'\)/);
     assert.match(trainSource, /tts:word:\$\{wordId\}:ctx:training_session/);
     assert.match(trainSource, /train:back:/);
     assert.match(notifSource, /tts:word:\$\{word\.word_id\}:ctx:notification_answer/);
+    assert.match(notifSource, /buildYouglishDirectUrl\(word\.german, 'german'\)/);
     assert.match(hardSource, /tts:word:\$\{word\.word_id\}:ctx:hard_words/);
     assert.doesNotMatch(trainSource, /tts:word:[\s\S]{0,120}markQuestionAnswered/);
 });
@@ -606,50 +623,31 @@ test('YouGlish URLs encode German words and phrases', () => {
         buildYouglishDirectUrl('richtig gut in Schuss', 'german'),
         'https://youglish.com/pronounce/richtig%20gut%20in%20Schuss/german'
     );
-    assert.equal(
-        buildYouglishWebAppUrl('https://deutschdrop.aque7x.workers.dev/youglish', 'richtig gut in Schuss', 'german'),
-        'https://deutschdrop.aque7x.workers.dev/youglish?word=richtig%20gut%20in%20Schuss&lang=german'
-    );
 });
 
-test('/youglish route renders sanitized fallback HTML without private data', () => {
-    const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
-    const routeSource = fs.readFileSync(new URL('../src/routes/youglish.ts', import.meta.url), 'utf8');
-    const html = renderYouglishHtml('<script>alert(1)</script>', 'german');
-
-    assert.match(indexSource, /url\.pathname === '\/youglish'/);
-    assert.match(routeSource, /renderYouglishHtml/);
-    assert.match(html, /إذا لم يعمل الفيديو داخل Telegram/);
-    assert.match(html, /فتح في YouGlish/);
-    assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
-    assert.match(html, /%3Cscript%3Ealert\(1\)%3C%2Fscript%3E/);
-    assert.doesNotMatch(html, /telegram_id|Telegram ID|user_id|display_name|username/);
-    assert.doesNotMatch(html, /youglish-widget|widget\.js/);
-});
-
-test('YouGlish Telegram panel uses WebApp with fallback and returns to word details', () => {
-    const source = fs.readFileSync(new URL('../src/commands/youglish.ts', import.meta.url), 'utf8');
+test('YouGlish is only an official URL button, not a WebApp callback', () => {
+    const wordPanelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
+    const learnSource = fs.readFileSync(new URL('../src/commands/learn.ts', import.meta.url), 'utf8');
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
     const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
     const wranglerSource = fs.readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
 
-    assert.match(botSource, /registerYouglishCommand\(bot\)/);
-    assert.match(wranglerSource, /TELEGRAM_WEBAPP_URL = "https:\/\/deutschdrop\.aque7x\.workers\.dev\/youglish"/);
-    assert.match(source, /ctx\.env\.TELEGRAM_WEBAPP_URL/);
-    assert.match(source, /keyboard\.webApp/);
-    assert.match(source, /buildYouglishDirectUrl/);
-    assert.match(source, /sideFlowBackCallback\(word\.word_id, returnContext\)/);
-    assert.match(source, /🧹 إخفاء هذه الرسالة/);
+    assert.match(wordPanelSource, /\.url\('🎬 YouGlish', buildYouglishDirectUrl/);
+    assert.match(learnSource, /\.url\('🎬 YouGlish', buildYouglishDirectUrl/);
+    assert.match(trainSource, /\.url\('🎬 YouGlish', buildYouglishDirectUrl/);
+    assert.doesNotMatch(botSource, /registerYouglishCommand/);
+    assert.doesNotMatch(wranglerSource, /TELEGRAM_WEBAPP_URL/);
+    assert.doesNotMatch(`${wordPanelSource}\n${learnSource}\n${trainSource}`, /youglish:/);
+    assert.doesNotMatch(`${wordPanelSource}\n${learnSource}\n${trainSource}`, /webApp/);
 });
 
 test('YouGlish feature does not scrape or download videos', () => {
-    const commandSource = fs.readFileSync(new URL('../src/commands/youglish.ts', import.meta.url), 'utf8');
-    const routeSource = fs.readFileSync(new URL('../src/routes/youglish.ts', import.meta.url), 'utf8');
     const serviceSource = fs.readFileSync(new URL('../src/services/youglish.ts', import.meta.url), 'utf8');
-    const combined = `${commandSource}\n${routeSource}\n${serviceSource}`;
+    const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+    const combined = `${indexSource}\n${serviceSource}`;
 
-    assert.doesNotMatch(combined, /youtube-dl|yt-dlp|get_video_info|watch\?v=|sendVideo|replyWithVideo/i);
-    assert.doesNotMatch(commandSource, /fetch\(/);
-    assert.doesNotMatch(routeSource, /fetch\(/);
+    assert.doesNotMatch(combined, /youtube-dl|yt-dlp|get_video_info|watch\?v=|sendVideo|replyWithVideo|iframe|embed|widget\.js|youglish-widget/i);
+    assert.doesNotMatch(indexSource, /\/youglish/);
     assert.doesNotMatch(serviceSource, /fetch\(/);
 });
 
