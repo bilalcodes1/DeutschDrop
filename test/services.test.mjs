@@ -480,6 +480,45 @@ test('shared word multi-select copy flow uses source ownership and safe callback
     assert.match(repoSource, /COALESCE\(u\.is_deleted, 0\) = 0/);
 });
 
+test('bot session schema does not block sharing and collection session flows', () => {
+    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0029_update_bot_sessions_types.sql', import.meta.url), 'utf8');
+    const sessionSource = fs.readFileSync(new URL('../src/repositories/sessionRepository.ts', import.meta.url), 'utf8');
+    const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+
+    const botSessionsStart = schemaSource.indexOf('CREATE TABLE IF NOT EXISTS bot_sessions');
+    const botSessionsEnd = schemaSource.indexOf('CREATE TABLE IF NOT EXISTS daily_review_plans', botSessionsStart);
+    const botSessionsBlock = schemaSource.slice(botSessionsStart, botSessionsEnd);
+
+    assert.notEqual(botSessionsStart, -1);
+    assert.notEqual(botSessionsEnd, -1);
+    assert.match(botSessionsBlock, /Session type validation is handled in application code/);
+    assert.match(botSessionsBlock, /type TEXT NOT NULL,/);
+    assert.doesNotMatch(botSessionsBlock, /CHECK\s*\(\s*type\s+IN/);
+
+    assert.match(migrationSource, /CREATE TABLE bot_sessions_new/);
+    assert.match(migrationSource, /type TEXT NOT NULL,/);
+    assert.doesNotMatch(migrationSource, /CHECK\s*\(\s*type\s+IN/);
+    assert.match(
+        migrationSource,
+        /INSERT OR REPLACE INTO bot_sessions_new \(session_id, user_id, type, data, expires_at, created_at\)\s*SELECT session_id, user_id, type, data, expires_at, created_at\s*FROM bot_sessions;/s
+    );
+    assert.match(migrationSource, /DROP TABLE bot_sessions;/);
+    assert.match(migrationSource, /ALTER TABLE bot_sessions_new RENAME TO bot_sessions;/);
+    assert.match(migrationSource, /CREATE INDEX IF NOT EXISTS idx_bot_sessions_user_type ON bot_sessions\(user_id, type\);/);
+    assert.match(migrationSource, /CREATE INDEX IF NOT EXISTS idx_bot_sessions_expires_at ON bot_sessions\(expires_at\);/);
+
+    for (const type of ['learn', 'train', 'add_word', 'word_edit', 'challenge', 'register']) {
+        assert.match(sessionSource, new RegExp(`'${type}'`));
+    }
+    for (const type of ['shared_word_search', 'shared_word_copy_selection', 'collection_create']) {
+        assert.match(sessionSource, new RegExp(`'${type}'`));
+    }
+
+    assert.match(sharingSource, /saveBotSession\(ctx\.db, data\.targetUserId, 'shared_word_copy_selection'/);
+    assert.match(sharingSource, /saveBotSession<CollectionCreateSession>\(ctx\.db, user\.user_id, 'collection_create'/);
+});
+
 test('word sharing and collection entry points are visible in user menus', () => {
     const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
@@ -845,12 +884,12 @@ test('pending support proofs are reachable only from admin panel', () => {
 
 test('supporter admin migration adds status and broadcast tables', () => {
     const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0009_supporter_admin_tools.sql', import.meta.url), 'utf8');
-    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+    const sessionSource = fs.readFileSync(new URL('../src/repositories/sessionRepository.ts', import.meta.url), 'utf8');
 
     assert.match(migrationSource, /ALTER TABLE support_proofs ADD COLUMN status/);
     assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS user_support_status/);
     assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS broadcast_logs/);
-    assert.match(schemaSource, /'admin_broadcast'/);
+    assert.match(sessionSource, /'admin_broadcast'/);
 });
 
 test('home button edits the existing main menu panel', () => {
