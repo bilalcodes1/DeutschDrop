@@ -1,11 +1,13 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { queryOne, queryAll, run, runBatch } from '../db/queries';
 import type { Word, UserUploadedList, ListWord } from '../models';
+import { buildWordSearchFields, normalizeWordSearchQuery, rankWordSearchResults } from '../services/wordSearch';
 
 export const DUPLICATE_WORD_ERROR = 'duplicate_word';
 const WORD_SELECT_COLUMNS = `word_id, german, arabic, example, example_ar, pronunciation_ar,
-    pronunciation_latin, level, added_by, created_at, updated_at`;
+    pronunciation_latin, level, added_by, created_at, updated_at, german_search, arabic_search, example_search`;
 const WORD_SELECT_COLUMNS_SAFE = 'word_id, german, arabic, example, added_by, created_at';
+const SEARCH_CANDIDATE_LIMIT = 200;
 
 export function normalizeGermanForCompare(value: string): string {
     return value
@@ -79,31 +81,87 @@ export async function searchWordsByUser(
     limit: number,
     offset: number
 ): Promise<Word[]> {
-    const pattern = `%${query.trim()}%`;
     const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 10)));
     const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
-    return queryAll<Word>(
-        db,
-        `SELECT ${WORD_SELECT_COLUMNS} FROM words
-         WHERE added_by = ?
-           AND (german LIKE ? COLLATE NOCASE OR arabic LIKE ?)
-         ORDER BY created_at DESC, word_id DESC
-         LIMIT ? OFFSET ?`,
-        [userId, pattern, pattern, safeLimit, safeOffset]
-    );
+    const candidates = await searchWordCandidates(db, userId, query);
+    return rankWordSearchResults(candidates, query).slice(safeOffset, safeOffset + safeLimit);
 }
 
 export async function countSearchWordsByUser(db: D1Database, userId: number, query: string): Promise<number> {
-    const pattern = `%${query.trim()}%`;
-    const row = await queryOne<{ count: number }>(
-        db,
-        `SELECT COUNT(*) AS count
-         FROM words
-         WHERE added_by = ?
-           AND (german LIKE ? COLLATE NOCASE OR arabic LIKE ?)`,
-        [userId, pattern, pattern]
-    );
-    return row?.count ?? 0;
+    const candidates = await searchWordCandidates(db, userId, query);
+    return rankWordSearchResults(candidates, query).length;
+}
+
+async function searchWordCandidates(db: D1Database, userId: number, query: string): Promise<Word[]> {
+    const normalized = normalizeWordSearchQuery(query);
+    const germanPrefix = `${normalized.german}%`;
+    const germanContains = `%${normalized.german}%`;
+    const arabicPrefix = `${normalized.arabic}%`;
+    const arabicContains = `%${normalized.arabic}%`;
+    const rawContains = `%${normalized.raw}%`;
+
+    try {
+        return queryAll<Word>(
+            db,
+            `SELECT ${WORD_SELECT_COLUMNS} FROM words
+             WHERE added_by = ?
+               AND (
+                    german_search LIKE ?
+                 OR arabic_search LIKE ?
+                 OR german_search LIKE ?
+                 OR arabic_search LIKE ?
+                 OR example_search LIKE ?
+                 OR LOWER(german) LIKE LOWER(?)
+                 OR arabic LIKE ?
+                 OR example LIKE ?
+               )
+             ORDER BY
+                CASE
+                    WHEN german_search = ? THEN 100
+                    WHEN german_search LIKE ? THEN 90
+                    WHEN german_search LIKE ? THEN 80
+                    WHEN arabic_search = ? THEN 75
+                    WHEN arabic_search LIKE ? THEN 70
+                    WHEN arabic_search LIKE ? THEN 60
+                    ELSE 10
+                END DESC,
+                created_at DESC,
+                word_id DESC
+             LIMIT ?`,
+            [
+                userId,
+                germanPrefix,
+                arabicPrefix,
+                germanContains,
+                arabicContains,
+                `%${normalized.german || normalized.arabic}%`,
+                rawContains,
+                rawContains,
+                rawContains,
+                normalized.german,
+                germanPrefix,
+                germanContains,
+                normalized.arabic,
+                arabicPrefix,
+                arabicContains,
+                SEARCH_CANDIDATE_LIMIT,
+            ]
+        );
+    } catch {
+        return queryAll<Word>(
+            db,
+            `SELECT ${WORD_SELECT_COLUMNS_SAFE} FROM words
+             WHERE added_by = ?
+               AND (
+                    LOWER(german) LIKE LOWER(?)
+                 OR arabic LIKE ?
+                 OR example LIKE ?
+               )
+             ORDER BY created_at DESC, word_id DESC
+             LIMIT ?`,
+            [userId, rawContains, rawContains, rawContains, SEARCH_CANDIDATE_LIMIT]
+        );
+    }
 }
 
 export async function createWord(
@@ -113,10 +171,12 @@ export async function createWord(
     example: string | null,
     addedBy: number
 ): Promise<number> {
+    const search = buildWordSearchFields(german, arabic, example);
     const result = await run(
         db,
-        'INSERT INTO words (german, arabic, example, added_by) VALUES (?, ?, ?, ?)',
-        [german, arabic, example, addedBy]
+        `INSERT INTO words (german, arabic, example, added_by, german_search, arabic_search, example_search)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [german, arabic, example, addedBy, search.german_search, search.arabic_search, search.example_search]
     );
     return (result.meta as { last_row_id?: number })?.last_row_id ?? 0;
 }
@@ -179,10 +239,13 @@ export async function updateExistingWordFieldsForUser(
     const existing = await searchDuplicateWordForUser(db, userId, german);
     if (!existing) return false;
 
+    const search = buildWordSearchFields(german, arabic, example);
     const result = await run(
         db,
-        'UPDATE words SET arabic = ?, example = ? WHERE word_id = ? AND added_by = ?',
-        [arabic, example, existing.word_id, userId]
+        `UPDATE words
+         SET arabic = ?, example = ?, arabic_search = ?, example_search = ?
+         WHERE word_id = ? AND added_by = ?`,
+        [arabic, example, search.arabic_search, search.example_search, existing.word_id, userId]
     );
     return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
 }
@@ -227,10 +290,13 @@ export async function updateWordForUser(
         throw new Error(DUPLICATE_WORD_ERROR);
     }
 
+    const search = buildWordSearchFields(german, arabic, example);
     const result = await run(
         db,
-        'UPDATE words SET german = ?, arabic = ?, example = ? WHERE word_id = ? AND added_by = ?',
-        [german, arabic, example, wordId, userId]
+        `UPDATE words
+         SET german = ?, arabic = ?, example = ?, german_search = ?, arabic_search = ?, example_search = ?
+         WHERE word_id = ? AND added_by = ?`,
+        [german, arabic, example, search.german_search, search.arabic_search, search.example_search, wordId, userId]
     );
     return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
 }
@@ -244,7 +310,13 @@ export async function updateWordAiFieldsForUser(
     const updates: string[] = [];
     const values: unknown[] = [];
 
-    if (fields.example !== undefined) { updates.push('example = ?'); values.push(fields.example); }
+    if (fields.example !== undefined) {
+        updates.push('example = ?');
+        values.push(fields.example);
+        updates.push('example_search = ?');
+        const current = await getWordById(db, wordId);
+        values.push(current ? buildWordSearchFields(current.german, current.arabic, fields.example).example_search : buildWordSearchFields('', '', fields.example).example_search);
+    }
     if (fields.example_ar !== undefined) { updates.push('example_ar = ?'); values.push(fields.example_ar); }
     if (fields.pronunciation_ar !== undefined) { updates.push('pronunciation_ar = ?'); values.push(fields.pronunciation_ar); }
     if (fields.pronunciation_latin !== undefined) { updates.push('pronunciation_latin = ?'); values.push(fields.pronunciation_latin); }

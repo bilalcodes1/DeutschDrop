@@ -89,6 +89,9 @@ export interface Word {
     pronunciation_ar: string | null;
     pronunciation_latin: string | null;
     level: string | null;
+    german_search?: string | null;
+    arabic_search?: string | null;
+    example_search?: string | null;
     added_by: number;
     created_at: string;
     updated_at?: string | null;

@@ -62,6 +62,9 @@ CREATE TABLE IF NOT EXISTS words (
     pronunciation_ar TEXT DEFAULT NULL,
     pronunciation_latin TEXT DEFAULT NULL,
     level TEXT DEFAULT NULL,
+    german_search TEXT,
+    arabic_search TEXT,
+    example_search TEXT,
     added_by INTEGER NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME,
@@ -501,6 +504,8 @@ CREATE INDEX IF NOT EXISTS idx_word_audio_cache_lookup ON word_audio_cache(user_
 CREATE INDEX IF NOT EXISTS idx_word_audio_cache_user_created ON word_audio_cache(user_id, provider, created_at);
 CREATE INDEX IF NOT EXISTS idx_word_audio_cache_provider_language_voice ON word_audio_cache(provider, language, voice, format);
 CREATE INDEX IF NOT EXISTS idx_word_audio_cache_provider_key_created ON word_audio_cache(provider, api_key_hash, created_at);
+CREATE INDEX IF NOT EXISTS idx_words_user_german_search ON words(added_by, german_search);
+CREATE INDEX IF NOT EXISTS idx_words_user_arabic_search ON words(added_by, arabic_search);
 CREATE INDEX IF NOT EXISTS idx_tts_request_locks_expires ON tts_request_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_status ON async_challenges(status);
 CREATE INDEX IF NOT EXISTS idx_async_challenges_users ON async_challenges(creator_user_id, opponent_user_id);

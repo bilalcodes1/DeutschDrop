@@ -94,6 +94,10 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         const searchSession = user ? await getBotSession<WordSearchSession>(ctx.db, user.user_id, 'word_search') : null;
         if (user && searchSession?.data.awaiting) {
             const query = ctx.message.text.trim();
+            if (query.length < 2) {
+                await ctx.reply('اكتب حرفين أو أكثر للبحث.', { reply_markup: searchEmptyKeyboard() });
+                return;
+            }
             await saveBotSession<WordSearchSession>(ctx.db, user.user_id, 'word_search', { awaiting: false, query }, 30);
             await showSearchWords(ctx, user.user_id, query, 0);
             return;
@@ -236,7 +240,11 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
             return;
         }
         await saveBotSession<WordSearchSession>(ctx.db, user.user_id, 'word_search', { awaiting: true, query: null }, 10);
-        await replaceWithText(ctx, '🔍 اكتب كلمة للبحث', navigationKeyboard('list_words'));
+        await replaceWithText(
+            ctx,
+            '🔍 اكتب جزءاً من الكلمة الألمانية أو العربية:\n\nمثال:\nstu\nمدرس\nAuto\nسيار',
+            navigationKeyboard('list_words')
+        );
         await ctx.answerCallbackQuery();
     });
 
@@ -611,8 +619,8 @@ async function showSearchWords(ctx: BotContext, userId: number, query: string, p
         : [];
 
     const text = totalWords === 0
-        ? `🔍 *نتائج البحث*\n\nلا توجد نتائج لـ: ${query}`
-        : formatWordsPage(`🔍 نتائج البحث: ${query}`, visible, safePage + 1, totalPages, totalWords);
+        ? `لم أجد كلمة قريبة من بحثك.\nجرّب جزءاً آخر من الكلمة.`
+        : formatWordsPage(`🔍 نتائج البحث عن: ${query}`, visible, safePage + 1, totalPages, totalWords);
     await replaceWithText(ctx, text, wordsPageKeyboard(visible, safePage + 1, totalPages, true));
 }
 
@@ -641,6 +649,12 @@ function wordsPageKeyboard(words: Array<{ word_id: number; german: string; arabi
         keyboard.text('التالي ➡️', search ? `word_search_page_${page}` : `words:page:${page + 1}`);
     }
     if (page > 1 || page < totalPages) keyboard.row();
+    if (search) {
+        keyboard.text('🔍 بحث جديد', 'word_search_start').row()
+            .text('📋 كل الكلمات', 'list_words')
+            .text('🏠 الرئيسية', 'menu_main');
+        return keyboard;
+    }
     keyboard.text('🔍 بحث', 'word_search_start')
         .text('☑️ تحديد', `words:select:page:${page}`).row()
         .text('➕ إضافة كلمة', 'add_word')
@@ -648,6 +662,13 @@ function wordsPageKeyboard(words: Array<{ word_id: number; german: string; arabi
         .text('⬅️ رجوع', 'menu_words')
         .text('🏠 الرئيسية', 'menu_main');
     return keyboard;
+}
+
+function searchEmptyKeyboard(): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('🔍 بحث جديد', 'word_search_start')
+        .text('📋 كل الكلمات', 'list_words').row()
+        .text('🏠 الرئيسية', 'menu_main');
 }
 
 async function ensureSelectionSession(ctx: BotContext, userId: number, page = 1): Promise<WordSelectionSession> {

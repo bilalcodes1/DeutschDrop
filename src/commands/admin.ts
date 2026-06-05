@@ -409,6 +409,9 @@ async function showAdminDbCheck(ctx: BotContext): Promise<void> {
         'pronunciation_ar',
         'pronunciation_latin',
         'level',
+        'german_search',
+        'arabic_search',
+        'example_search',
         'added_by',
     ];
 

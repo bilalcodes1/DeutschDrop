@@ -11,6 +11,7 @@ import { exampleContainsGerman, hasSuspiciousPronunciation, validateExampleSugge
 import { selectTrainingWords } from '../dist/services/srs.js';
 import { calculateDifficultyScore, shouldBeHard } from '../dist/services/adaptiveReview.js';
 import { buildYouglishDirectUrl } from '../dist/services/youglish.js';
+import { normalizeArabicSearch, normalizeGermanSearch, rankWordSearchResults } from '../dist/services/wordSearch.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -403,10 +404,88 @@ test('word search is scoped to current user and paginated', () => {
     assert.match(repositorySource, /export async function searchWordsByUser/);
     assert.match(repositorySource, /export async function countSearchWordsByUser/);
     assert.match(repositorySource, /WHERE added_by = \?/);
-    assert.match(repositorySource, /german LIKE \? COLLATE NOCASE OR arabic LIKE \?/);
+    assert.match(repositorySource, /german_search LIKE \?/);
+    assert.match(repositorySource, /arabic_search LIKE \?/);
+    assert.match(repositorySource, /example_search LIKE \?/);
     assert.match(addWordSource, /word_search_start/);
     assert.match(addWordSource, /word_search_page_/);
-    assert.match(addWordSource, /اكتب كلمة للبحث/);
+    assert.match(addWordSource, /اكتب جزءاً من الكلمة الألمانية أو العربية/);
+});
+
+test('word search normalization handles case German variants and Arabic variants', () => {
+    assert.equal(normalizeGermanSearch(' Studentin! '), 'studentin');
+    assert.equal(normalizeGermanSearch('Straße'), 'strasse');
+    assert.equal(normalizeGermanSearch('möchte'), 'moechte');
+    assert.equal(normalizeArabicSearch('أَلْطالبةـ'), 'الطالبه');
+    assert.equal(normalizeArabicSearch('إلى المدرسة'), 'الي المدرسه');
+});
+
+test('word search ranking prefers exact before startsWith contains and examples', () => {
+    const base = {
+        example: null,
+        example_ar: null,
+        pronunciation_ar: null,
+        pronunciation_latin: null,
+        level: null,
+        added_by: 1,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: null,
+    };
+    const results = rankWordSearchResults([
+        { ...base, word_id: 1, german: 'Meine Studentin', arabic: 'طالبتي' },
+        { ...base, word_id: 2, german: 'Studentin', arabic: 'الطالبة' },
+        { ...base, word_id: 3, german: 'Haus', arabic: 'بيت', example: 'Die Studentin liest.' },
+    ], 'studentin');
+
+    assert.equal(results[0].word_id, 2);
+    assert.equal(results[1].word_id, 1);
+    assert.equal(results[2].word_id, 3);
+});
+
+test('word search repository uses normalized columns candidate limits and fallback', () => {
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0025_normalized_word_search.sql', import.meta.url), 'utf8');
+    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+
+    assert.match(repositorySource, /SEARCH_CANDIDATE_LIMIT = 200/);
+    assert.match(repositorySource, /rankWordSearchResults\(candidates, query\)\.slice/);
+    assert.match(repositorySource, /LOWER\(german\) LIKE LOWER\(\?\)/);
+    assert.match(repositorySource, /catch \{\s*return queryAll<Word>/);
+    for (const column of ['german_search', 'arabic_search', 'example_search']) {
+        assert.match(migrationSource, new RegExp(`ALTER TABLE words ADD COLUMN ${column}`));
+        assert.match(schemaSource, new RegExp(`${column} TEXT`));
+        assert.match(adminSource, new RegExp(`'${column}'`));
+    }
+    assert.match(migrationSource, /idx_words_user_german_search ON words\(added_by, german_search\)/);
+    assert.match(migrationSource, /idx_words_user_arabic_search ON words\(added_by, arabic_search\)/);
+});
+
+test('word creation edit CSV and AI updates maintain search columns', () => {
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+    const uploadSource = fs.readFileSync(new URL('../src/commands/upload.ts', import.meta.url), 'utf8');
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const aiSource = fs.readFileSync(new URL('../src/commands/aiCoach.ts', import.meta.url), 'utf8');
+
+    assert.match(repositorySource, /buildWordSearchFields\(german, arabic, example\)/);
+    assert.match(repositorySource, /INSERT INTO words \(german, arabic, example, added_by, german_search, arabic_search, example_search\)/);
+    assert.match(repositorySource, /SET german = \?, arabic = \?, example = \?, german_search = \?, arabic_search = \?, example_search = \?/);
+    assert.match(repositorySource, /example_search = \?/);
+    assert.match(uploadSource, /createWordAndAssignToUser\(db, w\.german, w\.arabic, w\.example/);
+    assert.match(addWordSource, /updateWordForUser\(ctx\.db, userId, wordId, parsed\.german, parsed\.arabic, parsed\.example\)/);
+    assert.match(aiSource, /updateWordAiFieldsForUser/);
+});
+
+test('word search UI handles short no-result and search-detail navigation', () => {
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+
+    assert.match(addWordSource, /اكتب حرفين أو أكثر للبحث/);
+    assert.match(addWordSource, /لم أجد كلمة قريبة من بحثك/);
+    assert.match(addWordSource, /جرّب جزءاً آخر من الكلمة/);
+    assert.match(addWordSource, /🔍 بحث جديد/);
+    assert.match(addWordSource, /📋 كل الكلمات/);
+    assert.match(addWordSource, /words:detail:\$\{word\.word_id\}:search:\$\{page\}/);
+    assert.match(addWordSource, /word_search_page_\$\{page - 1\}/);
 });
 
 test('admin main menu button is shown only for admins', () => {
