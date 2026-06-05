@@ -402,6 +402,51 @@ test('word sharing lets users browse copy and select other users words safely', 
     assert.match(repoSource, /slice\(0, 100\)/);
 });
 
+test('shared word multi-select copy flow uses source ownership and safe callbacks', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+    const sessionSource = fs.readFileSync(new URL('../src/repositories/sessionRepository.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(commandSource, /shared_words:select:start:\$\{ownerUserId\}:page:\$\{safePage\}/);
+    for (const callback of [
+        'shared_words:select:start',
+        'shared_words:select:page',
+        'shared_words:select:toggle',
+        'shared_words:select:all',
+        'shared_words:select:clear',
+        'shared_words:select:copy',
+        'shared_words:select:back',
+    ]) {
+        assert.match(commandSource, new RegExp(callback.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    for (const alias of ['shared_select:start', 'shared_select:toggle', 'shared_select:all', 'shared_select:clear', 'shared_select:copy']) {
+        assert.match(commandSource, new RegExp(alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+
+    assert.match(sessionSource, /shared_word_copy_selection/);
+    assert.match(commandSource, /interface ShareSelectionSession/);
+    assert.match(commandSource, /sourceUserId: number/);
+    assert.match(commandSource, /targetUserId: number/);
+    assert.match(commandSource, /selectedWordIds: number\[\]/);
+    assert.match(commandSource, /createdAt: string/);
+
+    assert.match(commandSource, /getWordsByUserPaginated\(ctx\.db, sourceUserId/);
+    assert.match(commandSource, /word\.added_by !== sourceUserId/);
+    assert.match(commandSource, /copyWordsToUser\(ctx\.db, ownedIds, targetUserId\)/);
+    assert.match(commandSource, /SELECT word_id FROM words[\s\S]*WHERE added_by = \?/);
+    assert.match(commandSource, /if \(selected\.has\(wordId\)\) selected\.delete\(wordId\)/);
+    assert.match(commandSource, /for \(const word of visible\) selected\.add\(word\.word_id\)/);
+    assert.match(commandSource, /selectedWordIds: \[\]/);
+    assert.match(commandSource, /لم تحدد أي كلمة بعد/);
+    assert.match(commandSource, /normalizeSharedPage/);
+    assert.match(commandSource, /showSharedSelectionError/);
+    assert.match(commandSource, /shared_word_selection_failed/);
+    assert.match(commandSource, /await ctx\.answerCallbackQuery\(\)/);
+    assert.doesNotMatch(commandSource, /حدث خطأ بسيط/);
+    assert.match(repoSource, /COALESCE\(u\.is_banned, 0\) = 0/);
+    assert.match(repoSource, /COALESCE\(u\.is_deleted, 0\) = 0/);
+});
+
 test('word sharing and collection entry points are visible in user menus', () => {
     const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');

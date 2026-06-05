@@ -31,9 +31,11 @@ import { mainMenuKeyboard } from './menu';
 const PAGE_SIZE = 10;
 
 interface ShareSelectionSession {
-    ownerUserId: number;
-    selectedIds: number[];
+    sourceUserId: number;
+    targetUserId: number;
+    selectedWordIds: number[];
     page: number;
+    createdAt: string;
 }
 
 interface CollectionCreateSession {
@@ -124,61 +126,89 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
         await replaceWithText(ctx, `✅ تم نسخ ${result.copied} كلمة.\n⏭ تم تخطي ${result.skipped} كلمة لأنها موجودة عندك.`, copySummaryKeyboard(ownerUserId, Number(ctx.match[2])));
     });
 
+    bot.callbackQuery(/^shared_words:select:start:(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await startSharedWordSelection(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), 'start');
+    });
+
     bot.callbackQuery(/^shared_select:start:(\d+):page:(\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         const user = await currentUser(ctx);
         if (!user) return;
-        const data: ShareSelectionSession = { ownerUserId: Number(ctx.match[1]), selectedIds: [], page: Number(ctx.match[2]) };
-        await saveBotSession(ctx.db, user.user_id, 'shared_word_selection', data, 120);
-        await showSharedSelection(ctx, user.user_id, data.ownerUserId, data.page);
+        await startSharedWordSelection(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), 'start_alias');
+    });
+
+    bot.callbackQuery(/^shared_words:select:page:(\d+):(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await showSharedSelectionSafely(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), 'page');
+    });
+
+    bot.callbackQuery(/^shared_words:select:toggle:(\d+):(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await toggleSharedWordSelection(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), Number(ctx.match[3]), 'toggle');
     });
 
     bot.callbackQuery(/^shared_select:toggle:(\d+):owner:(\d+):page:(\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         const user = await currentUser(ctx);
         if (!user) return;
-        const wordId = Number(ctx.match[1]);
-        const ownerUserId = Number(ctx.match[2]);
-        const page = Number(ctx.match[3]);
-        const session = await getShareSelection(ctx, user.user_id, ownerUserId, page);
-        const selected = new Set(session.selectedIds);
-        if (selected.has(wordId)) selected.delete(wordId); else selected.add(wordId);
-        await saveBotSession(ctx.db, user.user_id, 'shared_word_selection', { ownerUserId, selectedIds: [...selected], page }, 120);
-        await showSharedSelection(ctx, user.user_id, ownerUserId, page);
+        await toggleSharedWordSelection(ctx, user.user_id, Number(ctx.match[2]), Number(ctx.match[1]), Number(ctx.match[3]), 'toggle_alias');
+    });
+
+    bot.callbackQuery(/^shared_words:select:all:(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await selectAllSharedWordsOnPage(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), 'select_all');
     });
 
     bot.callbackQuery(/^shared_select:all:(\d+):page:(\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         const user = await currentUser(ctx);
         if (!user) return;
-        const ownerUserId = Number(ctx.match[1]);
-        const page = Number(ctx.match[2]);
-        const visible = await getWordsByUserPaginated(ctx.db, ownerUserId, PAGE_SIZE, (page - 1) * PAGE_SIZE);
-        const session = await getShareSelection(ctx, user.user_id, ownerUserId, page);
-        const selected = new Set(session.selectedIds);
-        for (const word of visible) selected.add(word.word_id);
-        await saveBotSession(ctx.db, user.user_id, 'shared_word_selection', { ownerUserId, selectedIds: [...selected], page }, 120);
-        await showSharedSelection(ctx, user.user_id, ownerUserId, page);
+        await selectAllSharedWordsOnPage(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), 'select_all_alias');
+    });
+
+    bot.callbackQuery(/^shared_words:select:clear:(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await clearSharedWordSelection(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), 'clear');
     });
 
     bot.callbackQuery(/^shared_select:clear:(\d+):page:(\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         const user = await currentUser(ctx);
         if (!user) return;
-        await saveBotSession(ctx.db, user.user_id, 'shared_word_selection', { ownerUserId: Number(ctx.match[1]), selectedIds: [], page: Number(ctx.match[2]) }, 120);
-        await showSharedSelection(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]));
+        await clearSharedWordSelection(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), 'clear_alias');
+    });
+
+    bot.callbackQuery(/^shared_words:select:copy:(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await copySelectedSharedWords(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), 'copy');
     });
 
     bot.callbackQuery(/^shared_select:copy:(\d+):page:(\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         const user = await currentUser(ctx);
         if (!user) return;
-        const ownerUserId = Number(ctx.match[1]);
-        const page = Number(ctx.match[2]);
-        const session = await getShareSelection(ctx, user.user_id, ownerUserId, page);
-        const result = await copyWordsToUser(ctx.db, session.selectedIds, user.user_id);
-        await deleteBotSession(ctx.db, user.user_id, 'shared_word_selection');
-        await replaceWithText(ctx, `✅ تم نسخ ${result.copied} كلمة.\n⏭ تم تخطي ${result.skipped} كلمة لأنها موجودة عندك.`, copySummaryKeyboard(ownerUserId, page));
+        await copySelectedSharedWords(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]), 'copy_alias');
+    });
+
+    bot.callbackQuery(/^shared_words:select:back:(\d+):page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await deleteBotSession(ctx.db, user.user_id, 'shared_word_copy_selection');
+        await showOtherUserWords(ctx, user.user_id, Number(ctx.match[1]), Number(ctx.match[2]));
     });
 
     bot.callbackQuery(/^shared_search:(\d+)$/, async (ctx) => {
@@ -381,7 +411,7 @@ async function showOtherUserWords(ctx: BotContext, currentUserId: number, ownerU
     if (safePage > 1) keyboard.text('⬅️ السابق', `shared_user:${ownerUserId}:page:${safePage - 1}`);
     if (safePage < totalPages) keyboard.text('التالي ➡️', `shared_user:${ownerUserId}:page:${safePage + 1}`);
     if (safePage > 1 || safePage < totalPages) keyboard.row();
-    keyboard.text('☑️ تحديد للنسخ', `shared_select:start:${ownerUserId}:page:${safePage}`).row()
+    keyboard.text('☑️ تحديد للنسخ', `shared_words:select:start:${ownerUserId}:page:${safePage}`).row()
         .text('📥 نسخ كل كلمات هذا المستخدم', `shared_user_copy_all:${ownerUserId}:page:${safePage}`).row()
         .text('🔍 بحث داخل كلمات هذا المستخدم', `shared_search:${ownerUserId}`).row()
         .text('⬅️ رجوع', 'shared_users:page:1').text('🏠 الرئيسية', 'menu_main');
@@ -422,34 +452,212 @@ async function copySingleSharedWord(ctx: BotContext, userId: number, wordId: num
     await replaceWithText(ctx, '✅ تم نسخ الكلمة إلى كلماتك.', copySummaryKeyboard(ownerUserId, page));
 }
 
-async function getShareSelection(ctx: BotContext, userId: number, ownerUserId: number, page: number): Promise<ShareSelectionSession> {
-    const session = await getBotSession<ShareSelectionSession>(ctx.db, userId, 'shared_word_selection');
-    return session?.data.ownerUserId === ownerUserId ? session.data : { ownerUserId, selectedIds: [], page };
+async function startSharedWordSelection(ctx: BotContext, targetUserId: number, sourceUserId: number, page: number, action: string): Promise<void> {
+    await runSharedSelectionAction(ctx, targetUserId, sourceUserId, page, action, async () => {
+        const safePage = normalizeSharedPage(page);
+        const owner = await getPublicWordOwner(ctx.db, sourceUserId);
+        if (!owner || sourceUserId === targetUserId) {
+            await showSharedSelectionError(ctx, sourceUserId, safePage, 'هذا المستخدم غير متاح أو لا يملك كلمات عامة.');
+            return;
+        }
+        await saveShareSelection(ctx, {
+            sourceUserId,
+            targetUserId,
+            selectedWordIds: [],
+            page: safePage,
+            createdAt: new Date().toISOString(),
+        });
+        await showSharedSelection(ctx, targetUserId, sourceUserId, safePage);
+    });
 }
 
-async function showSharedSelection(ctx: BotContext, userId: number, ownerUserId: number, page: number): Promise<void> {
-    const owner = await getPublicWordOwner(ctx.db, ownerUserId);
-    if (!owner) return;
-    const session = await getShareSelection(ctx, userId, ownerUserId, page);
-    const total = await countWordsByUser(ctx.db, ownerUserId);
+async function showSharedSelectionSafely(ctx: BotContext, targetUserId: number, sourceUserId: number, page: number, action: string): Promise<void> {
+    await runSharedSelectionAction(ctx, targetUserId, sourceUserId, page, action, () => showSharedSelection(ctx, targetUserId, sourceUserId, page));
+}
+
+async function toggleSharedWordSelection(ctx: BotContext, targetUserId: number, sourceUserId: number, wordId: number, page: number, action: string): Promise<void> {
+    await runSharedSelectionAction(ctx, targetUserId, sourceUserId, page, action, async () => {
+        const safePage = normalizeSharedPage(page);
+        const word = await getWordById(ctx.db, wordId);
+        if (!word || word.added_by !== sourceUserId || sourceUserId === targetUserId) {
+            await showSharedSelectionError(ctx, sourceUserId, safePage, 'لم أجد هذه الكلمة ضمن كلمات المستخدم المحدد.');
+            return;
+        }
+        const session = await getShareSelection(ctx, targetUserId, sourceUserId, safePage);
+        const selected = new Set(session.selectedWordIds);
+        if (selected.has(wordId)) selected.delete(wordId);
+        else selected.add(wordId);
+        await saveShareSelection(ctx, { ...session, selectedWordIds: [...selected], page: safePage });
+        await showSharedSelection(ctx, targetUserId, sourceUserId, safePage);
+    });
+}
+
+async function selectAllSharedWordsOnPage(ctx: BotContext, targetUserId: number, sourceUserId: number, page: number, action: string): Promise<void> {
+    await runSharedSelectionAction(ctx, targetUserId, sourceUserId, page, action, async () => {
+        const safePage = normalizeSharedPage(page);
+        const owner = await getPublicWordOwner(ctx.db, sourceUserId);
+        if (!owner || sourceUserId === targetUserId) {
+            await showSharedSelectionError(ctx, sourceUserId, safePage, 'هذا المستخدم غير متاح للنسخ.');
+            return;
+        }
+        const visible = await getWordsByUserPaginated(ctx.db, sourceUserId, PAGE_SIZE, (safePage - 1) * PAGE_SIZE);
+        const session = await getShareSelection(ctx, targetUserId, sourceUserId, safePage);
+        const selected = new Set(session.selectedWordIds);
+        for (const word of visible) selected.add(word.word_id);
+        await saveShareSelection(ctx, { ...session, selectedWordIds: [...selected], page: safePage });
+        await showSharedSelection(ctx, targetUserId, sourceUserId, safePage);
+    });
+}
+
+async function clearSharedWordSelection(ctx: BotContext, targetUserId: number, sourceUserId: number, page: number, action: string): Promise<void> {
+    await runSharedSelectionAction(ctx, targetUserId, sourceUserId, page, action, async () => {
+        const safePage = normalizeSharedPage(page);
+        const session = await getShareSelection(ctx, targetUserId, sourceUserId, safePage);
+        await saveShareSelection(ctx, { ...session, selectedWordIds: [], page: safePage });
+        await showSharedSelection(ctx, targetUserId, sourceUserId, safePage);
+    });
+}
+
+async function copySelectedSharedWords(ctx: BotContext, targetUserId: number, sourceUserId: number, page: number, action: string): Promise<void> {
+    await runSharedSelectionAction(ctx, targetUserId, sourceUserId, page, action, async () => {
+        const safePage = normalizeSharedPage(page);
+        const owner = await getPublicWordOwner(ctx.db, sourceUserId);
+        if (!owner || sourceUserId === targetUserId) {
+            await showSharedSelectionError(ctx, sourceUserId, safePage, 'هذا المستخدم غير متاح للنسخ.');
+            return;
+        }
+        const session = await getShareSelection(ctx, targetUserId, sourceUserId, safePage);
+        if (session.selectedWordIds.length === 0) {
+            await replaceWithText(ctx, 'لم تحدد أي كلمة بعد.', sharedSelectionActionsKeyboard(sourceUserId, safePage));
+            return;
+        }
+        const ownedIds = await getOwnedSharedWordIds(ctx, sourceUserId, session.selectedWordIds);
+        const result = await copyWordsToUser(ctx.db, ownedIds, targetUserId);
+        const invalid = session.selectedWordIds.length - ownedIds.length;
+        await deleteBotSession(ctx.db, targetUserId, 'shared_word_copy_selection');
+        await replaceWithText(
+            ctx,
+            `✅ تم نسخ ${result.copied} كلمة.\n⏭ تم تخطي ${result.skipped + invalid} كلمة لأنها موجودة عندك مسبقاً.`,
+            copySummaryKeyboard(sourceUserId, safePage)
+        );
+    });
+}
+
+async function getShareSelection(ctx: BotContext, targetUserId: number, sourceUserId: number, page: number): Promise<ShareSelectionSession> {
+    const safePage = normalizeSharedPage(page);
+    const session = await getBotSession<ShareSelectionSession>(ctx.db, targetUserId, 'shared_word_copy_selection');
+    if (session?.data.sourceUserId === sourceUserId && session.data.targetUserId === targetUserId) {
+        return { ...session.data, page: safePage };
+    }
+    return {
+        sourceUserId,
+        targetUserId,
+        selectedWordIds: [],
+        page: safePage,
+        createdAt: new Date().toISOString(),
+    };
+}
+
+async function saveShareSelection(ctx: BotContext, data: ShareSelectionSession): Promise<void> {
+    await saveBotSession(ctx.db, data.targetUserId, 'shared_word_copy_selection', data, 120);
+}
+
+async function showSharedSelection(ctx: BotContext, targetUserId: number, sourceUserId: number, page: number): Promise<void> {
+    const safePage = normalizeSharedPage(page);
+    const owner = await getPublicWordOwner(ctx.db, sourceUserId);
+    if (!owner || sourceUserId === targetUserId) {
+        await showSharedSelectionError(ctx, sourceUserId, safePage, 'هذا المستخدم غير متاح أو لا يملك كلمات عامة.');
+        return;
+    }
+    const session = await getShareSelection(ctx, targetUserId, sourceUserId, safePage);
+    const total = await countWordsByUser(ctx.db, sourceUserId);
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    const safePage = Math.max(1, Math.min(page, totalPages));
-    const words = await getWordsByUserPaginated(ctx.db, ownerUserId, PAGE_SIZE, (safePage - 1) * PAGE_SIZE);
-    const selected = new Set(session.selectedIds);
-    const text = `☑️ اختر الكلمات التي تريد نسخها من ${owner.display_name}\n\n` +
-        words.map(word => `${selected.has(word.word_id) ? '☑' : '☐'} ${word.german} — ${word.arabic}`).join('\n') +
+    const currentPage = Math.max(1, Math.min(safePage, totalPages));
+    const words = await getWordsByUserPaginated(ctx.db, sourceUserId, PAGE_SIZE, (currentPage - 1) * PAGE_SIZE);
+    const selected = new Set(session.selectedWordIds);
+    if (words.length === 0) {
+        await replaceWithText(ctx, '☑️ تحديد كلمات للنسخ\n\nلا توجد كلمات لدى هذا المستخدم حالياً.', backHomeKeyboard(`shared_user:${sourceUserId}:page:1`));
+        return;
+    }
+    const text = `☑️ تحديد كلمات للنسخ\n\nاختر الكلمات التي تريد نسخها من ${owner.display_name}:\n\nالصفحة: ${currentPage}/${totalPages}\n\n` +
+        words.map(word => `${selected.has(word.word_id) ? '☑' : '☐'} 🇩🇪 ${word.german}`).join('\n') +
         `\n\nالمحدد: ${selected.size}`;
+    await replaceWithText(ctx, text, sharedSelectionKeyboard(words, selected, sourceUserId, currentPage, totalPages));
+}
+
+function sharedSelectionKeyboard(
+    words: Array<{ word_id: number; german: string }>,
+    selected: Set<number>,
+    sourceUserId: number,
+    page: number,
+    totalPages: number
+): InlineKeyboard {
     const keyboard = new InlineKeyboard();
-    for (const word of words) keyboard.text(`${selected.has(word.word_id) ? '☑' : '☐'} ${word.german}`, `shared_select:toggle:${word.word_id}:owner:${ownerUserId}:page:${safePage}`).row();
-    keyboard.text('✅ نسخ المحدد', `shared_select:copy:${ownerUserId}:page:${safePage}`).row()
-        .text('☑️ تحديد الكل في الصفحة', `shared_select:all:${ownerUserId}:page:${safePage}`).row()
-        .text('📥 نسخ كل الكلمات', `shared_user_copy_all:${ownerUserId}:page:${safePage}`).row()
-        .text('🧹 إلغاء التحديد', `shared_select:clear:${ownerUserId}:page:${safePage}`).row();
-    if (safePage > 1) keyboard.text('⬅️ السابق', `shared_select:start:${ownerUserId}:page:${safePage - 1}`);
-    if (safePage < totalPages) keyboard.text('التالي ➡️', `shared_select:start:${ownerUserId}:page:${safePage + 1}`);
-    if (safePage > 1 || safePage < totalPages) keyboard.row();
-    keyboard.text('⬅️ رجوع', `shared_user:${ownerUserId}:page:${safePage}`).text('🏠 الرئيسية', 'menu_main');
-    await replaceWithText(ctx, text, keyboard);
+    for (const word of words) {
+        keyboard.text(`${selected.has(word.word_id) ? '☑' : '☐'} 🇩🇪 ${word.german}`, `shared_words:select:toggle:${sourceUserId}:${word.word_id}:page:${page}`).row();
+    }
+    keyboard.text('✅ نسخ المحدد', `shared_words:select:copy:${sourceUserId}:page:${page}`).row()
+        .text('☑️ تحديد الكل في الصفحة', `shared_words:select:all:${sourceUserId}:page:${page}`).row()
+        .text('🧹 إلغاء التحديد', `shared_words:select:clear:${sourceUserId}:page:${page}`).row();
+    if (page > 1) keyboard.text('⬅️ السابق', `shared_words:select:page:${sourceUserId}:${page - 1}`);
+    if (page < totalPages) keyboard.text('التالي ➡️', `shared_words:select:page:${sourceUserId}:${page + 1}`);
+    if (page > 1 || page < totalPages) keyboard.row();
+    keyboard.text('⬅️ رجوع لكلمات المستخدم', `shared_words:select:back:${sourceUserId}:page:${page}`).row()
+        .text('🏠 الرئيسية', 'menu_main');
+    return keyboard;
+}
+
+function sharedSelectionActionsKeyboard(sourceUserId: number, page: number): InlineKeyboard {
+    return new InlineKeyboard()
+        .text('🔄 إعادة المحاولة', `shared_words:select:start:${sourceUserId}:page:${page}`).row()
+        .text('⬅️ رجوع', `shared_user:${sourceUserId}:page:${page}`)
+        .text('🏠 الرئيسية', 'menu_main');
+}
+
+async function showSharedSelectionError(ctx: BotContext, sourceUserId: number, page: number, message = 'تعذر فتح وضع التحديد حالياً.'): Promise<void> {
+    await replaceWithText(ctx, message, sharedSelectionActionsKeyboard(sourceUserId, normalizeSharedPage(page)));
+}
+
+async function getOwnedSharedWordIds(ctx: BotContext, sourceUserId: number, wordIds: number[]): Promise<number[]> {
+    const uniqueIds = [...new Set(wordIds)].filter(id => Number.isInteger(id) && id > 0).slice(0, 100);
+    if (uniqueIds.length === 0) return [];
+    const placeholders = uniqueIds.map(() => '?').join(',');
+    const rows = await ctx.db.prepare(
+        `SELECT word_id FROM words
+         WHERE added_by = ? AND word_id IN (${placeholders})`
+    ).bind(sourceUserId, ...uniqueIds).all<{ word_id: number }>();
+    return (rows.results ?? []).map(row => row.word_id);
+}
+
+async function runSharedSelectionAction(
+    ctx: BotContext,
+    targetUserId: number,
+    sourceUserId: number,
+    page: number,
+    action: string,
+    fn: () => Promise<void>
+): Promise<void> {
+    const safePage = normalizeSharedPage(page);
+    try {
+        await fn();
+    } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        console.warn('shared_word_selection_failed', {
+            targetUserId,
+            sourceUserId,
+            page: safePage,
+            callbackData: ctx.callbackQuery?.data,
+            action,
+            errorName: err.name,
+            errorMessage: err.message.slice(0, 160),
+        });
+        await showSharedSelectionError(ctx, sourceUserId, safePage);
+    }
+}
+
+function normalizeSharedPage(page: number): number {
+    const value = Number(page);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1;
 }
 
 async function showMyCollections(ctx: BotContext, userId: number, page: number): Promise<void> {
