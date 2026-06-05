@@ -38,6 +38,10 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
 
     bot.use(async (ctx, next) => {
         if (ctx.callbackQuery) {
+            console.warn('callback_received', {
+                userId: ctx.from?.id,
+                data: ctx.callbackQuery.data,
+            });
             const answer = ctx.answerCallbackQuery.bind(ctx);
             await safeAnswerCallback(ctx);
             ctx.answerCallbackQuery = ((...args: Parameters<typeof ctx.answerCallbackQuery>) => answer(...args).catch(() => {})) as typeof ctx.answerCallbackQuery;

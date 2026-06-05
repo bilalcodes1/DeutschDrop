@@ -24,6 +24,7 @@ import {
     searchOtherUserWords,
     updateSharedWordOfferStatus,
 } from '../repositories/wordSharingRepository';
+import { isAdminTelegramId } from '../services/adminAccess';
 import { displayUserName, sendTelegramMessage } from '../services/notifications';
 import { replaceWithText } from './wordPanel';
 import { mainMenuKeyboard } from './menu';
@@ -162,6 +163,27 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
         const user = await currentUser(ctx);
         if (!user) return;
         await startSharedWordSelection(ctx, user.user_id, ctx.match[1], ctx.match[2], 'start_alias');
+    });
+
+    bot.callbackQuery(/^shared_words:select:start:(\d+):(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await startSharedWordSelection(ctx, user.user_id, ctx.match[1], ctx.match[2], 'start_no_page_label');
+    });
+
+    bot.callbackQuery(/^shared_select:start:(\d+):(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await startSharedWordSelection(ctx, user.user_id, ctx.match[1], ctx.match[2], 'start_alias_no_page_label');
+    });
+
+    bot.callbackQuery(/^shared_select:(\d+):(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        await startSharedWordSelection(ctx, user.user_id, ctx.match[1], ctx.match[2], 'start_short_alias');
     });
 
     bot.callbackQuery(/^shared_words:select:start:([^:]+)(?::page:([^:]+))?$/, async (ctx) => {
@@ -464,7 +486,14 @@ async function showOtherUserWords(ctx: BotContext, currentUserId: number, ownerU
     if (safePage > 1) keyboard.text('⬅️ السابق', `shared_user:${ownerUserId}:page:${safePage - 1}`);
     if (safePage < totalPages) keyboard.text('التالي ➡️', `shared_user:${ownerUserId}:page:${safePage + 1}`);
     if (safePage > 1 || safePage < totalPages) keyboard.row();
-    keyboard.text('☑️ تحديد للنسخ', `shared_words:select:start:${ownerUserId}:page:${safePage}`).row()
+    const selectCallbackData = `shared_words:select:start:${ownerUserId}:page:${safePage}`;
+    console.warn('shared_select_button_rendered', {
+        viewerUserId: currentUserId,
+        sourceUserId: ownerUserId,
+        page: safePage,
+        callbackData: selectCallbackData,
+    });
+    keyboard.text('☑️ تحديد للنسخ', selectCallbackData).row()
         .text('📥 نسخ كل كلمات هذا المستخدم', `shared_user_copy_all:${ownerUserId}:page:${safePage}`).row()
         .text('🔍 بحث داخل كلمات هذا المستخدم', `shared_search:${ownerUserId}`).row()
         .text('⬅️ رجوع', 'shared_users:page:1').text('🏠 الرئيسية', 'menu_main');
@@ -524,7 +553,7 @@ async function startSharedWordSelection(ctx: BotContext, targetUserId: number, r
     try {
         if (!sourceUserId) {
             logSharedSelectionOpenFailed(diagnostics, new Error('missing_source_user_id'));
-            await showPublicUsers(ctx, targetUserId, 1);
+            await replaceSharedSelectionText(ctx, 'تعذر معرفة المستخدم المصدر. افتح المستخدم مرة ثانية.', backHomeKeyboard('shared_users:page:1'));
             return;
         }
 
@@ -535,7 +564,7 @@ async function startSharedWordSelection(ctx: BotContext, targetUserId: number, r
         diagnostics.sourceUserDeleted = Boolean(sourceUser?.is_deleted);
         if (!sourceUser || sourceUser.is_banned || sourceUser.is_deleted) {
             logSharedSelectionOpenFailed(diagnostics);
-            await showSharedSelectionError(ctx, sourceUserId, safePage, 'هذا المستخدم غير متاح حالياً.');
+            await showSharedSelectionError(ctx, sourceUserId, safePage, 'هذا المستخدم غير متاح حالياً.', diagnostics);
             return;
         }
 
@@ -557,7 +586,7 @@ async function startSharedWordSelection(ctx: BotContext, targetUserId: number, r
         await showSharedSelection(ctx, targetUserId, sourceUserId, safePage, diagnostics);
     } catch (error) {
         logSharedSelectionOpenFailed(diagnostics, error);
-        await showSharedSelectionError(ctx, sourceUserId, safePage);
+        await showSharedSelectionError(ctx, sourceUserId, safePage, undefined, diagnostics, error);
     }
 }
 
@@ -721,16 +750,51 @@ function sharedSelectionActionsKeyboard(sourceUserId: number, page: number): Inl
         .text('🏠 الرئيسية', 'menu_main');
 }
 
-async function showSharedSelectionError(ctx: BotContext, sourceUserId: number, page: number, message = 'تعذر فتح وضع التحديد حالياً.'): Promise<void> {
-    await replaceSharedSelectionText(ctx, message, sharedSelectionActionsKeyboard(sourceUserId, normalizeSharedPage(page)));
+async function showSharedSelectionError(
+    ctx: BotContext,
+    sourceUserId: number,
+    page: number,
+    message = 'تعذر فتح وضع التحديد حالياً.',
+    diagnostics?: SharedSelectionDiagnostics,
+    error?: unknown
+): Promise<void> {
+    const safePage = normalizeSharedPage(page);
+    const debug = buildSharedSelectionAdminDebug(ctx, sourceUserId, safePage, diagnostics, error);
+    await replaceSharedSelectionText(ctx, `${message}${debug}`, sharedSelectionActionsKeyboard(sourceUserId, safePage));
 }
 
 async function replaceSharedSelectionText(ctx: BotContext, text: string, keyboard: InlineKeyboard): Promise<void> {
     try {
-        await replaceWithText(ctx, text, keyboard);
-    } catch {
+        await ctx.editMessageText(text, { reply_markup: keyboard });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('message is not modified')) return;
+        console.warn('shared_word_selection_open_failed', {
+            targetUserId: undefined,
+            sourceUserId: undefined,
+            parsedSourceUserId: undefined,
+            page: undefined,
+            parsedPage: undefined,
+            callbackData: ctx.callbackQuery?.data,
+            step: 'edit_message',
+            errorName: error instanceof Error ? error.name : 'Error',
+            errorMessage: message.slice(0, 160),
+        });
         await ctx.reply(text, { reply_markup: keyboard });
     }
+}
+
+function buildSharedSelectionAdminDebug(
+    ctx: BotContext,
+    sourceUserId: number,
+    page: number,
+    diagnostics?: SharedSelectionDiagnostics,
+    error?: unknown
+): string {
+    if (!isAdminTelegramId(ctx.env, ctx.from?.id)) return '';
+    const err = error instanceof Error ? error : error ? new Error(String(error)) : null;
+    const errorMessage = err?.message ?? '';
+    return `\n\nDebug:\nstep: ${diagnostics?.step ?? '-'}\ncallback: ${ctx.callbackQuery?.data ?? '-'}\nsourceUserId: ${sourceUserId || '-'}\npage: ${page}\nerror: ${errorMessage.slice(0, 160)}`;
 }
 
 async function loadSharedSourceUserStatus(ctx: BotContext, sourceUserId: number): Promise<SharedSourceUserStatus | null> {

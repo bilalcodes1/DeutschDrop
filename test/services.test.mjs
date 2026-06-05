@@ -408,6 +408,10 @@ test('shared word multi-select copy flow uses source ownership and safe callback
     const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
 
     assert.match(commandSource, /shared_words:select:start:\$\{ownerUserId\}:page:\$\{safePage\}/);
+    assert.match(commandSource, /shared_select_button_rendered/);
+    assert.match(commandSource, /callbackData: selectCallbackData/);
+    assert.match(commandSource, /viewerUserId: currentUserId/);
+    assert.match(commandSource, /sourceUserId: ownerUserId/);
     assert.match(commandSource, /startSharedWordSelection\(ctx, user\.user_id, ctx\.match\[1\], ctx\.match\[2\]/);
     for (const callback of [
         'shared_words:select:start',
@@ -423,6 +427,10 @@ test('shared word multi-select copy flow uses source ownership and safe callback
     for (const alias of ['shared_select:start', 'shared_select:toggle', 'shared_select:all', 'shared_select:clear', 'shared_select:copy']) {
         assert.match(commandSource, new RegExp(alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
+    assert.match(commandSource, /shared_words:select:start:\(\\d\+\):\(\\d\+\)/);
+    assert.match(commandSource, /shared_select:start:\(\\d\+\):\(\\d\+\)/);
+    assert.match(commandSource, /shared_select:\(\\d\+\):\(\\d\+\)/);
+    assert.match(commandSource, /تعذر معرفة المستخدم المصدر/);
 
     assert.match(sessionSource, /shared_word_copy_selection/);
     assert.match(commandSource, /interface ShareSelectionSession/);
@@ -461,6 +469,10 @@ test('shared word multi-select copy flow uses source ownership and safe callback
     assert.match(commandSource, /shared_words:select:start:\$\{sourceUserId\}:page:\$\{page\}/);
     assert.match(commandSource, /shared_user:\$\{sourceUserId\}:page:\$\{page\}/);
     assert.match(commandSource, /replaceSharedSelectionText/);
+    assert.match(commandSource, /message\.includes\('message is not modified'\)/);
+    assert.match(commandSource, /buildSharedSelectionAdminDebug/);
+    assert.match(commandSource, /Debug:\\nstep:/);
+    assert.match(commandSource, /isAdminTelegramId\(ctx\.env, ctx\.from\?\.id\)/);
     assert.match(commandSource, /await ctx\.reply\(text, \{ reply_markup: keyboard \}\)/);
     assert.match(commandSource, /await ctx\.answerCallbackQuery\(\)/);
     assert.doesNotMatch(commandSource, /حدث خطأ بسيط/);
@@ -474,6 +486,7 @@ test('word sharing and collection entry points are visible in user menus', () =>
     const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
     const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
     const challengeSource = fs.readFileSync(new URL('../src/commands/challenge.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
 
     for (const label of ['📋 عرض كل الكلمات', '➕ إضافة كلمة', '📤 رفع CSV', '🔍 بحث', '☑️ تحديد وحذف', '👥 كلمات المستخدمين', '🗂 مجموعات الكلمات', '📥 العروض المشتركة']) {
         assert.match(menuSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -505,7 +518,8 @@ test('word sharing and collection entry points are visible in user menus', () =>
 
     assert.match(repoSource, /COALESCE\(u\.is_banned, 0\) = 0/);
     assert.match(repoSource, /COALESCE\(u\.is_deleted, 0\) = 0/);
-    assert.doesNotMatch(sharingSource, /isAdminTelegramId/);
+    assert.match(botSource, /callback_received/);
+    assert.match(botSource, /data: ctx\.callbackQuery\.data/);
 });
 
 test('word collections support public playlists copy share and ownership rules', () => {
