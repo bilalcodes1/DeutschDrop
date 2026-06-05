@@ -12,7 +12,7 @@ import { isAdminTelegramId } from '../services/adminAccess';
 import { normalizeReturnContext, type ReturnContext } from '../services/returnContext';
 import { orderedTtsProviders, synthesizeGermanTts } from '../services/tts/ttsRouter';
 import { normalizeTtsText, safeTtsMessage, type TtsProviderResult } from '../services/tts/types';
-import { firstDebugVoiceRssKeyStates, getVoiceRssKeyStates, VOICE_RSS_DAILY_LIMIT_PER_KEY, VOICE_RSS_GERMAN_PROVIDER, VOICE_RSS_GERMAN_VOICE } from '../services/tts/voiceRssGerman';
+import { debugVoiceRssKeyStates, getVoiceRssKeyStates, VOICE_RSS_DAILY_LIMIT_PER_KEY, VOICE_RSS_GERMAN_PROVIDER, VOICE_RSS_GERMAN_VOICE } from '../services/tts/voiceRssGerman';
 
 export function registerTtsCommand(bot: Bot<BotContext>): void {
     bot.command('tts_debug', async (ctx) => {
@@ -141,7 +141,7 @@ async function showTtsDebug(ctx: BotContext): Promise<void> {
     const voice = providerConfigs.find(config => config.provider === VOICE_RSS_GERMAN_PROVIDER);
     const edge = providerConfigs.find(config => config.provider === 'edgeTtsWorker');
     const voiceRssStates = await getVoiceRssKeyStates(ctx.env, { db: ctx.db });
-    const visibleStates = firstDebugVoiceRssKeyStates(voiceRssStates);
+    const { visible: visibleStates, hiddenCount } = debugVoiceRssKeyStates(voiceRssStates);
     const estimatedDailyTotal = voiceRssStates.length * VOICE_RSS_DAILY_LIMIT_PER_KEY;
     await ctx.reply(
         `🔊 TTS Debug\n\n` +
@@ -154,7 +154,8 @@ async function showTtsDebug(ctx: BotContext): Promise<void> {
         `language: ${voice?.language ?? 'de-de'}\n` +
         `format: ${voice?.format ?? 'mp3'}\n\n` +
         `Keys usage today:\n` +
-        `${visibleStates.length > 0 ? visibleStates.map(state => `#${state.index}: ${state.usedToday}/${state.limit} ${state.status}`).join('\n') : '-'}\n\n` +
+        `${visibleStates.length > 0 ? visibleStates.map(state => `#${state.index}: ${state.usedToday}/${state.limit} ${state.status}`).join('\n') : '-'}\n` +
+        `${hiddenCount > 0 ? `... ${hiddenCount} more keys hidden from debug output\n` : ''}\n` +
         `Edge TTS Worker:\n` +
         `url: ${ctx.env.EDGE_TTS_WORKER_URL ? 'configured' : 'missing'}\n` +
         `voice: ${edge?.voice ?? ctx.env.EDGE_TTS_VOICE ?? 'de-DE-KatjaNeural'}\n\n` +

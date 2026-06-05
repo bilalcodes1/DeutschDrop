@@ -629,12 +629,12 @@ test('TTS debug and test are admin-only and hide secrets', () => {
     assert.doesNotMatch(`${voiceRssSource}\n${edgeWorkerSource}`, /Hanna|Lina|en-US|en-GB|English/);
 });
 
-test('VoiceRSS multi-key rotation supports seven keys safely', () => {
+test('VoiceRSS multi-key rotation supports many keys safely', () => {
     const voiceRssSource = fs.readFileSync(new URL('../src/services/tts/voiceRssGerman.ts', import.meta.url), 'utf8');
     const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
 
     assert.match(voiceRssSource, /VOICE_RSS_DAILY_LIMIT_PER_KEY = 350/);
-    assert.match(voiceRssSource, /DEBUG_VISIBLE_KEY_COUNT = 7/);
+    assert.match(voiceRssSource, /DEBUG_VISIBLE_KEY_COUNT = 20/);
     assert.match(voiceRssSource, /env\.VOICERSS_API_KEYS \|\| env\.VOICERSS_API_KEY/);
     assert.match(voiceRssSource, /\.split\(','.*\)/s);
     assert.match(voiceRssSource, /hashVoiceRssKey/);
@@ -645,7 +645,24 @@ test('VoiceRSS multi-key rotation supports seven keys safely', () => {
     assert.match(commandSource, /estimatedDailyTotal = voiceRssStates\.length \* VOICE_RSS_DAILY_LIMIT_PER_KEY/);
     assert.match(commandSource, /keys configured: \$\{voiceRssStates\.length\}/);
     assert.match(commandSource, /#\$\{state\.index\}: \$\{state\.usedToday\}\/\$\{state\.limit\} \$\{state\.status\}/);
+    assert.match(commandSource, /hiddenCount > 0/);
     assert.doesNotMatch(voiceRssSource, /Hanna|Lina/);
+});
+
+test('TTS debug can show eight VoiceRSS keys and calculates total generation', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/tts.ts', import.meta.url), 'utf8');
+    const voiceRssSource = fs.readFileSync(new URL('../src/services/tts/voiceRssGerman.ts', import.meta.url), 'utf8');
+
+    const lines = Array.from({ length: 8 }, (_, index) => {
+        const state = { index: index + 1, usedToday: 0, limit: 350, status: 'OK' };
+        return `#${state.index}: ${state.usedToday}/${state.limit} ${state.status}`;
+    });
+    assert.equal(8 * 350, 2800);
+    assert.equal(lines[0], '#1: 0/350 OK');
+    assert.equal(lines[7], '#8: 0/350 OK');
+    assert.match(voiceRssSource, /states\.slice\(0, DEBUG_VISIBLE_KEY_COUNT\)/);
+    assert.doesNotMatch(commandSource, /slice\(0, 7\)|DEBUG_VISIBLE_KEY_COUNT = 7|firstDebugVoiceRssKeyStates/);
+    assert.doesNotMatch(`${commandSource}\n${voiceRssSource}`, /VOICERSS_API_KEYS?\s*\}|key:\s*\$\{.*VOICERSS/);
 });
 
 test('VoiceRSS rotation skips disabled and exhausted keys', () => {

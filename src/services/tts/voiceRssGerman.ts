@@ -9,7 +9,7 @@ export const VOICE_RSS_DAILY_LIMIT_PER_KEY = 350;
 const VOICE_RSS_ENDPOINT = 'https://api.voicerss.org/';
 const DEFAULT_LANGUAGE = 'de-de';
 const DEFAULT_FORMAT = 'mp3';
-const DEBUG_VISIBLE_KEY_COUNT = 7;
+const DEBUG_VISIBLE_KEY_COUNT = 20;
 
 export const voiceRssGermanProvider: TtsProvider = {
     name: VOICE_RSS_GERMAN_PROVIDER,
@@ -122,8 +122,9 @@ export async function selectVoiceRssKey(env: Env, context: TtsProviderContext): 
     return { ok: true, key: selected.key, keyHash: selected.keyHash, state: selected };
 }
 
-export function firstDebugVoiceRssKeyStates(states: VoiceRssKeyState[]): VoiceRssKeyState[] {
-    return states.slice(0, DEBUG_VISIBLE_KEY_COUNT);
+export function debugVoiceRssKeyStates(states: VoiceRssKeyState[]): { visible: VoiceRssKeyState[]; hiddenCount: number } {
+    const visible = states.slice(0, DEBUG_VISIBLE_KEY_COUNT);
+    return { visible, hiddenCount: Math.max(0, states.length - visible.length) };
 }
 
 function isTextResponse(contentType: string, bytes: Uint8Array): boolean {
