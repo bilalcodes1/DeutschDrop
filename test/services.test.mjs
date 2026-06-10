@@ -2433,3 +2433,44 @@ test('backward compatibility routes handle old message callbacks', () => {
     assert.ok(trainSource.includes('bot.callbackQuery(/^(train_plan|review_due)$/'));
     assert.ok(challengeSource.includes('bot.callbackQuery(/^(?:collection_challenge_count_|train_collection_)(\\d+)$/'));
 });
+
+test('addXp supports xp_transactions and daily cap of 300', () => {
+    const xpSource = fs.readFileSync(new URL('../src/services/xpLevels.ts', import.meta.url), 'utf8');
+    
+    assert.match(xpSource, /INSERT INTO xp_transactions/);
+    assert.match(xpSource, /daily_cap_eligible/);
+    assert.match(xpSource, /const DAILY_CAP = 300;/);
+    assert.match(xpSource, /calculateCappedAmount/);
+     
+    assert.match(xpSource, /options\.allowDailyCap/);
+    assert.match(xpSource, /INSERT INTO xp_log/); // Should still exist
+});
+
+test('commands provide rich context to addXp', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const challengeSource = fs.readFileSync(new URL('../src/commands/challenge.ts', import.meta.url), 'utf8');
+    
+    assert.match(trainSource, /sourceType: 'training_session'/);
+    assert.match(trainSource, /allowDailyCap: true/);
+    
+    assert.match(challengeSource, /sourceType: 'challenge'/);
+    assert.doesNotMatch(challengeSource, /allowDailyCap: true/); // Challenge should not be capped yet
+});
+
+import { calculateCappedAmount } from '../src/services/xpLevels.ts';
+
+test('calculateCappedAmount correctly limits XP to 300', () => {
+    // Normal case: well below cap
+    assert.strictEqual(calculateCappedAmount(10, 0, 300), 10);
+    assert.strictEqual(calculateCappedAmount(2, 250, 300), 2);
+    
+    // Partial cap: 4 XP remaining, requested 10 XP
+    assert.strictEqual(calculateCappedAmount(10, 296, 300), 4);
+    
+    // Full cap: requested 10, already at 300
+    assert.strictEqual(calculateCappedAmount(10, 300, 300), 0);
+    assert.strictEqual(calculateCappedAmount(10, 350, 300), 0);
+    
+    // Exactly hitting the cap
+    assert.strictEqual(calculateCappedAmount(50, 250, 300), 50);
+});

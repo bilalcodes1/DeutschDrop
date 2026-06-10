@@ -44,7 +44,11 @@ export async function incrementDailyTask(ctx: BotContext, userId: number, taskTy
 
     const after = await getTask(ctx, userId, taskType);
     if (before && after && before.completed === 0 && after.completed === 1 && after.xp_awarded === 0) {
-        await addXp(ctx.db, userId, DAILY_TASK_XP, `daily_task_${taskType}`);
+        await addXp(ctx.db, userId, DAILY_TASK_XP, {
+            reason: `daily_task_${taskType}`,
+            sourceType: 'daily_task',
+            sourceId: taskType,
+        });
         await run(
             ctx.db,
             `UPDATE daily_tasks SET xp_awarded = 1

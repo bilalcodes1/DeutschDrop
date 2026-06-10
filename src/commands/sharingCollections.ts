@@ -1247,7 +1247,11 @@ async function handleCollectionDirectAddText(ctx: BotContext, userId: number, da
     if (!existing) {
         wordId = await createWordAndAssignToUser(ctx.db, parsed.german, parsed.arabic, parsed.example, userId);
         created = true;
-        await addXp(ctx.db, userId, 5, 'new_word');
+        await addXp(ctx.db, userId, 5, {
+            reason: 'new_word_from_collection',
+            sourceType: 'collection_import',
+            sourceId: wordId.toString(),
+        });
         await incrementDailyTask(ctx, userId, 'learn_words');
         await checkAchievements(ctx, userId);
     }

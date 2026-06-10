@@ -391,7 +391,11 @@ async function finishChallenge(ctx: BotContext, userId: number, session: Challen
     const challenge = await submitChallengeResult(ctx.db, session.challengeId, userId, session.correctCount, timeMs);
     if (!challenge) return;
 
-    await addXp(ctx.db, userId, session.correctCount * 2, 'challenge_participation');
+    await addXp(ctx.db, userId, session.correctCount * 2, {
+        reason: 'challenge_participation',
+        sourceType: 'challenge',
+        sourceId: challenge.challenge_id.toString(),
+    });
     await replaceWithText(ctx, `✅ انتهى دورك في التحدي.\nنتيجتك: ${session.correctCount}/${session.questions.length}`, challengeDoneKeyboard());
 
     if (challenge.status === 'completed') {
@@ -418,7 +422,11 @@ async function announceChallengeResult(ctx: BotContext, challenge: NonNullable<A
     if (challenge.winner_user_id) {
         const winner = challenge.winner_user_id === challenge.creator_user_id ? creator : opponent;
         result += `🏆 الفائز: ${displayUserName(winner)} +100 XP`;
-        await addXp(ctx.db, challenge.winner_user_id, 100, 'challenge_win');
+        await addXp(ctx.db, challenge.winner_user_id, 100, {
+            reason: 'challenge_win',
+            sourceType: 'challenge',
+            sourceId: challenge.challenge_id.toString(),
+        });
         await unlockAchievement(ctx, challenge.winner_user_id, 'first_challenge_win');
     } else {
         result += '🤝 تعادل!';

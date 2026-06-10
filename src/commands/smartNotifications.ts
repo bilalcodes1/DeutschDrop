@@ -47,7 +47,12 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
         const userId = await getEventUserId(ctx, eventId);
         const word = await getNotificationEventWord(ctx.db, eventId);
         if (userId) {
-            await addXp(ctx.db, userId, 1, 'notification_recall_known');
+            await addXp(ctx.db, userId, 1, {
+                reason: 'notification_recall_known',
+                sourceType: 'smart_notification',
+                sourceId: word ? word.word_id.toString() : eventId.toString(),
+                allowDailyCap: true,
+            });
             if (word) {
                 await updateWordLearningAfterAnswer(ctx.db, {
                     userId,

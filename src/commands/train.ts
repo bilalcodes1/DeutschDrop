@@ -332,7 +332,12 @@ async function handleTrainAnswer(ctx: BotContext, questionIndex: number, wordId:
     markQuestionAnswered(session.data, current, isCorrect);
 
     if (isCorrect) {
-        await addXp(ctx.db, user.user_id, 2, 'correct_train');
+        await addXp(ctx.db, user.user_id, 2, {
+            reason: 'correct_train',
+            sourceType: 'training_session',
+            sourceId: session.session_id.toString(),
+            allowDailyCap: true,
+        });
         await ctx.answerCallbackQuery('✅ صحيح! +2 XP');
     } else {
         await ctx.answerCallbackQuery('❌ خطأ');
@@ -404,7 +409,12 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
     markQuestionAnswered(session.data, current, isCorrect);
 
     if (isCorrect) {
-        await addXp(ctx.db, user.user_id, 2, 'correct_train');
+        await addXp(ctx.db, user.user_id, 2, {
+            reason: 'correct_train',
+            sourceType: 'training_session',
+            sourceId: session.session_id.toString(),
+            allowDailyCap: true,
+        });
     }
 
     await recordReview(ctx.db, user.user_id, current.word_id, isCorrect, null, null);

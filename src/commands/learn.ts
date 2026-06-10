@@ -196,7 +196,11 @@ async function handleReviewAnswer(
 
     // Award XP
     if (isCorrect) {
-        await addXp(ctx.db, user.user_id, 2, 'correct_review');
+        await addXp(ctx.db, user.user_id, 2, {
+            reason: 'correct_review',
+            sourceType: 'learn_session',
+            allowDailyCap: true,
+        });
     }
     await incrementDailyTask(ctx, user.user_id, 'review_words');
     await checkAchievements(ctx, user.user_id);

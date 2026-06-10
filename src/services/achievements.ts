@@ -31,7 +31,11 @@ export async function unlockAchievement(ctx: BotContext, userId: number, key: st
     const changes = (result.meta as { changes?: number })?.changes ?? 0;
     if (changes === 0) return false;
 
-    await addXp(ctx.db, userId, ACHIEVEMENT_XP, `achievement_${key}`);
+    await addXp(ctx.db, userId, ACHIEVEMENT_XP, {
+        reason: `achievement_${key}`,
+        sourceType: 'achievement',
+        sourceId: key,
+    });
 
     const user = await queryOne<{ telegram_id: number; display_name: string | null; name: string }>(
         ctx.db,

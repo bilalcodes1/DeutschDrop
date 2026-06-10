@@ -15,21 +15,79 @@ export const XP_RULES = {
     DAILY_QUEST: 100,
 } as const;
 
+export interface AddXpOptions {
+    reason: string;
+    sourceType?: string;
+    sourceId?: string;
+    metadata?: Record<string, any>;
+    allowDailyCap?: boolean;
+}
+
+export function calculateCappedAmount(amount: number, todayCapped: number, dailyCap: number): number {
+    if (todayCapped >= dailyCap) return 0;
+    if (todayCapped + amount > dailyCap) return dailyCap - todayCapped;
+    return amount;
+}
+
 export async function addXp(
     db: D1Database,
     userId: number,
     amount: number,
-    reason: string
+    options: AddXpOptions | string
 ): Promise<number> {
+    const reason = typeof options === 'string' ? options : options.reason;
+    const sourceType = typeof options === 'string' ? null : options.sourceType ?? null;
+    const sourceId = typeof options === 'string' ? null : options.sourceId ?? null;
+    const metadata = typeof options === 'string' ? null : options.metadata ?? null;
+    const allowDailyCap = typeof options === 'string' ? false : options.allowDailyCap ?? false;
+
+    let finalAmount = amount;
+    let capApplied = 0;
+    const multiplier = 1.0;
+    const dailyCapEligible = allowDailyCap ? 1 : 0;
+
+    if (allowDailyCap) {
+        try {
+            const capQuery = await queryOne<{ today_capped: number }>(
+                db,
+                `SELECT COALESCE(SUM(final_amount), 0) as today_capped
+                 FROM xp_transactions
+                 WHERE user_id = ? AND daily_cap_eligible = 1 AND date(created_at) = date('now')`,
+                [userId]
+            );
+            const todayCapped = capQuery?.today_capped ?? 0;
+            const DAILY_CAP = 300;
+
+            finalAmount = calculateCappedAmount(amount, todayCapped, DAILY_CAP);
+            if (finalAmount < amount) {
+                capApplied = 1;
+            }
+        } catch (e) {
+            // Ignore error if table doesn't exist yet in some environments
+        }
+    }
+
+    const metadataJson = metadata ? JSON.stringify(metadata) : null;
+
+    try {
+        await run(
+            db,
+            `INSERT INTO xp_transactions (user_id, amount, base_amount, final_amount, reason, source_type, source_id, multiplier, cap_applied, daily_cap_eligible, metadata_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [userId, finalAmount, amount, finalAmount, reason, sourceType, sourceId, multiplier, capApplied, dailyCapEligible, metadataJson]
+        );
+    } catch (e) {
+        // Fallback for tests/environments where migration 0036 is not yet applied
+    }
     await run(
         db,
         'INSERT INTO xp_log (user_id, amount, reason) VALUES (?, ?, ?)',
-        [userId, amount, reason]
+        [userId, finalAmount, reason]
     );
     await run(
         db,
         'INSERT INTO xp_events (user_id, amount, reason) VALUES (?, ?, ?)',
-        [userId, amount, reason]
+        [userId, finalAmount, reason]
     ).catch(() => undefined);
     const total = await getTotalXp(db, userId);
     const level = getLevelFromXp(total).level;

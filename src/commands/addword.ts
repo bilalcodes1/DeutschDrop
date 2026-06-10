@@ -171,7 +171,10 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
 
             try {
                 const wordId = await createWordAndAssignToUser(ctx.db, pending.data.german, text, null, user.user_id);
-                await addXp(ctx.db, user.user_id, 5, 'new_word');
+                await addXp(ctx.db, user.user_id, 5, {
+                    reason: 'new_word',
+                    sourceType: 'word_addition',
+                });
                 await incrementDailyTask(ctx, user.user_id, 'learn_words');
                 await checkAchievements(ctx, user.user_id);
                 await ctx.reply(
@@ -570,7 +573,11 @@ async function addWordInline(ctx: BotContext, german: string, arabic: string): P
 
     try {
         const wordId = await createWordAndAssignToUser(ctx.db, german, arabic, null, user.user_id);
-        await addXp(ctx.db, user.user_id, 5, 'new_word');
+        await addXp(ctx.db, user.user_id, 5, {
+            reason: 'new_word',
+            sourceType: 'word_addition',
+            sourceId: wordId.toString(),
+        });
         await incrementDailyTask(ctx, user.user_id, 'learn_words');
         await checkAchievements(ctx, user.user_id);
         await ctx.reply(`✅ تمت الإضافة!\n\n🇩🇪 ${german}\n🇦🇪 ${arabic}`, { reply_markup: wordAddedKeyboard() });
