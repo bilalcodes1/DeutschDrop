@@ -9,6 +9,7 @@ import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
 import { updateWordLearningAfterAnswer } from '../services/adaptiveReview';
 import { buildYouglishDirectUrl } from '../services/youglish';
+import { recordCorrectReviewAnswer } from '../services/dailyQuestHooks';
 import { replaceWithText } from './wordPanel';
 
 interface LearnSessionData {
@@ -196,6 +197,7 @@ async function handleReviewAnswer(
 
     // Award XP
     if (isCorrect) {
+        await recordCorrectReviewAnswer(ctx.db, user.user_id);
         await addXp(ctx.db, user.user_id, 2, {
             reason: 'correct_review',
             sourceType: 'learn_session',

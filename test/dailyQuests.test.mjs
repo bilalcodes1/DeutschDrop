@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import Database from 'better-sqlite3';
 import { ensureDailyQuests, getDailyQuests, updateQuestProgress, claimQuestReward, formatDailyQuestsMessage, getTodayDateBaghdad } from '../dist/services/dailyQuests.js';
+import { recordCorrectTrainingAnswer, recordCorrectReviewAnswer, recordTrainingSessionComplete } from '../dist/services/dailyQuestHooks.js';
 
 function createMockD1() {
     const db = new Database(':memory:');
@@ -158,4 +159,111 @@ test('daily_tasks old system is untouched', () => {
     const source = fs.readFileSync(new URL('../src/services/dailyTasks.ts', import.meta.url), 'utf8');
     assert.match(source, /export async function incrementDailyTask/);
     assert.match(source, /UPDATE daily_tasks/);
+});
+
+test('dailyQuestHooks - recordCorrectTrainingAnswer updates correct_answers_count', async () => {
+    const db = createMockD1();
+    const userId = 1;
+
+    await recordCorrectTrainingAnswer(db, userId);
+    const quests = await getDailyQuests(db, userId);
+    const silver = quests.find(q => q.tier === 'silver');
+
+    assert.equal(silver.current_progress, 1);
+    assert.equal(silver.is_completed, 0);
+});
+
+test('dailyQuestHooks - recordCorrectReviewAnswer updates correct_answers_count and review_answers_count', async () => {
+    const db = createMockD1();
+    const userId = 1;
+    const questDate = getTodayDateBaghdad();
+
+    await ensureDailyQuests(db, userId);
+    db._realDb.prepare(
+        `UPDATE daily_quests SET quest_type = 'review_answers_count', target_value = 10 WHERE user_id = ? AND quest_date = ? AND tier = 'gold'`
+    ).run(userId, questDate);
+
+    await recordCorrectReviewAnswer(db, userId);
+    const quests = await getDailyQuests(db, userId);
+    const correctQuest = quests.find(q => q.quest_type === 'correct_answers_count');
+    const reviewQuest = quests.find(q => q.quest_type === 'review_answers_count');
+
+    assert.equal(correctQuest.current_progress, 1);
+    assert.equal(reviewQuest.current_progress, 1);
+});
+
+test('dailyQuestHooks - recordTrainingSessionComplete updates complete_training_session', async () => {
+    const db = createMockD1();
+    const userId = 1;
+
+    await recordTrainingSessionComplete(db, userId, { total: 5, correct: 3, wrong: 2 });
+    const quests = await getDailyQuests(db, userId);
+    const bronze = quests.find(q => q.tier === 'bronze');
+
+    assert.equal(bronze.current_progress, 1);
+    assert.equal(bronze.is_completed, 1);
+});
+
+test('dailyQuestHooks - recordTrainingSessionComplete updates perfect_session when no wrong answers', async () => {
+    const db = createMockD1();
+    const userId = 1;
+
+    await recordTrainingSessionComplete(db, userId, { total: 5, correct: 5, wrong: 0 });
+    const quests = await getDailyQuests(db, userId);
+    const gold = quests.find(q => q.tier === 'gold');
+
+    assert.equal(gold.current_progress, 1);
+    assert.equal(gold.is_completed, 1);
+});
+
+test('dailyQuestHooks - recordTrainingSessionComplete skips perfect_session when wrong answers exist', async () => {
+    const db = createMockD1();
+    const userId = 1;
+
+    await recordTrainingSessionComplete(db, userId, { total: 5, correct: 4, wrong: 1 });
+    const quests = await getDailyQuests(db, userId);
+    const gold = quests.find(q => q.tier === 'gold');
+
+    assert.equal(gold.current_progress, 0);
+    assert.equal(gold.is_completed, 0);
+});
+
+test('dailyQuestHooks - no addXp or claimQuestReward inside hooks', () => {
+    const source = fs.readFileSync(new URL('../src/services/dailyQuestHooks.ts', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /\baddXp\b/);
+    assert.doesNotMatch(source, /\bclaimQuestReward\b/);
+});
+
+test('dailyQuestHooks - train.ts wires correct training answer and session complete', () => {
+    const source = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    assert.match(source, /recordCorrectTrainingAnswer/);
+    assert.match(source, /recordTrainingSessionComplete/);
+});
+
+test('dailyQuestHooks - learn.ts wires correct review answer', () => {
+    const source = fs.readFileSync(new URL('../src/commands/learn.ts', import.meta.url), 'utf8');
+    assert.match(source, /recordCorrectReviewAnswer/);
+});
+
+test('dailyQuestHooks - real training session completion records complete_training_session', async () => {
+    const db = createMockD1();
+    const userId = 1;
+
+    await recordTrainingSessionComplete(db, userId, { total: 10, correct: 8, wrong: 2 });
+    const quests = await getDailyQuests(db, userId);
+    const bronze = quests.find(q => q.tier === 'bronze');
+
+    assert.equal(bronze.current_progress, 1);
+    assert.equal(bronze.is_completed, 1);
+});
+
+test('dailyQuestHooks - train.ts guards recordTrainingSessionComplete from !session callbacks', () => {
+    const source = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const noSessionBlock = source.match(/if \(!session\) \{([\s\S]*?\n    \})\s*\n\n    if \(session\.data\.currentIndex/);
+    assert.ok(noSessionBlock, 'showTrainingQuestion should early-return on !session before completion branch');
+    assert.doesNotMatch(noSessionBlock[1], /recordTrainingSessionComplete/);
+
+    const completionBlock = source.match(/if \(session\.data\.currentIndex >= session\.data\.questions\.length\) \{([\s\S]*?\n    \})\s*\n\n    const q = session/);
+    assert.ok(completionBlock, 'showTrainingQuestion should have explicit completion branch');
+    assert.match(completionBlock[1], /recordTrainingSessionComplete/);
 });

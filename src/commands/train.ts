@@ -13,6 +13,7 @@ import { gradeTrainingAnswer } from '../services/trainingAnswerGrader';
 import { updateWordLearningAfterAnswer } from '../services/adaptiveReview';
 import { buildYouglishDirectUrl } from '../services/youglish';
 import { ACTIVE_TEMP_TTL_SECONDS, recordTemporaryMessage } from '../repositories/temporaryMessageRepository';
+import { recordCorrectTrainingAnswer, recordTrainingSessionComplete } from '../services/dailyQuestHooks';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
 import type { TrainExplainSession } from './aiCoach';
@@ -263,17 +264,30 @@ export async function showCurrentTrainingQuestion(ctx: BotContext, userId: numbe
 
 async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<void> {
     const session = await getBotSession<TrainingSessionData>(ctx.db, userId, 'train');
-    if (!session || session.data.currentIndex >= session.data.questions.length) {
+
+    if (!session) {
         await deleteBotSession(ctx.db, userId, 'train');
-        const total = session?.data.answeredCount ?? session?.data.questions.length ?? 0;
-        const correct = session?.data.correctCount ?? 0;
-        const wrong = session?.data.wrongCount ?? Math.max(0, total - correct);
+        await replaceWithText(
+            ctx,
+            `✅ انتهى التدريب!\n\n📊 النتيجة: 0/0 (0%)\n❌ الأخطاء: 0\n🎯 XP: +0`,
+            trainingFinishedKeyboard(0)
+        );
+        return;
+    }
+
+    if (session.data.currentIndex >= session.data.questions.length) {
+        const total = session.data.answeredCount ?? session.data.questions.length ?? 0;
+        const correct = session.data.correctCount ?? 0;
+        const wrong = session.data.wrongCount ?? Math.max(0, total - correct);
         const percent = total > 0 ? Math.round((correct / total) * 100) : 0;
+
+        await deleteBotSession(ctx.db, userId, 'train');
+        await recordTrainingSessionComplete(ctx.db, userId, { total, correct, wrong });
 
         await replaceWithText(
             ctx,
             `✅ انتهى التدريب!\n\n📊 النتيجة: ${correct}/${total} (${percent}%)\n❌ الأخطاء: ${wrong}\n🎯 XP: +${correct * 2}`,
-            trainingFinishedKeyboard(session?.data.wrongWordIds.length ?? 0)
+            trainingFinishedKeyboard(session.data.wrongWordIds.length ?? 0)
         );
         return;
     }
@@ -332,6 +346,7 @@ async function handleTrainAnswer(ctx: BotContext, questionIndex: number, wordId:
     markQuestionAnswered(session.data, current, isCorrect);
 
     if (isCorrect) {
+        await recordCorrectTrainingAnswer(ctx.db, user.user_id);
         await addXp(ctx.db, user.user_id, 2, {
             reason: 'correct_train',
             sourceType: 'training_session',
@@ -409,6 +424,7 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
     markQuestionAnswered(session.data, current, isCorrect);
 
     if (isCorrect) {
+        await recordCorrectTrainingAnswer(ctx.db, user.user_id);
         await addXp(ctx.db, user.user_id, 2, {
             reason: 'correct_train',
             sourceType: 'training_session',
