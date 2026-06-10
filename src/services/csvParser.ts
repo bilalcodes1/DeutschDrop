@@ -2,6 +2,7 @@ export interface ParsedWordRow {
     german: string;
     arabic: string;
     example: string | null;
+    example_ar: string | null;
 }
 
 export interface CsvParseResult {
@@ -25,13 +26,14 @@ export function parseWordCsv(content: string): CsvParseResult {
         const german = simplePair?.german ?? cleanCell(row[0] ?? '');
         const arabic = simplePair?.arabic ?? cleanCell(row[1] ?? '');
         const example = simplePair ? null : cleanCell(row[2] ?? '') || null;
+        const example_ar = simplePair ? null : cleanCell(row[3] ?? '') || null;
 
         if (!german || !arabic) {
             result.errors++;
             continue;
         }
 
-        result.words.push({ german, arabic, example });
+        result.words.push({ german, arabic, example, example_ar });
     }
 
     return result;

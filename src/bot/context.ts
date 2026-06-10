@@ -5,4 +5,5 @@ import type { Env } from '../models';
 export interface BotContext extends Context {
     env: Env;
     db: D1Database;
+    executionCtx?: ExecutionContext;
 }

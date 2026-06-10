@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { queryAll, queryOne, run, runBatch } from '../db/queries';
-import type { Word } from '../models';
-import { copyWordToUser, searchWordsByUser } from './wordRepository';
+import { queryAll, queryOne, run, runBatch } from '../db/queries.js';
+import type { Word } from '../models/index.js';
+import { copyWordToUser, searchWordsByUser } from './wordRepository.js';
 
 export interface PublicUserWordSummary {
     user_id: number;
@@ -295,4 +295,25 @@ export async function isSharedWordOfferExpired(db: D1Database, offerId: number):
 
 export async function updateSharedWordOfferStatus(db: D1Database, offerId: number, status: 'accepted' | 'ignored' | 'expired'): Promise<void> {
     await run(db, 'UPDATE shared_word_offers SET status = ?, updated_at = datetime("now") WHERE id = ?', [status, offerId]);
+}
+
+export async function updateCollection(db: D1Database, collectionId: number, ownerUserId: number, updates: { title?: string; description?: string | null; visibility?: 'public' | 'private' }): Promise<void> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (updates.title !== undefined) { sets.push('title = ?'); params.push(updates.title); }
+    if (updates.description !== undefined) { sets.push('description = ?'); params.push(updates.description); }
+    if (updates.visibility !== undefined) { sets.push('visibility = ?'); params.push(updates.visibility); }
+    
+    if (sets.length === 0) return;
+    params.push(collectionId, ownerUserId);
+    await run(db, `UPDATE word_collections SET ${sets.join(', ')} WHERE id = ? AND owner_user_id = ?`, params);
+}
+
+export async function deleteCollection(db: D1Database, collectionId: number, ownerUserId: number): Promise<void> {
+    // We do soft delete by deleting the links and the collection itself.
+    // The requirement says: "وضّح أن الحذف يحذف المجموعة والربط فقط، ولا يحذف الكلمات من حساب المستخدم"
+    // Since word_collection_items has collection_id, deleting it removes the links.
+    // Words are stored in words and user_words, so they remain unaffected.
+    await run(db, `DELETE FROM word_collection_items WHERE collection_id = ? AND EXISTS (SELECT 1 FROM word_collections WHERE id = ? AND owner_user_id = ?)`, [collectionId, collectionId, ownerUserId]);
+    await run(db, `DELETE FROM word_collections WHERE id = ? AND owner_user_id = ?`, [collectionId, ownerUserId]);
 }

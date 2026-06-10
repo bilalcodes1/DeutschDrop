@@ -106,7 +106,7 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
         await startTraining(ctx, 20, 'exam');
     });
 
-    bot.callbackQuery('train_plan', async (ctx) => {
+    bot.callbackQuery(/^(train_plan|review_due)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         await startReviewPlanTraining(ctx);
     });

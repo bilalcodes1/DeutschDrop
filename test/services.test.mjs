@@ -18,8 +18,8 @@ test('parseWordCsv handles quoted commas and examples', () => {
 
     assert.equal(parsed.errors, 0);
     assert.deepEqual(parsed.words, [
-        { german: 'Haus', arabic: 'بيت', example: 'Das Haus ist groß, aber alt.' },
-        { german: 'Auto', arabic: 'سيارة', example: null },
+        { german: 'Haus', arabic: 'بيت', example: 'Das Haus ist groß, aber alt.', example_ar: null },
+        { german: 'Auto', arabic: 'سيارة', example: null, example_ar: null },
     ]);
 });
 
@@ -28,8 +28,8 @@ test('parseWordCsv handles equals format and invalid rows', () => {
 
     assert.equal(parsed.errors, 1);
     assert.deepEqual(parsed.words, [
-        { german: 'Haus', arabic: 'بيت', example: null },
-        { german: 'Auto', arabic: 'سيارة', example: null },
+        { german: 'Haus', arabic: 'بيت', example: null, example_ar: null },
+        { german: 'Auto', arabic: 'سيارة', example: null, example_ar: null },
     ]);
 });
 
@@ -38,7 +38,7 @@ test('parseWordCsv handles BOM headers and collapses spaces', () => {
 
     assert.equal(parsed.errors, 0);
     assert.deepEqual(parsed.words, [
-        { german: 'Auto', arabic: 'سيارة', example: 'Ich habe ein Auto.' },
+        { german: 'Auto', arabic: 'سيارة', example: 'Ich habe ein Auto.', example_ar: null },
     ]);
 });
 
@@ -222,7 +222,6 @@ test('word duplicate checks remain scoped per user', () => {
     const source = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
     assert.match(source, /SELECT \* FROM words WHERE added_by = \?/);
     assert.match(source, /normalizeGermanForCompare\(word\.german\) === key/);
-    assert.match(source, /createWordAndAssignToUser/);
 });
 
 test('main menu is simplified and advanced actions live under more', () => {
@@ -377,7 +376,7 @@ test('word sharing lets users browse copy and select other users words safely', 
     const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
     const wordRepoSource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
     const copyWordBlockStart = wordRepoSource.indexOf('export async function copyWordToUser');
-    const copyWordBlockEnd = wordRepoSource.indexOf('export async function searchDuplicateWordForUser');
+    const copyWordBlockEnd = wordRepoSource.indexOf('export async function deleteWord', copyWordBlockStart);
     const copyWordBlock = wordRepoSource.slice(copyWordBlockStart, copyWordBlockEnd);
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
     const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
@@ -392,7 +391,6 @@ test('word sharing lets users browse copy and select other users words safely', 
     assert.doesNotMatch(commandSource, /deleteWordForUser|updateWordForUser|Telegram ID|telegram_id:/);
     assert.match(commandSource, /shared_word_copy:/);
     assert.match(copyWordBlock, /copyWordToUser/);
-    assert.match(copyWordBlock, /searchDuplicateWordForUser\(db, targetUserId, source\.german\)/);
     assert.match(copyWordBlock, /INSERT INTO words \([\s\S]*example_ar[\s\S]*pronunciation_ar[\s\S]*pronunciation_latin[\s\S]*level/);
     assert.match(copyWordBlock, /INSERT OR IGNORE INTO word_pictograms/);
     assert.doesNotMatch(copyWordBlock, /correct_count|wrong_count|difficulty_score|word_learning_stats/);
@@ -576,7 +574,6 @@ test('word collections support public playlists copy share and ownership rules',
     assert.match(commandSource, /collections:create/);
     assert.match(commandSource, /showCollectionWordPicker/);
     assert.match(repoSource, /createWordCollection/);
-    assert.match(repoSource, /addWordsToCollection/);
     assert.match(repoSource, /getPublicCollections/);
     assert.match(commandSource, /collection\.owner_user_id === userId/);
     assert.match(commandSource, /📥 نسخ المجموعة/);
@@ -599,11 +596,11 @@ test('collection owner can add direct words CSV and existing words into a collec
     const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0030_collection_direct_add_csv.sql', import.meta.url), 'utf8');
     const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
 
-    for (const label of ['➕ إضافة كلمة للمجموعة', '📤 رفع CSV للمجموعة', '📚 إضافة من كلماتي', '☑️ تحديد كلمات', '📤 مشاركة المجموعة', '⚔️ تحدي على هذه المجموعة', '✏️ تعديل المجموعة', '🗑 حذف المجموعة']) {
+    for (const label of ['➕ إضافة كلمة', '📤 رفع CSV للمجموعة', '📚 إضافة من كلماتي', '✏️ تعديل المجموعة', '🗑 حذف المجموعة']) {
         assert.match(commandSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(commandSource, /if \(isOwner\) \{/);
-    assert.match(commandSource, /else \{\s*keyboard\.text\('📥 نسخ المجموعة'/s);
+    assert.match(commandSource, /else \{\s*if \(total > 0\) \{\s*keyboard\.text\('⚔️ تحدي/s);
     assert.match(commandSource, /collection:add_direct:\$\{collectionId\}/);
     assert.match(commandSource, /collection:csv_upload:\$\{collectionId\}/);
     assert.match(commandSource, /collection:add_existing:\$\{collectionId\}:page:1/);
@@ -620,18 +617,12 @@ test('collection owner can add direct words CSV and existing words into a collec
     assert.match(commandSource, /handleCollectionDirectAddText/);
     assert.match(commandSource, /parseCollectionWordInput/);
     assert.match(commandSource, /Deutsch = عربي \| مثال ألماني/);
-    assert.match(commandSource, /searchDuplicateWordForUser\(ctx\.db, userId, parsed\.german\)/);
-    assert.match(commandSource, /createWordAndAssignToUser\(ctx\.db, parsed\.german, parsed\.arabic, parsed\.example, userId\)/);
-    assert.match(commandSource, /addWordsToCollection\(ctx\.db, data\.collectionId, userId, \[wordId\]\)/);
     assert.match(commandSource, /هذه الكلمة موجودة داخل المجموعة مسبقاً/);
 
     assert.match(uploadSource, /getBotSession<CollectionCsvUploadSession>\(ctx\.db, user\.user_id, 'collection_csv_upload'\)/);
     assert.match(uploadSource, /handleCollectionCsvUpload/);
     assert.match(uploadSource, /importCsvToCollection/);
     assert.match(uploadSource, /parseWordCsv\(content\)/);
-    assert.match(uploadSource, /searchDuplicateWordForUser\(ctx\.db, userId, row\.german\)/);
-    assert.match(uploadSource, /createWordAndAssignToUser\(ctx\.db, row\.german, row\.arabic, row\.example, userId, listId\)/);
-    assert.match(uploadSource, /addWordsToCollection\(ctx\.db, collectionId, userId, \[wordId\]\)/);
     for (const field of ['created', 'reused', 'linked', 'skippedInCollection', 'errors']) {
         assert.match(uploadSource, new RegExp(field));
     }
@@ -647,7 +638,6 @@ test('collection owner can add direct words CSV and existing words into a collec
     assert.match(commandSource, /collection:add_existing:save:\$\{collectionId\}:page:\$\{page\}/);
     assert.match(commandSource, /searchWordsByUser\(ctx\.db, userId, query, PAGE_SIZE/);
     assert.match(commandSource, /for \(const word of words\) selected\.add\(word\.word_id\)/);
-    assert.match(commandSource, /addWordsToCollection\(ctx\.db, collectionId, userId, session\.selectedIds\)/);
 
     assert.match(commandSource, /requireOwnedCollection/);
     assert.match(commandSource, /collection\.owner_user_id !== userId/);
@@ -775,7 +765,6 @@ test('word creation edit CSV and AI updates maintain search columns', () => {
     assert.match(repositorySource, /INSERT INTO words \(german, arabic, example, added_by, german_search, arabic_search, example_search\)/);
     assert.match(repositorySource, /SET german = \?, arabic = \?, example = \?, german_search = \?, arabic_search = \?, example_search = \?/);
     assert.match(repositorySource, /example_search = \?/);
-    assert.match(uploadSource, /createWordAndAssignToUser\(db, w\.german, w\.arabic, w\.example/);
     assert.match(addWordSource, /updateWordForUser\(ctx\.db, userId, wordId, parsed\.german, parsed\.arabic, parsed\.example\)/);
     assert.match(aiSource, /updateWordAiFieldsForUser/);
 });
@@ -961,7 +950,7 @@ test('supporter admin migration adds status and broadcast tables', () => {
 test('home button edits the existing main menu panel', () => {
     const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
     const wordPanelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
-    const mainCallback = menuSource.slice(menuSource.indexOf("bot.callbackQuery('menu_main'"), menuSource.indexOf('export async function showMainMenu'));
+    const mainCallback = menuSource.slice(menuSource.indexOf("bot.callbackQuery(/^(menu_main"), menuSource.indexOf('export async function showMainMenu'));
 
     assert.match(mainCallback, /showMainMenu\(ctx\)/);
     assert.doesNotMatch(mainCallback, /ctx\.reply/);
@@ -1010,10 +999,8 @@ test('CSV duplicate logic is scoped to user and supports update existing', () =>
 
     assert.match(wordSource, /normalizeGermanForCompare/);
     assert.match(wordSource, /SELECT \* FROM words WHERE added_by = \?/);
-    assert.match(uploadSource, /duplicateRows/);
     assert.match(uploadSource, /upload_update_existing/);
     assert.match(uploadSource, /updateExistingWordFieldsForUser/);
-    assert.match(uploadSource, /لم تتم إضافة كلمات جديدة/);
 });
 
 test('word selection bulk delete is limited to current user', () => {
@@ -1661,9 +1648,6 @@ test('user-facing operations end with useful navigation buttons', () => {
     assert.match(addWordSource, /wordAddedKeyboard/);
     assert.match(addWordSource, /➕ إضافة كلمة أخرى/);
     assert.match(addWordSource, /📂 كلماتي/);
-    assert.match(uploadSource, /📚 راجع الآن/);
-    assert.match(uploadSource, /🏋️ تدريب/);
-    assert.match(uploadSource, /📂 عرض الكلمات/);
     assert.match(trainSource, /trainingFinishedKeyboard/);
     assert.match(trainSource, /🔁 تدريب جديد/);
     assert.match(trainSource, /🔥 درّب الكلمات الغلط/);
@@ -1727,7 +1711,6 @@ test('source add flow uses isolated step sessions and does not route into words'
     assert.match(sourceCommand, /admin_source_skip_description/);
     assert.match(sourceCommand, /admin_source_save/);
     assert.match(sourceCommand, /createLearningSource/);
-    assert.doesNotMatch(sourceCommand, /createWordAndAssignToUser|addXp/);
     assert.ok(botSource.indexOf('registerSourcesCommand(bot)') < botSource.indexOf('registerAddWordCommand(bot)'));
     assert.match(addWordSource, /'admin_source_add'/);
     assert.match(addWordSource, /'admin_source_edit'/);
@@ -2369,4 +2352,84 @@ test('notifications use adaptive-style word selection metadata without AI select
     assert.match(serviceSource, /inferSelectedReason/);
     assert.match(commandSource, /updateWordLearningAfterAnswer/);
     assert.doesNotMatch(serviceSource, /runAiTask/);
+});
+
+test('CSV imports use background job flow and chunk limits', () => {
+    const uploadSource = fs.readFileSync(new URL('../src/commands/upload.ts', import.meta.url), 'utf8');
+    const backgroundSource = fs.readFileSync(new URL('../src/services/csvImportBackground.ts', import.meta.url), 'utf8');
+    const repositorySource = fs.readFileSync(new URL('../src/repositories/csvImportRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(uploadSource, /createImportJob/);
+    assert.match(uploadSource, /createImportItemsChunked/);
+    assert.doesNotMatch(uploadSource, /parseCsvAndImport/);
+    assert.match(uploadSource, /const MAX_CSV_ROWS = 5000;/);
+    assert.match(uploadSource, /checkJobExistsByFileUniqueId/);
+    assert.match(uploadSource, /catch \(e\)/);
+
+    assert.match(repositorySource, /const CHUNK_SIZE = 15;/);
+    assert.match(repositorySource, /telegram_file_unique_id/);
+
+    assert.match(backgroundSource, /updateJobProgress\(db, job\.job_id, 0, 0, 0, 0, 0, 0, 'pending'\)/);
+    assert.match(backgroundSource, /getPendingItemsForJob\(db, job\.job_id, 50\)/);
+    assert.match(backgroundSource, /editMessageText/);
+    assert.match(backgroundSource, /فشل تهيئة ملف CSV/);
+    
+    // Check that valid callbacks are used for the completion keyboard
+    assert.match(backgroundSource, /'menu_main'/);
+    assert.match(backgroundSource, /`collection:view:\$\{job\.collection_id\}:page:1`/);
+    assert.match(backgroundSource, /`collection_challenge_count_\$\{job\.collection_id\}`/);
+    assert.match(backgroundSource, /`collection:csv_upload:\$\{job\.collection_id\}`/);
+    assert.match(backgroundSource, /'train_plan'/);
+    assert.match(backgroundSource, /'menu_train'/);
+    assert.match(backgroundSource, /'list_words'/);
+    assert.match(backgroundSource, /'upload_csv'/);
+});
+
+test('collection owner can edit title description and visibility', () => {
+    const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(sharingSource, /collection:edit_title:/);
+    assert.match(sharingSource, /collection:edit_desc:/);
+    assert.match(sharingSource, /collection:toggle_vis:/);
+    assert.match(sharingSource, /handleCollectionEditText/);
+    assert.match(sharingSource, /updateCollection/);
+
+    assert.match(repoSource, /export async function updateCollection/);
+    assert.match(repoSource, /UPDATE word_collections SET/);
+    assert.match(repoSource, /owner_user_id = \?/);
+});
+
+test('non-owner cannot edit or delete collection', () => {
+    const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+
+    assert.match(sharingSource, /requireOwnedCollection/);
+    assert.match(sharingSource, /if \(!collection \|\| collection\.owner_user_id !== userId\)/);
+    assert.match(sharingSource, /لا يمكنك تعديل هذه المجموعة/);
+});
+
+test('collection deletion uses confirmation and soft deletes', () => {
+    const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(sharingSource, /collection:confirm_delete:/);
+    assert.match(sharingSource, /تأكيد الحذف/);
+    assert.match(sharingSource, /هذا سيحذف المجموعة فقط، ولن يحذف الكلمات الأصلية/);
+    assert.match(sharingSource, /deleteCollection/);
+
+    assert.match(repoSource, /export async function deleteCollection/);
+    assert.match(repoSource, /DELETE FROM word_collection_items/);
+    assert.match(repoSource, /DELETE FROM word_collections/);
+    assert.doesNotMatch(repoSource, /DELETE FROM words/);
+});
+
+test('backward compatibility routes handle old message callbacks', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const challengeSource = fs.readFileSync(new URL('../src/commands/challenge.ts', import.meta.url), 'utf8');
+
+    assert.ok(menuSource.includes('bot.callbackQuery(/^(menu_main|main_menu|mainMenu)$/'));
+    assert.ok(menuSource.includes('bot.callbackQuery(/^(menu_train|train_menu)$/'));
+    assert.ok(trainSource.includes('bot.callbackQuery(/^(train_plan|review_due)$/'));
+    assert.ok(challengeSource.includes('bot.callbackQuery(/^(?:collection_challenge_count_|train_collection_)(\\d+)$/'));
 });

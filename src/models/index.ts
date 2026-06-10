@@ -246,6 +246,40 @@ export interface LearningSource {
     updated_at: string | null;
 }
 
+export interface CsvImportJob {
+    job_id: number;
+    user_id: number;
+    collection_id: number | null;
+    list_id: number | null;
+    total_rows: number;
+    processed_rows: number;
+    imported_count: number;
+    duplicate_count: number;
+    error_count: number;
+    linked_count: number;
+    skipped_in_collection_count: number;
+    status: 'pending' | 'processing' | 'completed' | 'failed';
+    telegram_chat_id: number;
+    telegram_message_id: number | null;
+    telegram_file_unique_id: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CsvImportItem {
+    item_id: number;
+    job_id: number;
+    row_number: number;
+    german: string;
+    arabic: string;
+    example: string | null;
+    example_ar: string | null;
+    status: 'pending' | 'imported' | 'duplicate' | 'error';
+    error_message: string | null;
+    created_at: string;
+    processed_at: string | null;
+}
+
 // =====================================================
 // Command Context Types
 // =====================================================

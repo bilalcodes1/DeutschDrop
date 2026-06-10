@@ -7,6 +7,8 @@ import { ZAINCASH_QR_BASE64 } from './assets_zaincash_qr';
 import { sendSmartNotification } from './services/smartNotificationService';
 import { getLeaderboardByPeriod, type LeaderboardPeriod } from './services/xpLevels';
 import { cleanupExpiredTemporaryMessages } from './services/temporaryMessageCleanup';
+import { processPendingImports } from './services/csvImportBackground';
+import { Bot } from 'grammy';
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -14,7 +16,7 @@ export default {
 
         // Route: Telegram webhook
         if (url.pathname === '/webhook' && request.method === 'POST') {
-            return handleWebhook(request, env);
+            return handleWebhook(request, env, ctx);
         }
 
         // Route: Health check
@@ -48,6 +50,11 @@ export default {
             switch (jobName) {
                 case 'check_due_reviews': {
                     await runCheckDueReviews(env);
+                    break;
+                }
+                case 'process_csv_imports': {
+                    const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
+                    await processPendingImports(env, bot);
                     break;
                 }
                 case 'generate_daily_summary': {
@@ -143,6 +150,7 @@ function leaderboardPeriodBounds(period: Exclude<LeaderboardPeriod, 'all_time'>)
 }
 
 function getJobNameFromCron(cron: string): string {
+    if (cron === '* * * * *') return 'process_csv_imports';
     if (cron === '0 * * * *') return 'check_due_reviews';
     if (cron === '0 20 * * *') return 'generate_daily_summary';
     if (cron === '0 0 * * *') return 'update_streaks';

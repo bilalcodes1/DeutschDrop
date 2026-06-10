@@ -26,32 +26,33 @@ interface CollectionCsvUploadSession {
 }
 
 const CSV_UPLOAD_INSTRUCTIONS =
-    'ارسل ملف CSV فقط بالصيغة التالية:\n' +
-    'German,Arabic\n' +
-    'Haus,بيت\n' +
-    'Auto,سيارة';
+    '📥 *رفع ملف CSV*\n\n' +
+    'أرسل ملف CSV بإحدى الصيغ التالية:\n\n' +
+    '`German,Arabic`\n' +
+    '`Haus,بيت`\n' +
+    '`Auto,سيارة`\n\n' +
+    'أو مع أمثلة:\n' +
+    '`German,Arabic,Example,ExampleArabic`\n' +
+    '`Haus,بيت,Das Haus ist groß.,البيت كبير.`\n\n' +
+    '💡 *ملاحظة:* إذا أردت إضافة ترجمة للمثال بدون كتابة المثال بالألمانية، اترك عمود المثال فارغاً (فاصلتين متتاليتين):\n' +
+    '`Haus,بيت,,البيت كبير.`';
 
 const CSV_ONLY_ERROR =
     '⚠️ يرجى إرسال ملف CSV فقط.\n\n' +
     'الصيغة المطلوبة:\n' +
     'German,Arabic\n' +
-    'Haus,بيت\n' +
-    'Auto,سيارة';
+    'أو:\n' +
+    'German,Arabic,Example,ExampleArabic\n' +
+    '(لإضافة ترجمة للمثال فقط، اترك عمود المثال فارغاً: Haus,بيت,,البيت كبير.)';
 
 export function registerUploadCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery('upload_csv', async (ctx) => {
-        await ctx.editMessageText(
-            `📤 *رفع ملف CSV*\n\n${CSV_UPLOAD_INSTRUCTIONS}`,
-            { parse_mode: 'Markdown' }
-        );
+        await ctx.editMessageText(CSV_UPLOAD_INSTRUCTIONS, { parse_mode: 'Markdown' });
         await ctx.answerCallbackQuery();
     });
 
     bot.command('upload', async (ctx) => {
-        await ctx.reply(
-            `📤 *رفع ملف CSV*\n\n${CSV_UPLOAD_INSTRUCTIONS}`,
-            { parse_mode: 'Markdown' }
-        );
+        await ctx.reply(CSV_UPLOAD_INSTRUCTIONS, { parse_mode: 'Markdown' });
     });
 
     bot.callbackQuery('upload_update_existing', async (ctx) => {
@@ -101,7 +102,7 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
                 });
                 return;
             }
-            await handleCollectionCsvUpload(ctx, user.user_id, collectionCsvSession.data, doc.file_id);
+            await handleCollectionCsvUpload(ctx, user.user_id, collectionCsvSession.data, doc.file_id, doc.file_unique_id);
             return;
         }
 
@@ -110,10 +111,30 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
             return;
         }
 
-        // Get file content via Telegram API
+        const { createImportJob, createImportItemsChunked, checkJobExistsByFileUniqueId, markJobAsFailed } = await import('../repositories/csvImportRepository');
+
+        // Idempotency check
+        if (doc.file_unique_id) {
+            const existingStatus = await checkJobExistsByFileUniqueId(ctx.db, user.user_id, doc.file_unique_id);
+            if (existingStatus === 'pending' || existingStatus === 'processing') {
+                await ctx.reply('ℹ️ هذا الملف قيد المعالجة حالياً. سأخبرك عند الانتهاء.');
+                return;
+            } else if (existingStatus === 'completed') {
+                await ctx.reply('ℹ️ هذا الملف تمت معالجته مسبقاً.');
+                return;
+            } else if (existingStatus === 'failed') {
+                // If it failed, allow re-processing. We will create a new job.
+            }
+        }
+
         const file = await ctx.api.getFile(doc.file_id);
         if (!file.file_path) {
             await ctx.reply('⚠️ تعذر تحميل الملف.');
+            return;
+        }
+
+        if (file.file_size && file.file_size > 5 * 1024 * 1024) {
+            await ctx.reply('⚠️ حجم الملف كبير جداً (أكبر من 5MB). يرجى تقسيمه إلى ملفات أصغر.');
             return;
         }
 
@@ -121,23 +142,77 @@ export function registerUploadCommand(bot: Bot<BotContext>): void {
         const response = await fetch(fileUrl);
         const content = await response.text();
 
-        const result = await parseCsvAndImport(ctx.db, content, user.user_id);
-        if (result.imported > 0) {
-            await incrementDailyTask(ctx, user.user_id, 'learn_words', result.imported);
-            await unlockAchievement(ctx, user.user_id, 'first_csv');
-            await checkAchievements(ctx, user.user_id);
+        const parsed = parseWordCsv(content);
+        if (parsed.words.length === 0) {
+            await ctx.reply(
+                '⚠️ صيغة الملف غير صحيحة.\n\nالصيغة المطلوبة:\n`German,Arabic`\n\nأو:\n`German,Arabic,Example,ExampleArabic`\n\n(لإضافة ترجمة للمثال فقط، اترك عمود المثال فارغاً: `Haus,بيت,,البيت كبير.`)',
+                { reply_markup: mainMenuKeyboard(), parse_mode: 'Markdown' }
+            );
+            return;
         }
 
-        if (result.duplicateRows.length > 0) {
-            await saveBotSession<CsvUpdateSession>(ctx.db, user.user_id, 'csv_update', { duplicates: result.duplicateRows }, 60);
-        } else {
-            await deleteBotSession(ctx.db, user.user_id, 'csv_update');
+        const MAX_CSV_ROWS = 5000;
+        if (parsed.words.length > MAX_CSV_ROWS) {
+            await ctx.reply(`⚠️ الملف يحتوي على عدد كلمات كبير جداً (${parsed.words.length} كلمة).\nيرجى تقسيمه إلى ملفات أصغر بحد أقصى ${MAX_CSV_ROWS} كلمة لكل ملف.`);
+            return;
         }
 
-        await ctx.reply(formatUploadSummary(result), {
-            parse_mode: 'Markdown',
-            reply_markup: uploadSummaryKeyboard(result.duplicateRows.length > 0),
-        });
+        const msg = await ctx.reply(`📥 تم استلام الملف (يحتوي على ${parsed.words.length} كلمة).\nجاري تهيئة المهمة...`);
+
+        // Create list for import
+        const listId = await createUploadedList(ctx.db, user.user_id, `Imported ${new Date().toLocaleDateString()}`);
+        
+        let jobId = 0;
+        try {
+            // Create job
+            jobId = await createImportJob(
+                ctx.db, 
+                user.user_id, 
+                null, // no collection
+                listId, 
+                parsed.words.length, 
+                msg.chat.id, 
+                msg.message_id,
+                doc.file_unique_id || null
+            );
+
+            // Prepare items
+            const items = parsed.words.map((w, index) => ({
+                rowNumber: index + 1,
+                german: w.german,
+                arabic: w.arabic,
+                example: w.example,
+                example_ar: w.example_ar
+            }));
+
+            // Insert items in chunks
+            await createImportItemsChunked(ctx.db, jobId, items);
+
+            await ctx.api.editMessageText(
+                msg.chat.id,
+                msg.message_id,
+                `📥 *تم استلام ملف CSV*\n📊 يحتوي على *${items.length}* كلمة\n⏳ جاري إضافة الكلمات في الخلفية...\nسيتم تنبيهك عند الانتهاء.`,
+                { parse_mode: 'Markdown' }
+            );
+
+            // Process immediately in background
+            if (ctx.executionCtx) {
+                const { processCsvImportJob } = await import('../services/csvImportBackground');
+                ctx.executionCtx.waitUntil(
+                    processCsvImportJob(ctx.env, ctx.api, jobId).catch(e => console.error("Immediate processing error:", e))
+                );
+            }
+        } catch (e) {
+            console.error('Failed to initialize CSV import job:', e);
+            if (jobId) {
+                await markJobAsFailed(ctx.db, jobId);
+            }
+            await ctx.api.editMessageText(
+                msg.chat.id,
+                msg.message_id,
+                '⚠️ فشل تهيئة ملف CSV. يرجى المحاولة مرة أخرى أو تقسيم الملف.'
+            );
+        }
     });
 }
 
@@ -149,7 +224,7 @@ interface CollectionCsvImportResult {
     errors: number;
 }
 
-async function handleCollectionCsvUpload(ctx: BotContext, userId: number, session: CollectionCsvUploadSession, fileId: string): Promise<void> {
+async function handleCollectionCsvUpload(ctx: BotContext, userId: number, session: CollectionCsvUploadSession, fileId: string, fileUniqueId: string): Promise<void> {
     const collection = await getCollectionById(ctx.db, session.collectionId);
     if (!collection || collection.owner_user_id !== userId || session.userId !== userId) {
         await deleteBotSession(ctx.db, userId, 'collection_csv_upload');
@@ -163,52 +238,100 @@ async function handleCollectionCsvUpload(ctx: BotContext, userId: number, sessio
         return;
     }
 
+    if (file.file_size && file.file_size > 5 * 1024 * 1024) {
+        await ctx.reply('⚠️ حجم الملف كبير جداً (أكبر من 5MB). يرجى تقسيمه إلى ملفات أصغر.');
+        return;
+    }
+
     const fileUrl = `https://api.telegram.org/file/bot${ctx.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
     const response = await fetch(fileUrl);
     const content = await response.text();
-    const result = await importCsvToCollection(ctx, content, userId, session.collectionId);
+    await importCsvToCollection(ctx, content, userId, session.collectionId, fileUniqueId);
     await deleteBotSession(ctx.db, userId, 'collection_csv_upload');
-
-    await ctx.reply(formatCollectionCsvSummary(result), {
-        reply_markup: collectionCsvSummaryKeyboard(session.collectionId),
-    });
 }
 
-async function importCsvToCollection(ctx: BotContext, content: string, userId: number, collectionId: number): Promise<CollectionCsvImportResult> {
-    const parsed = parseWordCsv(content);
-    const result: CollectionCsvImportResult = {
-        created: 0,
-        reused: 0,
-        linked: 0,
-        skippedInCollection: 0,
-        errors: parsed.errors,
-    };
-    const listId = await createUploadedList(ctx.db, userId, `Collection import ${new Date().toLocaleDateString()}`);
+async function importCsvToCollection(ctx: BotContext, content: string, userId: number, collectionId: number, fileUniqueId: string): Promise<void> {
+    const { createImportJob, createImportItemsChunked, checkJobExistsByFileUniqueId, markJobAsFailed } = await import('../repositories/csvImportRepository');
 
-    for (const row of parsed.words) {
-        try {
-            const existing = await searchDuplicateWordForUser(ctx.db, userId, row.german);
-            let wordId = existing?.word_id ?? 0;
-            if (existing) {
-                result.reused++;
-            } else {
-                wordId = await createWordAndAssignToUser(ctx.db, row.german, row.arabic, row.example, userId, listId);
-                result.created++;
-                await addXp(ctx.db, userId, 5, 'new_word');
-            }
-            const linked = await addWordsToCollection(ctx.db, collectionId, userId, [wordId]);
-            if (linked > 0) result.linked++;
-            else result.skippedInCollection++;
-        } catch {
-            result.errors++;
+    // Idempotency check
+    if (fileUniqueId) {
+        const existingStatus = await checkJobExistsByFileUniqueId(ctx.db, userId, fileUniqueId);
+        if (existingStatus === 'pending' || existingStatus === 'processing') {
+            await ctx.reply('ℹ️ هذا الملف قيد المعالجة حالياً. سأخبرك عند الانتهاء.');
+            return;
+        } else if (existingStatus === 'completed') {
+            await ctx.reply('ℹ️ هذا الملف تمت معالجته مسبقاً.');
+            return;
+        } else if (existingStatus === 'failed') {
+            // Allow re-processing
         }
     }
 
-    if (result.created > 0) {
-        await incrementDailyTask(ctx, userId, 'learn_words', result.created);
-        await checkAchievements(ctx, userId);
+    const parsed = parseWordCsv(content);
+    if (parsed.words.length === 0) {
+        await ctx.reply(
+            '⚠️ صيغة الملف غير صحيحة.\n\nالصيغة المطلوبة:\n`German,Arabic`\n\nأو:\n`German,Arabic,Example,ExampleArabic`\n\n(لإضافة ترجمة للمثال فقط، اترك عمود المثال فارغاً: `Haus,بيت,,البيت كبير.`)',
+            { reply_markup: mainMenuKeyboard(), parse_mode: 'Markdown' }
+        );
+        return;
     }
-    return result;
+
+    const MAX_CSV_ROWS = 5000;
+    if (parsed.words.length > MAX_CSV_ROWS) {
+        await ctx.reply(`⚠️ الملف يحتوي على عدد كلمات كبير جداً (${parsed.words.length} كلمة).\nيرجى تقسيمه إلى ملفات أصغر بحد أقصى ${MAX_CSV_ROWS} كلمة لكل ملف.`);
+        return;
+    }
+
+    const msg = await ctx.reply(`📥 تم استلام الملف (يحتوي على ${parsed.words.length} كلمة).\nجاري تهيئة المهمة للمجموعة...`);
+
+    let jobId = 0;
+    try {
+        jobId = await createImportJob(
+            ctx.db, 
+            userId, 
+            collectionId, 
+            null, 
+            parsed.words.length, 
+            msg.chat.id, 
+            msg.message_id,
+            fileUniqueId || null
+        );
+
+        const items = parsed.words.map((w, index) => ({
+            rowNumber: index + 1,
+            german: w.german,
+            arabic: w.arabic,
+            example: w.example,
+            example_ar: w.example_ar
+        }));
+
+        await createImportItemsChunked(ctx.db, jobId, items);
+
+        await ctx.api.editMessageText(
+            msg.chat.id,
+            msg.message_id,
+            `📥 *تم استلام ملف CSV*\n📊 يحتوي على *${items.length}* كلمة\n⏳ جاري تحديث الكلمات في الخلفية...\nسيتم تنبيهك عند الانتهاء.`,
+            { parse_mode: 'Markdown' }
+        );
+
+        // Process immediately in background
+        if (ctx.executionCtx) {
+            const { processCsvImportJob } = await import('../services/csvImportBackground');
+            ctx.executionCtx.waitUntil(
+                processCsvImportJob(ctx.env, ctx.api, jobId).catch(e => console.error("Immediate processing error:", e))
+            );
+        }
+    } catch (e) {
+        console.error('Failed to initialize CSV collection import job:', e);
+        if (jobId) {
+            await markJobAsFailed(ctx.db, jobId);
+        }
+        await ctx.api.editMessageText(
+            msg.chat.id,
+            msg.message_id,
+            '⚠️ فشل تهيئة ملف CSV. يرجى المحاولة مرة أخرى أو تقسيم الملف.'
+        );
+    }
 }
 
 function formatCollectionCsvSummary(result: CollectionCsvImportResult): string {
@@ -240,83 +363,3 @@ function getFileExtension(fileName: string): string {
     return dotIndex === -1 ? '' : fileName.slice(dotIndex + 1).toLowerCase();
 }
 
-interface ParseResult {
-    imported: number;
-    duplicates: number;
-    errors: number;
-    duplicateExamples: string[];
-    duplicateRows: ParsedWordRow[];
-}
-
-async function parseCsvAndImport(
-    db: D1Database,
-    content: string,
-    userId: number
-): Promise<ParseResult> {
-    const parsed = parseWordCsv(content);
-    return importWords(db, parsed.words, parsed.errors, userId);
-}
-
-async function importWords(
-    db: D1Database,
-    words: ParsedWordRow[],
-    initialErrors: number,
-    userId: number
-): Promise<ParseResult> {
-    const result: ParseResult = { imported: 0, duplicates: 0, errors: initialErrors, duplicateExamples: [], duplicateRows: [] };
-
-    // Create a list for this upload
-    const listId = await createUploadedList(db, userId, `Imported ${new Date().toLocaleDateString()}`);
-
-    // Import words
-    for (const w of words) {
-        try {
-            const duplicate = await searchDuplicateWordForUser(db, userId, w.german);
-            if (duplicate) {
-                result.duplicates++;
-                result.duplicateRows.push(w);
-                if (result.duplicateExamples.length < 5) result.duplicateExamples.push(duplicate.german);
-                continue;
-            }
-
-            await createWordAndAssignToUser(db, w.german, w.arabic, w.example, userId, listId);
-            result.imported++;
-            await addXp(db, userId, 5, 'new_word');
-        } catch {
-            result.duplicates++;
-        }
-    }
-
-    return result;
-}
-
-function formatUploadSummary(result: ParseResult): string {
-    let text =
-        `📊 *ملخص الرفع*\n\n` +
-        `✅ مستوردة: *${result.imported}*\n` +
-        `⚠️ موجودة مسبقاً: *${result.duplicates}*\n` +
-        `❌ أخطاء: *${result.errors}*`;
-
-    if (result.duplicateExamples.length > 0) {
-        text += '\n\nأمثلة على كلمات موجودة مسبقاً:\n' +
-            result.duplicateExamples.map(word => `- ${word}`).join('\n');
-    }
-
-    if (result.imported === 0 && result.duplicates > 0) {
-        text += '\n\nلم تتم إضافة كلمات جديدة لأن هذه الكلمات موجودة مسبقاً في حسابك.';
-    } else {
-        text += '\n\nتم رفع الكلمات ✅ يمكنك تعيين رمز تعليمي لكل كلمة من 📂 إدارة الكلمات.';
-    }
-
-    return text;
-}
-
-function uploadSummaryKeyboard(hasDuplicates: boolean): InlineKeyboard {
-    const keyboard = new InlineKeyboard();
-    if (hasDuplicates) keyboard.text('🔄 تحديث الكلمات الموجودة', 'upload_update_existing').row();
-    keyboard.text('📚 راجع الآن', 'menu_learn')
-        .text('🏋️ تدريب', 'menu_train').row()
-        .text('📂 عرض الكلمات', 'list_words').row()
-        .text('🏠 الرئيسية', 'menu_main');
-    return keyboard;
-}

@@ -23,6 +23,8 @@ import {
     isSharedWordOfferExpired,
     searchOtherUserWords,
     updateSharedWordOfferStatus,
+    updateCollection,
+    deleteCollection,
 } from '../repositories/wordSharingRepository';
 import { isAdminTelegramId } from '../services/adminAccess';
 import { parseWordCsv, type ParsedWordRow } from '../services/csvParser';
@@ -61,6 +63,12 @@ interface CollectionCsvUploadSession {
     collectionId: number;
     userId: number;
     step: 'waiting_csv';
+}
+
+interface CollectionEditSession {
+    collectionId: number;
+    userId: number;
+    step: 'waiting_title' | 'waiting_description';
 }
 
 interface CollectionExistingWordsSession {
@@ -127,6 +135,12 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
                 120
             );
             await showCollectionExistingWordPicker(ctx, user.user_id, addExistingSession.data.collectionId, 1);
+            return;
+        }
+
+        const editSession = await getBotSession<CollectionEditSession>(ctx.db, user.user_id, 'collection_edit');
+        if (editSession) {
+            await handleCollectionEditText(ctx, user.user_id, editSession.data, ctx.message.text.trim());
             return;
         }
 
@@ -458,6 +472,85 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
         if (!user) return;
         await deleteBotSession(ctx.db, user.user_id, 'collection_csv_upload');
         await showCollection(ctx, user.user_id, Number(ctx.match[1]), 1);
+    });
+
+    bot.callbackQuery(/^collection:edit:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        const collectionId = Number(ctx.match[1]);
+        const collection = await requireOwnedCollection(ctx, user.user_id, collectionId);
+        if (!collection) return;
+        
+        const keyboard = new InlineKeyboard()
+            .text('✏️ تعديل الاسم', `collection:edit_title:${collectionId}`).row()
+            .text('📝 تعديل الوصف', `collection:edit_desc:${collectionId}`).row()
+            .text(collection.visibility === 'public' ? '🔒 تحويل لخاص' : '🌍 تحويل لعام', `collection:toggle_vis:${collectionId}`).row()
+            .text('⬅️ رجوع', `collection:view:${collectionId}:page:1`);
+            
+        await replaceWithText(ctx, `✏️ تعديل المجموعة: ${collection.title}\nماذا تريد أن تعدل؟`, keyboard);
+    });
+
+    bot.callbackQuery(/^collection:edit_title:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        const collectionId = Number(ctx.match[1]);
+        if (!(await requireOwnedCollection(ctx, user.user_id, collectionId))) return;
+        
+        await saveBotSession<CollectionEditSession>(ctx.db, user.user_id, 'collection_edit', { collectionId, userId: user.user_id, step: 'waiting_title' }, 30);
+        await replaceWithText(ctx, '✏️ أرسل الاسم الجديد للمجموعة (أو أرسل /cancel للإلغاء):', new InlineKeyboard().text('❌ إلغاء', `collection:edit:${collectionId}`));
+    });
+
+    bot.callbackQuery(/^collection:edit_desc:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        const collectionId = Number(ctx.match[1]);
+        if (!(await requireOwnedCollection(ctx, user.user_id, collectionId))) return;
+        
+        await saveBotSession<CollectionEditSession>(ctx.db, user.user_id, 'collection_edit', { collectionId, userId: user.user_id, step: 'waiting_description' }, 30);
+        await replaceWithText(ctx, '📝 أرسل الوصف الجديد للمجموعة (أو أرسل /cancel للإلغاء):', new InlineKeyboard().text('❌ إلغاء', `collection:edit:${collectionId}`));
+    });
+
+    bot.callbackQuery(/^collection:toggle_vis:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        const collectionId = Number(ctx.match[1]);
+        const collection = await requireOwnedCollection(ctx, user.user_id, collectionId);
+        if (!collection) return;
+        
+        const newVis = collection.visibility === 'public' ? 'private' : 'public';
+        await updateCollection(ctx.db, collectionId, user.user_id, { visibility: newVis });
+        await replaceWithText(ctx, `✅ تم تغيير الخصوصية إلى: ${newVis === 'public' ? 'عام 🌍' : 'خاص 🔒'}`, new InlineKeyboard().text('📂 عرض المجموعة', `collection:view:${collectionId}:page:1`));
+    });
+
+    bot.callbackQuery(/^collection:delete:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        const collectionId = Number(ctx.match[1]);
+        const collection = await requireOwnedCollection(ctx, user.user_id, collectionId);
+        if (!collection) return;
+        
+        const keyboard = new InlineKeyboard()
+            .text('🗑 تأكيد الحذف', `collection:confirm_delete:${collectionId}`).row()
+            .text('❌ إلغاء', `collection:view:${collectionId}:page:1`);
+            
+        await replaceWithText(ctx, `⚠️ تحذير: هل أنت متأكد من حذف مجموعة "${collection.title}"؟\n\nملاحظة: هذا سيحذف المجموعة فقط، ولن يحذف الكلمات الأصلية من حسابك.`, keyboard);
+    });
+
+    bot.callbackQuery(/^collection:confirm_delete:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        const collectionId = Number(ctx.match[1]);
+        const collection = await requireOwnedCollection(ctx, user.user_id, collectionId);
+        if (!collection) return;
+        
+        await deleteCollection(ctx.db, collectionId, user.user_id);
+        await replaceWithText(ctx, `✅ تم حذف المجموعة "${collection.title}" بنجاح.\nلم يتم حذف أي كلمات من حسابك.`, new InlineKeyboard().text('🏠 الرئيسية', 'menu_main'));
     });
 
     bot.callbackQuery(/^collection:add_words:(\d+):page:(\d+)$/, async (ctx) => {
@@ -1090,18 +1183,20 @@ async function showCollection(ctx: BotContext, userId: number, collectionId: num
         words.map((word, index) => `${index + 1}. 🇩🇪 ${word.german}\n   🇮🇶 ${word.arabic}`).join('\n\n');
     const keyboard = new InlineKeyboard();
     if (isOwner) {
-        keyboard.text('➕ إضافة كلمة للمجموعة', `collection:add_direct:${collectionId}`).row()
+        if (total > 0) {
+            keyboard.text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row();
+        }
+        keyboard.text('➕ إضافة كلمة', `collection:add_direct:${collectionId}`)
             .text('📤 رفع CSV للمجموعة', `collection:csv_upload:${collectionId}`).row()
             .text('📚 إضافة من كلماتي', `collection:add_existing:${collectionId}:page:1`).row()
-            .text('☑️ تحديد كلمات', `collection:add_existing:${collectionId}:page:1`).row()
-            .text('📤 مشاركة المجموعة', `share_collection:${collectionId}`).row()
-            .text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row()
             .text('✏️ تعديل المجموعة', `collection:edit:${collectionId}`)
             .text('🗑 حذف المجموعة', `collection:delete:${collectionId}`).row();
     } else {
+        if (total > 0) {
+            keyboard.text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row();
+        }
         keyboard.text('📥 نسخ المجموعة', `collection:copy_prompt:${collectionId}`).row()
-            .text('📤 مشاركة المجموعة', `share_collection:${collectionId}`).row()
-            .text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row();
+            .text('📤 مشاركة المجموعة', `share_collection:${collectionId}`).row();
     }
     if (safePage > 1) keyboard.text('⬅️ السابق', `collection:view:${collectionId}:page:${safePage - 1}`);
     if (safePage < totalPages) keyboard.text('التالي ➡️', `collection:view:${collectionId}:page:${safePage + 1}`);
@@ -1180,7 +1275,7 @@ async function startCollectionCsvUpload(ctx: BotContext, userId: number, collect
     );
     await replaceWithText(
         ctx,
-        `📤 رفع CSV للمجموعة\n\n🗂 ${collection.title}\n\nارفع ملف CSV لإضافته مباشرة إلى هذه المجموعة.\n\nالصيغة:\nGerman,Arabic,Example\n\nExample اختياري.`,
+        `📤 رفع CSV للمجموعة\n\n🗂 ${collection.title}\n\nارفع ملف CSV لإضافته مباشرة إلى هذه المجموعة.\n\nالصيغ المدعومة:\n1️⃣ \`German,Arabic\`\n2️⃣ \`German,Arabic,Example\`\n3️⃣ \`German,Arabic,Example,ExampleArabic\`\n\n💡 لإضافة ترجمة للمثال فقط، اترك عمود المثال فارغاً:\n\`Haus,بيت,,البيت كبير.\``,
         collectionFlowKeyboard(collectionId, 'collection:csv_cancel')
     );
 }
@@ -1308,7 +1403,7 @@ function parseCollectionWordInput(text: string): ParsedWordRow | null {
         const example = trimmed.slice(pipeIndex + 1).trim() || null;
         const match = left.match(/^(.+?)\s*=\s*(.+)$/);
         if (!match) return null;
-        return { german: match[1].trim(), arabic: match[2].trim(), example };
+        return { german: match[1].trim(), arabic: match[2].trim(), example, example_ar: null };
     }
     const parsed = parseWordCsv(trimmed);
     if (parsed.errors > 0 || parsed.words.length !== 1) return null;
@@ -1478,4 +1573,30 @@ function cancelHomeKeyboard(cancel: string): InlineKeyboard {
 
 function formatRelativeDate(value: string): string {
     return value.slice(0, 10);
+}
+
+async function handleCollectionEditText(ctx: BotContext, userId: number, data: CollectionEditSession, text: string): Promise<void> {
+    if (data.userId !== userId) return;
+    const collection = await getCollectionById(ctx.db, data.collectionId);
+    if (!collection || collection.owner_user_id !== userId) {
+        await deleteBotSession(ctx.db, userId, 'collection_edit');
+        await ctx.reply('لا يمكنك تعديل هذه المجموعة.', { reply_markup: mainMenuKeyboard() });
+        return;
+    }
+
+    if (text === '/cancel' || text === '❌ إلغاء' || text === 'رجوع' || text === 'الرئيسية') {
+        await deleteBotSession(ctx.db, userId, 'collection_edit');
+        await showCollection(ctx, userId, data.collectionId, 1);
+        return;
+    }
+
+    if (data.step === 'waiting_title') {
+        await updateCollection(ctx.db, data.collectionId, userId, { title: text.trim() });
+        await deleteBotSession(ctx.db, userId, 'collection_edit');
+        await ctx.reply(`✅ تم تعديل اسم المجموعة إلى: ${text.trim()}`, { reply_markup: new InlineKeyboard().text('📂 عرض المجموعة', `collection:view:${data.collectionId}:page:1`) });
+    } else if (data.step === 'waiting_description') {
+        await updateCollection(ctx.db, data.collectionId, userId, { description: text.trim() });
+        await deleteBotSession(ctx.db, userId, 'collection_edit');
+        await ctx.reply(`✅ تم تعديل وصف المجموعة بنجاح.`, { reply_markup: new InlineKeyboard().text('📂 عرض المجموعة', `collection:view:${data.collectionId}:page:1`) });
+    }
 }

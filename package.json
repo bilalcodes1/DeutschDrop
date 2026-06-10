@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --experimental-specifier-resolution=node --test test/*.test.mjs",
+    "test": "npm run build && npx tsx --test test/*.test.mjs",
     "generate:stats": "node scripts/generateProjectStats.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

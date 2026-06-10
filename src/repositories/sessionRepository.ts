@@ -56,7 +56,7 @@ export async function getBotSession<T>(
 ): Promise<BotSession<T> | null> {
     const row = await queryOne<BotSessionRow>(
         db,
-        'SELECT * FROM bot_sessions WHERE session_id = ? AND expires_at > datetime("now")',
+        'SELECT * FROM bot_sessions WHERE session_id = ? AND expires_at > datetime(\'now\')',
         [sessionId(userId, type)]
     );
 
@@ -77,5 +77,5 @@ export async function deleteBotSession(
 }
 
 export async function deleteExpiredBotSessions(db: D1Database): Promise<void> {
-    await run(db, 'DELETE FROM bot_sessions WHERE expires_at <= datetime("now")');
+    await run(db, 'DELETE FROM bot_sessions WHERE expires_at <= datetime(\'now\')');
 }

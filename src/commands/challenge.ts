@@ -47,7 +47,7 @@ export function registerChallengeCommand(bot: Bot<BotContext>): void {
         await createChallenge(ctx, parseInt(ctx.match[1], 10), parseInt(ctx.match[2], 10), ctx.match[3] as 'all' | 'mixed' | undefined);
     });
 
-    bot.callbackQuery(/^collection_challenge_count_(\d+)$/, async (ctx) => {
+    bot.callbackQuery(/^(?:collection_challenge_count_|train_collection_)(\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         const collectionId = Number(ctx.match[1]);
         await replaceWithText(ctx, 'اختر عدد أسئلة تحدي المجموعة:', new InlineKeyboard()

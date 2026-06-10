@@ -1,13 +1,13 @@
 import { Bot, InlineKeyboard } from 'grammy';
-import type { BotContext } from '../bot/context';
-import { getActiveAnnouncement } from '../repositories/announcementRepository';
-import { getActiveSupportStatus } from '../repositories/supportRepository';
-import { getUserByTelegramId, getUserSettings } from '../repositories/userRepository';
-import { deleteBotSession } from '../repositories/sessionRepository';
-import { isAdminTelegramId } from '../services/adminAccess';
-import { formatSupportRemaining, getUserRoleBadge } from '../services/roleUi';
-import { PROJECT_CODE_LINES_LABEL } from '../generated/projectStats';
-import { replaceWithText } from './wordPanel';
+import type { BotContext } from '../bot/context.js';
+import { getActiveAnnouncement } from '../repositories/announcementRepository.js';
+import { getActiveSupportStatus } from '../repositories/supportRepository.js';
+import { getUserByTelegramId, getUserSettings } from '../repositories/userRepository.js';
+import { deleteBotSession } from '../repositories/sessionRepository.js';
+import { isAdminTelegramId } from '../services/adminAccess.js';
+import { formatSupportRemaining, getUserRoleBadge } from '../services/roleUi.js';
+import { PROJECT_CODE_LINES_LABEL } from '../generated/projectStats.js';
+import { replaceWithText } from './wordPanel.js';
 
 export function registerMenuCommand(bot: Bot<BotContext>): void {
     bot.command('menu', async (ctx) => {

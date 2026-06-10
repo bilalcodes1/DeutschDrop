@@ -1,5 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { queryOne, queryAll, run } from '../db/queries';
+import { queryOne, queryAll, run } from '../db/queries.js';
 import type { User, Settings } from '../models';
 
 export async function getUserByTelegramId(
@@ -168,7 +168,7 @@ export async function getAdminUserDetail(db: D1Database, userId: number): Promis
 export async function setUserBanned(db: D1Database, telegramId: number, banned: boolean): Promise<boolean> {
     const result = await run(
         db,
-        'UPDATE users SET is_banned = ?, updated_at = datetime("now") WHERE telegram_user_id = ? OR telegram_id = ?',
+        'UPDATE users SET is_banned = ?, updated_at = datetime(\'now\') WHERE telegram_user_id = ? OR telegram_id = ?',
         [banned ? 1 : 0, telegramId, telegramId]
     );
     return ((result.meta as { changes?: number })?.changes ?? 0) > 0;

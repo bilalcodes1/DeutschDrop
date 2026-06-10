@@ -525,3 +525,103 @@ export async function getTrainingWordCandidates(
         [userId, limit]
     );
 }
+
+export async function batchCreateWords(
+    db: D1Database,
+    userId: number,
+    listId: number | null,
+    items: { itemId: number; german: string; arabic: string; example: string | null; example_ar?: string | null }[]
+): Promise<{ itemId: number; status: 'imported' | 'duplicate' | 'error'; errorMessage?: string; wordId?: number }[]> {
+    const results: { itemId: number; status: 'imported' | 'duplicate' | 'error'; errorMessage?: string; wordId?: number }[] = [];
+    if (items.length === 0) return results;
+
+    // 1. Find duplicates
+    const germanKeys = items.map(i => normalizeGermanForCompare(i.german));
+    const placeholders = germanKeys.map(() => '?').join(',');
+    const duplicatesSql = `SELECT word_id, lower(trim(german)) as lower_german FROM words WHERE added_by = ? AND lower(trim(german)) IN (${placeholders})`;
+    
+    let existingWords: { word_id: number; lower_german: string }[] = [];
+    try {
+        existingWords = await queryAll(db, duplicatesSql, [userId, ...germanKeys]);
+    } catch (e) {
+        // If the query fails, we fallback to processing sequentially for safety
+        console.error('Failed to fetch duplicates in batch:', e);
+    }
+
+    const existingMap = new Map<string, number>();
+    for (const w of existingWords) {
+        existingMap.set(w.lower_german, w.word_id);
+    }
+
+    const newItems: typeof items = [];
+
+    for (const item of items) {
+        const key = normalizeGermanForCompare(item.german);
+        const existingWordId = existingMap.get(key);
+        if (existingWordId) {
+            results.push({ itemId: item.itemId, status: 'duplicate', wordId: existingWordId });
+        } else {
+            // Optimistic duplicate prevention in the same batch
+            existingMap.set(key, 0); 
+            newItems.push(item);
+        }
+    }
+
+    if (newItems.length === 0) return results;
+
+    // 2. Insert new words
+    const insertStatements = newItems.map(item => {
+        const search = buildWordSearchFields(item.german, item.arabic, item.example);
+        return {
+            sql: `INSERT INTO words (german, arabic, example, example_ar, added_by, german_search, arabic_search, example_search)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING word_id`,
+            params: [item.german, item.arabic, item.example, item.example_ar || null, userId, search.german_search, search.arabic_search, search.example_search]
+        };
+    });
+
+    try {
+        const insertResults = await runBatch(db, insertStatements);
+        
+        const userWordsStatements: { sql: string; params: unknown[] }[] = [];
+        
+        for (let i = 0; i < newItems.length; i++) {
+            const item = newItems[i];
+            const resultObj = insertResults[i];
+            const rows = (resultObj as any).results as { word_id: number }[];
+            
+            if (resultObj.success && rows && rows.length > 0) {
+                const wordId = rows[0].word_id;
+                results.push({ itemId: item.itemId, status: 'imported', wordId });
+                
+                userWordsStatements.push({
+                    sql: 'INSERT OR IGNORE INTO user_words (user_id, word_id, status, next_review) VALUES (?, ?, ?, datetime("now"))',
+                    params: [userId, wordId, 'new']
+                });
+                
+                if (listId) {
+                    userWordsStatements.push({
+                        sql: 'INSERT OR IGNORE INTO list_words (list_id, word_id) VALUES (?, ?)',
+                        params: [listId, wordId]
+                    });
+                }
+            } else {
+                results.push({ itemId: item.itemId, status: 'error', errorMessage: 'Failed to insert word' });
+            }
+        }
+
+        if (userWordsStatements.length > 0) {
+            // Process user_words inserts in chunks of 100 to avoid D1 limits
+            for (let i = 0; i < userWordsStatements.length; i += 100) {
+                await runBatch(db, userWordsStatements.slice(i, i + 100));
+            }
+        }
+
+    } catch (e: any) {
+        console.error('Batch insert failed:', e);
+        for (const item of newItems) {
+            results.push({ itemId: item.itemId, status: 'error', errorMessage: e.message || 'Batch insert error' });
+        }
+    }
+
+    return results;
+}

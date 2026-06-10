@@ -6,10 +6,10 @@ import type { Env } from '../models';
  * Handle incoming Telegram webhook updates.
  * Parses the JSON body and passes it to the grammy bot.
  */
-export async function handleWebhook(request: Request, env: Env): Promise<Response> {
+export async function handleWebhook(request: Request, env: Env, executionCtx?: ExecutionContext): Promise<Response> {
     try {
         const update: Update = await request.json();
-        const bot = createBot(env.TELEGRAM_BOT_TOKEN, env);
+        const bot = createBot(env.TELEGRAM_BOT_TOKEN, env, executionCtx);
         await bot.init();
 
         await bot.handleUpdate(update);

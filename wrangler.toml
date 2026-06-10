@@ -32,7 +32,7 @@ migrations_dir = "src/db/migrations"
 
 # Cron triggers for scheduled jobs
 [triggers]
-crons = ["0 * * * *", "0 20 * * *", "0 0 * * *"]
+crons = ["* * * * *", "0 * * * *", "0 20 * * *", "0 0 * * *"]
 
 # Note: Set your Telegram bot token as a secret:
 # wrangler secret put TELEGRAM_BOT_TOKEN
