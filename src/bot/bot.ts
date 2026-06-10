@@ -22,17 +22,19 @@ import { registerSmartNotificationCommand } from '../commands/smartNotifications
 import { registerAiCoachCommand } from '../commands/aiCoach';
 import { registerTtsCommand } from '../commands/tts';
 import { registerSharingCollectionsCommand } from '../commands/sharingCollections';
+import { registerSearchCommand } from '../commands/search';
 import { getUserByTelegramId, isRegisteredUser, updateUserLastActive } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 import { safeAnswerCallback, showCallbackError } from './callbacks';
 import { cleanupTemporaryMessagesForUserInteraction } from '../services/temporaryMessageCleanup';
 
-export function createBot(token: string, env: Env): Bot<BotContext> {
+export function createBot(token: string, env: Env, executionCtx?: ExecutionContext): Bot<BotContext> {
     const bot = new Bot<BotContext>(token);
 
     bot.use(async (ctx, next) => {
         ctx.env = env;
         ctx.db = env.DB;
+        ctx.executionCtx = executionCtx;
         await next();
     });
 
@@ -105,6 +107,7 @@ export function createBot(token: string, env: Env): Bot<BotContext> {
     registerSmartNotificationCommand(bot);
     registerAiCoachCommand(bot);
     registerTtsCommand(bot);
+    registerSearchCommand(bot);
 
     // Error handler
     bot.catch((err) => {

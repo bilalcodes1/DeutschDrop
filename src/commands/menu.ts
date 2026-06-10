@@ -15,7 +15,7 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
     });
 
     // Handle menu callbacks that are not owned by feature modules.
-    bot.callbackQuery('menu_train', async (ctx) => {
+    bot.callbackQuery(/^(menu_train|train_menu)$/, async (ctx) => {
         await clearTextInteractionSessions(ctx);
         await replaceWithText(
             ctx,
@@ -54,7 +54,7 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
     });
 
     // Back to main menu
-    bot.callbackQuery('menu_main', async (ctx) => {
+    bot.callbackQuery(/^(menu_main|main_menu|mainMenu)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         await clearTrainingAndEditSessions(ctx);
         await showMainMenu(ctx);
@@ -80,6 +80,7 @@ export function mainMenuKeyboard(isAdmin: boolean = false): InlineKeyboard {
         .text('📚 راجع الآن', 'menu_learn')
         .text('🏋️ تدريب', 'menu_train').row()
         .text('📂 كلماتي', 'menu_words')
+        .text('🔎 بحث', 'global_search_start').row()
         .text('⚙️ المزيد', 'menu_more');
 }
 
@@ -309,6 +310,7 @@ async function clearTrainingAndEditSessions(ctx: BotContext): Promise<void> {
     await deleteBotSession(ctx.db, user.user_id, 'collection_add_word_direct');
     await deleteBotSession(ctx.db, user.user_id, 'collection_csv_upload');
     await deleteBotSession(ctx.db, user.user_id, 'collection_add_existing_words');
+    await deleteBotSession(ctx.db, user.user_id, 'global_search');
 }
 
 async function clearTextInteractionSessions(ctx: BotContext): Promise<void> {
@@ -320,4 +322,5 @@ async function clearTextInteractionSessions(ctx: BotContext): Promise<void> {
     await deleteBotSession(ctx.db, user.user_id, 'collection_add_word_direct');
     await deleteBotSession(ctx.db, user.user_id, 'collection_csv_upload');
     await deleteBotSession(ctx.db, user.user_id, 'collection_add_existing_words');
+    await deleteBotSession(ctx.db, user.user_id, 'global_search');
 }
