@@ -2474,3 +2474,4 @@ test('calculateCappedAmount correctly limits XP to 300', () => {
     // Exactly hitting the cap
     assert.strictEqual(calculateCappedAmount(50, 250, 300), 50);
 });
+
