@@ -850,6 +850,31 @@ test('admin boost command validates input and creates boost without direct XP', 
     assert.match(parserBlock, /\/admin_boost <user_id> <multiplier> <minutes> <reason>/);
 });
 
+test('my_boost command shows active boost status without mutating XP or boosts', () => {
+    const commandSource = fs.readFileSync(new URL('../src/commands/myBoost.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+    const boostSource = fs.readFileSync(new URL('../src/services/xpBoosts.ts', import.meta.url), 'utf8');
+
+    assert.match(commandSource, /bot\.command\('my_boost'/);
+    assert.match(botSource, /registerMyBoostCommand/);
+    assert.match(commandSource, /const telegramId = ctx\.from\?\.id/);
+    assert.match(commandSource, /if \(!telegramId\)/);
+    assert.match(commandSource, /getUserByTelegramId\(ctx\.db, telegramId\)/);
+    assert.match(commandSource, /getActiveXpBoost\(ctx\.db, user\.user_id\)/);
+    assert.match(commandSource, /ما عندك XP Boost نشط حالياً/);
+    assert.match(commandSource, /🚀 عندك XP Boost نشط!/);
+    assert.match(commandSource, /المضاعف: \$\{boost\.multiplier\}x/);
+    assert.match(commandSource, /السبب: \$\{boost\.reason\}/);
+    assert.match(commandSource, /ينتهي في: \$\{boost\.expires_at\}/);
+    assert.doesNotMatch(commandSource, /isAdminTelegramId|requireAdmin|adminOnly/);
+    assert.doesNotMatch(commandSource, /addXp\(|createXpBoost\(|is_consumed\s*=/);
+
+    assert.match(boostSource, /FROM user_boosts/);
+    assert.match(boostSource, /is_consumed = 0/);
+    assert.match(boostSource, /starts_at <= datetime\('now'\)/);
+    assert.match(boostSource, /expires_at > datetime\('now'\)/);
+});
+
 test('configured admin IDs are allowed', () => {
     const env = { ADMIN_TELEGRAM_IDS: '8590766269,8014388174' };
 

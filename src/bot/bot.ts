@@ -24,6 +24,7 @@ import { registerTtsCommand } from '../commands/tts';
 import { registerSharingCollectionsCommand } from '../commands/sharingCollections';
 import { registerSearchCommand } from '../commands/search';
 import { registerDailyQuestsCommand } from '../commands/dailyQuests';
+import { registerMyBoostCommand } from '../commands/myBoost';
 import { getUserByTelegramId, isRegisteredUser, updateUserLastActive } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 import { safeAnswerCallback, showCallbackError } from './callbacks';
@@ -110,6 +111,7 @@ export function createBot(token: string, env: Env, executionCtx?: ExecutionConte
     registerTtsCommand(bot);
     registerSearchCommand(bot);
     registerDailyQuestsCommand(bot);
+    registerMyBoostCommand(bot);
 
     // Error handler
     bot.catch((err) => {
