@@ -115,13 +115,15 @@ export function formatDailyQuestsMessage(quests: DailyQuest[]): string {
         const tierName = q.tier.charAt(0).toUpperCase() + q.tier.slice(1);
         
         lines.push("\n" + tierEmoji + " " + tierName + ": " + label);
+        lines.push("التقدم: " + q.current_progress + "/" + q.target_value);
+        lines.push("المكافأة: +" + q.reward_xp + " XP");
         
         if (q.is_claimed) {
-            lines.push("✅ تم الاستلام (+" + q.reward_xp + " XP)");
+            lines.push("✅ تم الاستلام");
         } else if (q.is_completed) {
-            lines.push("✅ اكتملت المهمة!\n🎁 استلام " + q.reward_xp + " XP");
+            lines.push("🎁 جاهزة للاستلام");
         } else {
-            lines.push("▫️ التقدم: " + q.current_progress + "/" + q.target_value);
+            lines.push("▫️ قيد التقدم");
         }
     }
     

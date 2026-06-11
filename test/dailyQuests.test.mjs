@@ -145,14 +145,40 @@ test('dailyQuests - formatDailyQuestsMessage displays correct status', async () 
     
     assert.match(message, /🎯 \*مهام اليوم\*/);
     assert.match(message, /🥉 Bronze: أكمل تدريب واحد/);
-    assert.match(message, /✅ تم الاستلام \(\+10 XP\)/);
+    assert.match(message, /التقدم: 1\/1/);
+    assert.match(message, /المكافأة: \+10 XP/);
+    assert.match(message, /✅ تم الاستلام/);
     
     assert.match(message, /🥈 Silver: أجب 20 إجابة صحيحة/);
-    assert.match(message, /✅ اكتملت المهمة!/);
-    assert.match(message, /🎁 استلام 20 XP/);
+    assert.match(message, /التقدم: 20\/20/);
+    assert.match(message, /المكافأة: \+20 XP/);
+    assert.match(message, /🎁 جاهزة للاستلام/);
     
     assert.match(message, /🥇 Gold: حقق جلسة مثالية/);
-    assert.match(message, /▫️ التقدم: 0\/1/);
+    assert.match(message, /التقدم: 0\/1/);
+    assert.match(message, /المكافأة: \+30 XP/);
+    assert.match(message, /▫️ قيد التقدم/);
+});
+
+test('dailyQuests Telegram UI is registered and claim buttons depend on quest state', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+    const commandSource = fs.readFileSync(new URL('../src/commands/dailyQuests.ts', import.meta.url), 'utf8');
+
+    assert.match(menuSource, /🎯 مهامي اليومية/);
+    assert.match(menuSource, /daily_quests/);
+    assert.match(botSource, /registerDailyQuestsCommand/);
+
+    assert.match(commandSource, /bot\.callbackQuery\('daily_quests'/);
+    assert.match(commandSource, /bot\.callbackQuery\(\/\^daily_quest_claim:\(bronze\|silver\|gold\)\$/);
+    assert.match(commandSource, /getDailyQuests\(ctx\.db, user\.user_id\)/);
+    assert.match(commandSource, /formatDailyQuestsMessage\(quests\)/);
+    assert.match(commandSource, /claimQuestReward\(ctx\.db, user\.user_id, tier\)/);
+    assert.match(commandSource, /if \(quest\.is_completed && !quest\.is_claimed\)/);
+    assert.match(commandSource, /🎁 استلام \$\{tierLabel\(quest\.tier\)\} \+\$\{quest\.reward_xp\} XP/);
+    assert.match(commandSource, /daily_quest_claim:\$\{quest\.tier\}/);
+    assert.doesNotMatch(commandSource, /boost/i);
+    assert.doesNotMatch(commandSource, /event/i);
 });
 
 test('daily_tasks old system is untouched', () => {

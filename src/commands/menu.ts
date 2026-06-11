@@ -79,6 +79,7 @@ export function mainMenuKeyboard(isAdmin: boolean = false): InlineKeyboard {
     return new InlineKeyboard()
         .text('📚 راجع الآن', 'menu_learn')
         .text('🏋️ تدريب', 'menu_train').row()
+        .text('🎯 مهامي اليومية', 'daily_quests').row()
         .text('📂 كلماتي', 'menu_words')
         .text('🔎 بحث', 'global_search_start').row()
         .text('⚙️ المزيد', 'menu_more');
