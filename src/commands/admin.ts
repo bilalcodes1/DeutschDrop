@@ -14,6 +14,7 @@ import { countAdminUsers as countUsersForAdmin, getAdminUserDetail, getAdminUser
 import { isAdminTelegramId } from '../services/adminAccess';
 import { sendTelegramMessage } from '../services/notifications';
 import { parseVoiceRssKeys, VOICE_RSS_DAILY_LIMIT_PER_KEY, VOICE_RSS_GERMAN_PROVIDER, VOICE_RSS_GERMAN_VOICE } from '../services/tts/voiceRssGerman';
+import { createXpBoost } from '../services/xpBoosts';
 import { replaceWithText } from './wordPanel';
 
 interface BroadcastSession {
@@ -65,6 +66,11 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
     bot.command('admin_health', async (ctx) => {
         if (!await requireAdmin(ctx)) return;
         await showAdminHealth(ctx);
+    });
+
+    bot.command('admin_boost', async (ctx) => {
+        if (!await requireAdmin(ctx)) return;
+        await handleAdminBoostCommand(ctx);
     });
 
     bot.command('users', async (ctx) => {
@@ -284,6 +290,80 @@ async function requireAdmin(ctx: BotContext): Promise<boolean> {
 
     await ctx.reply('غير مصرح لك باستخدام هذا الأمر.');
     return false;
+}
+
+async function handleAdminBoostCommand(ctx: BotContext): Promise<void> {
+    const parsed = parseAdminBoostCommand(ctx.message?.text ?? '');
+    if (!parsed.ok) {
+        await ctx.reply(parsed.message);
+        return;
+    }
+
+    const target = await getAdminUserDetail(ctx.db, parsed.userId);
+    if (!target || target.is_deleted) {
+        await ctx.reply(`المستخدم user_id=${parsed.userId} غير موجود.`);
+        return;
+    }
+
+    const boost = await createXpBoost(
+        ctx.db,
+        parsed.userId,
+        parsed.multiplier,
+        parsed.minutes,
+        parsed.reason,
+        'admin_boost',
+        String(ctx.from?.id ?? 'unknown')
+    );
+
+    await ctx.reply(
+        `✅ تم إنشاء XP Boost\n\n` +
+        `user_id: ${parsed.userId}\n` +
+        `multiplier: ${parsed.multiplier}x\n` +
+        `duration: ${parsed.minutes} دقيقة\n` +
+        `reason: ${parsed.reason}\n` +
+        `expires_at: ${boost.expires_at}`
+    );
+}
+
+type AdminBoostParseResult =
+    | { ok: true; userId: number; multiplier: number; minutes: number; reason: string }
+    | { ok: false; message: string };
+
+function parseAdminBoostCommand(text: string): AdminBoostParseResult {
+    const usage = 'الصيغة:\n/admin_boost <user_id> <multiplier> <minutes> <reason>\nمثال:\n/admin_boost 1 2 30 streak_reward';
+    const args = text.replace(/^\/admin_boost(@\w+)?\s*/i, '').trim();
+    const parts = args ? args.split(/\s+/) : [];
+    if (parts.length < 4) return { ok: false, message: usage };
+
+    const [userIdRaw, multiplierRaw, minutesRaw, ...reasonParts] = parts;
+    const reason = reasonParts.join(' ').trim();
+    const userId = Number(userIdRaw);
+    const multiplier = Number(multiplierRaw);
+    const minutes = Number(minutesRaw);
+
+    if (!/^\d+$/.test(userIdRaw) || !Number.isInteger(userId) || userId <= 0) {
+        return { ok: false, message: 'user_id يجب أن يكون رقم صحيح أكبر من 0.' };
+    }
+    if (!Number.isFinite(multiplier) || multiplier <= 1) {
+        return { ok: false, message: 'multiplier يجب أن يكون أكبر من 1.' };
+    }
+    if (multiplier > 5) {
+        return { ok: false, message: 'multiplier لا يمكن أن يتجاوز 5.' };
+    }
+    if (!/^\d+$/.test(minutesRaw) || !Number.isInteger(minutes) || minutes <= 0) {
+        return { ok: false, message: 'minutes يجب أن يكون رقم صحيح أكبر من 0.' };
+    }
+    if (minutes > 1440) {
+        return { ok: false, message: 'minutes لا يمكن أن يتجاوز 1440.' };
+    }
+    if (!reason) {
+        return { ok: false, message: 'reason مطلوب.' };
+    }
+    if (reason.length > 50) {
+        return { ok: false, message: 'reason لا يمكن أن يتجاوز 50 حرف.' };
+    }
+
+    return { ok: true, userId, multiplier, minutes, reason };
 }
 
 async function showAdminPanel(ctx: BotContext): Promise<void> {

@@ -815,11 +815,39 @@ test('pictogram flow uses single-message carousel controls', () => {
 
 test('admin commands are gated by ADMIN_TELEGRAM_IDS', () => {
     const source = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
-    for (const command of ['admin_stats', 'users', 'broadcast', 'ban', 'unban']) {
+    for (const command of ['admin_stats', 'admin_boost', 'users', 'broadcast', 'ban', 'unban']) {
         assert.match(source, new RegExp(`bot\\.command\\('${command}'`));
     }
     assert.match(source, /isAdminTelegramId\(ctx\.env, ctx\.from\?\.id\)/);
     assert.match(source, /غير مصرح لك باستخدام هذا الأمر/);
+});
+
+test('admin boost command validates input and creates boost without direct XP', () => {
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    const boostSource = fs.readFileSync(new URL('../src/services/xpBoosts.ts', import.meta.url), 'utf8');
+    const handlerStart = adminSource.indexOf('async function handleAdminBoostCommand');
+    const parserStart = adminSource.indexOf('function parseAdminBoostCommand');
+    const handlerBlock = adminSource.slice(handlerStart, parserStart);
+    const parserBlock = adminSource.slice(parserStart, adminSource.indexOf('async function showAdminPanel'));
+
+    assert.match(adminSource, /bot\.command\('admin_boost'/);
+    assert.match(adminSource, /if \(!await requireAdmin\(ctx\)\) return;\s*await handleAdminBoostCommand\(ctx\);/);
+    assert.match(handlerBlock, /getAdminUserDetail\(ctx\.db, parsed\.userId\)/);
+    assert.match(handlerBlock, /المستخدم user_id=\$\{parsed\.userId\} غير موجود/);
+    assert.match(handlerBlock, /createXpBoost\(/);
+    assert.match(handlerBlock, /parsed\.userId,\s*parsed\.multiplier,\s*parsed\.minutes,\s*parsed\.reason,\s*'admin_boost'/);
+    assert.match(handlerBlock, /expires_at: \$\{boost\.expires_at\}/);
+    assert.doesNotMatch(handlerBlock, /addXp\(/);
+    assert.doesNotMatch(boostSource, /addXp\(/);
+
+    assert.match(parserBlock, /user_id يجب أن يكون رقم صحيح أكبر من 0/);
+    assert.match(parserBlock, /multiplier يجب أن يكون أكبر من 1/);
+    assert.match(parserBlock, /multiplier لا يمكن أن يتجاوز 5/);
+    assert.match(parserBlock, /minutes يجب أن يكون رقم صحيح أكبر من 0/);
+    assert.match(parserBlock, /minutes لا يمكن أن يتجاوز 1440/);
+    assert.match(parserBlock, /reason مطلوب/);
+    assert.match(parserBlock, /reason\.length > 50/);
+    assert.match(parserBlock, /\/admin_boost <user_id> <multiplier> <minutes> <reason>/);
 });
 
 test('configured admin IDs are allowed', () => {
@@ -2474,4 +2502,3 @@ test('calculateCappedAmount correctly limits XP to 300', () => {
     // Exactly hitting the cap
     assert.strictEqual(calculateCappedAmount(50, 250, 300), 50);
 });
-
