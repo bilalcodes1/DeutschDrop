@@ -202,6 +202,7 @@ async function handleReviewAnswer(
             reason: 'correct_review',
             sourceType: 'learn_session',
             allowDailyCap: true,
+            allowBoost: true,
         });
     }
     await incrementDailyTask(ctx, user.user_id, 'review_words');

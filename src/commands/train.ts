@@ -352,6 +352,7 @@ async function handleTrainAnswer(ctx: BotContext, questionIndex: number, wordId:
             sourceType: 'training_session',
             sourceId: session.session_id.toString(),
             allowDailyCap: true,
+            allowBoost: true,
         });
         await ctx.answerCallbackQuery('✅ صحيح! +2 XP');
     } else {
@@ -430,6 +431,7 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
             sourceType: 'training_session',
             sourceId: session.session_id.toString(),
             allowDailyCap: true,
+            allowBoost: true,
         });
     }
 

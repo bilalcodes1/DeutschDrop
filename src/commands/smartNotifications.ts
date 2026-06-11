@@ -52,6 +52,7 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
                 sourceType: 'smart_notification',
                 sourceId: word ? word.word_id.toString() : eventId.toString(),
                 allowDailyCap: true,
+                allowBoost: true,
             });
             if (word) {
                 await updateWordLearningAfterAnswer(ctx.db, {

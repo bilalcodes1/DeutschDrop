@@ -2,6 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { queryOne, queryAll, run } from '../db/queries';
 export { getLevelFromXp, getProgressToNextLevel } from './xpMath';
 import { getLevelFromXp } from './xpMath';
+import { getActiveXpBoost } from './xpBoosts';
 
 // =====================================================
 // XP & Level System
@@ -21,6 +22,7 @@ export interface AddXpOptions {
     sourceId?: string;
     metadata?: Record<string, any>;
     allowDailyCap?: boolean;
+    allowBoost?: boolean;
 }
 
 export function calculateCappedAmount(amount: number, todayCapped: number, dailyCap: number): number {
@@ -40,17 +42,21 @@ export async function addXp(
     const sourceId = typeof options === 'string' ? null : options.sourceId ?? null;
     const metadata = typeof options === 'string' ? null : options.metadata ?? null;
     const allowDailyCap = typeof options === 'string' ? false : options.allowDailyCap ?? false;
+    const allowBoost = typeof options === 'string' ? false : options.allowBoost ?? false;
 
-    let finalAmount = amount;
+    let allowedBase = amount;
+    let capBaseAmount = 0;
     let capApplied = 0;
-    const multiplier = 1.0;
+    let multiplier = 1.0;
+    let activeBoost: Awaited<ReturnType<typeof getActiveXpBoost>> | null = null;
+
     const dailyCapEligible = allowDailyCap ? 1 : 0;
 
     if (allowDailyCap) {
         try {
             const capQuery = await queryOne<{ today_capped: number }>(
                 db,
-                `SELECT COALESCE(SUM(final_amount), 0) as today_capped
+                `SELECT COALESCE(SUM(cap_base_amount), 0) as today_capped
                  FROM xp_transactions
                  WHERE user_id = ? AND daily_cap_eligible = 1 AND date(created_at) = date('now')`,
                 [userId]
@@ -58,26 +64,74 @@ export async function addXp(
             const todayCapped = capQuery?.today_capped ?? 0;
             const DAILY_CAP = 300;
 
-            finalAmount = calculateCappedAmount(amount, todayCapped, DAILY_CAP);
-            if (finalAmount < amount) {
+            allowedBase = calculateCappedAmount(amount, todayCapped, DAILY_CAP);
+            capBaseAmount = allowedBase;
+            if (allowedBase < amount) {
                 capApplied = 1;
             }
         } catch (e) {
-            // Ignore error if table doesn't exist yet in some environments
+            // Ignore error if table/column doesn't exist yet in some environments
+            allowedBase = amount;
+            capBaseAmount = 0;
+            capApplied = 0;
         }
     }
 
-    const metadataJson = metadata ? JSON.stringify(metadata) : null;
+    if (allowBoost && allowedBase > 0) {
+        try {
+            activeBoost = await getActiveXpBoost(db, userId);
+            multiplier = activeBoost?.multiplier ?? 1.0;
+        } catch (e) {
+            // Ignore boost lookup errors so XP awards remain functional
+            activeBoost = null;
+            multiplier = 1.0;
+        }
+    }
+
+    const finalAmount = Math.floor(allowedBase * multiplier);
+
+    const boostMetadata =
+        activeBoost && multiplier > 1
+            ? {
+                  boost_id: activeBoost.boost_id,
+                  allowed_base: allowedBase,
+                  uncapped_base: amount,
+                  boost_multiplier: multiplier,
+              }
+            : null;
+
+    const mergedMetadata =
+        metadata || boostMetadata
+            ? {
+                  ...(metadata ?? {}),
+                  ...(boostMetadata ?? {}),
+              }
+            : null;
+
+    const metadataJson = mergedMetadata ? JSON.stringify(mergedMetadata) : null;
 
     try {
         await run(
             db,
-            `INSERT INTO xp_transactions (user_id, amount, base_amount, final_amount, reason, source_type, source_id, multiplier, cap_applied, daily_cap_eligible, metadata_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [userId, finalAmount, amount, finalAmount, reason, sourceType, sourceId, multiplier, capApplied, dailyCapEligible, metadataJson]
+            `INSERT INTO xp_transactions (user_id, amount, base_amount, final_amount, reason, source_type, source_id, multiplier, cap_applied, daily_cap_eligible, metadata_json, cap_base_amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                userId,
+                finalAmount,
+                amount,
+                finalAmount,
+                reason,
+                sourceType,
+                sourceId,
+                multiplier,
+                capApplied,
+                dailyCapEligible,
+                metadataJson,
+                capBaseAmount,
+            ]
         );
     } catch (e) {
-        // Fallback for tests/environments where migration 0036 is not yet applied
+        // Fallback for tests/environments where migration 0036/0038 is not yet applied
     }
     await run(
         db,
