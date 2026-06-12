@@ -596,7 +596,7 @@ test('collection owner can add direct words CSV and existing words into a collec
     const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0030_collection_direct_add_csv.sql', import.meta.url), 'utf8');
     const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
 
-    for (const label of ['➕ إضافة كلمة', '📤 رفع CSV للمجموعة', '📚 إضافة من كلماتي', '✏️ تعديل المجموعة', '🗑 حذف المجموعة']) {
+    for (const label of ['➕ إضافة كلمة', '📤 رفع CSV للمجموعة', '📚 إضافة من كلماتي', '✏️ تعديل المجموعة', '🗑 حذف هذه المجموعة']) {
         assert.match(commandSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(commandSource, /if \(isOwner\) \{/);
@@ -1059,10 +1059,12 @@ test('CSV duplicate logic is scoped to user and supports update existing', () =>
 test('word selection bulk delete is limited to current user', () => {
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
     const wordSource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+    const deletionSource = fs.readFileSync(new URL('../src/commands/userDataDeletion.ts', import.meta.url), 'utf8');
 
-    for (const callback of ['select_words', 'bulk_select', 'manage_words_select', 'word_select', 'word_select_all', 'word_delete_selected', 'word_delete_all']) {
+    for (const callback of ['select_words', 'bulk_select', 'manage_words_select', 'word_select', 'word_select_all', 'word_delete_selected']) {
         assert.match(addWordSource, new RegExp(callback));
     }
+    assert.match(deletionSource, /word_delete_all/);
     assert.match(addWordSource, /saveBotSession<WordSelectionSession>/);
     assert.match(addWordSource, /selected_word_ids: selectedIds/);
     assert.match(addWordSource, /mode: 'word_bulk_select'/);
@@ -2526,4 +2528,80 @@ test('calculateCappedAmount correctly limits XP to 300', () => {
     
     // Exactly hitting the cap
     assert.strictEqual(calculateCappedAmount(50, 250, 300), 50);
+});
+
+test('user deletion menus expose dangerous actions through text confirmations only', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const addwordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+    const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+    const deletionSource = fs.readFileSync(new URL('../src/commands/userDataDeletion.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+
+    assert.match(menuSource, /🗑 حذف كل كلماتي/);
+    assert.match(menuSource, /user_delete:words/);
+    assert.match(menuSource, /🗑 حذف كل كلماتي ومجموعاتي/);
+    assert.match(menuSource, /user_delete:data/);
+    assert.match(addwordSource, /🗑 حذف كل كلماتي/);
+    assert.match(sharingSource, /🗑 حذف كل مجموعاتي/);
+    assert.match(sharingSource, /🗑 حذف كل كلمات هذه المجموعة/);
+    assert.match(sharingSource, /🗑 حذف هذه المجموعة/);
+    assert.match(deletionSource, /bot\.command\('delete_my_words'/);
+    assert.match(deletionSource, /bot\.command\('delete_my_collections'/);
+    assert.match(deletionSource, /bot\.command\('delete_my_data'/);
+    assert.match(botSource, /registerUserDataDeletionCommand\(bot\);\s*registerSupportCommand\(bot\);/s);
+});
+
+test('user deletion confirmation requires exact Arabic phrases and expires quickly', () => {
+    const deletionSource = fs.readFileSync(new URL('../src/commands/userDataDeletion.ts', import.meta.url), 'utf8');
+    const sessionSource = fs.readFileSync(new URL('../src/repositories/sessionRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(sessionSource, /'delete_confirmation'/);
+    assert.match(deletionSource, /'احذف كلماتي'/);
+    assert.match(deletionSource, /'احذف مجموعاتي'/);
+    assert.match(deletionSource, /'احذف كلمات المجموعة'/);
+    assert.match(deletionSource, /'احذف المجموعة'/);
+    assert.match(deletionSource, /'احذف بياناتي'/);
+    assert.match(deletionSource, /ttlMinutes[\s\S]*5|,\s*5\s*\)/);
+    assert.match(deletionSource, /text !== session\.expectedText/);
+    assert.match(deletionSource, /تم إلغاء عملية الحذف/);
+    assert.match(deletionSource, /getBotSession\(ctx\.db, user\.user_id, 'train'\)/);
+    assert.match(deletionSource, /getBotSession\(ctx\.db, user\.user_id, 'challenge'\)/);
+});
+
+test('user deletion repositories enforce ownership and avoid deleting protected records', () => {
+    const wordRepoSource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
+    const sharingRepoSource = fs.readFileSync(new URL('../src/repositories/wordSharingRepository.ts', import.meta.url), 'utf8');
+    const deletionSource = fs.readFileSync(new URL('../src/commands/userDataDeletion.ts', import.meta.url), 'utf8');
+
+    assert.match(wordRepoSource, /SELECT \* FROM words WHERE word_id = \? AND added_by = \?/);
+    assert.match(wordRepoSource, /DELETE FROM reviews WHERE word_id = \? AND user_id = \?/);
+    assert.match(wordRepoSource, /DELETE FROM user_words WHERE word_id = \? AND user_id = \?/);
+    assert.match(wordRepoSource, /DELETE FROM words WHERE word_id = \? AND added_by = \?/);
+    assert.match(wordRepoSource, /DELETE FROM word_collection_items WHERE word_id = \? AND owner_user_id = \?/);
+    assert.match(wordRepoSource, /DELETE FROM word_learning_stats WHERE word_id = \? AND user_id = \?/);
+
+    assert.match(sharingRepoSource, /owner_user_id = \?/);
+    assert.match(sharingRepoSource, /export async function deleteAllCollectionsForUser/);
+    assert.match(sharingRepoSource, /DELETE FROM word_collection_items[\s\S]*owner_user_id = \?/);
+    assert.match(sharingRepoSource, /DELETE FROM word_collections WHERE owner_user_id = \?/);
+    assert.match(sharingRepoSource, /export async function deleteCollectionWordsForUser/);
+    assert.match(sharingRepoSource, /collection_id = \?[\s\S]*owner_user_id = \?/);
+
+    for (const forbidden of ['DELETE FROM users', 'DELETE FROM xp_transactions', 'DELETE FROM user_achievements', 'DELETE FROM async_challenges']) {
+        assert.doesNotMatch(wordRepoSource, new RegExp(forbidden));
+        assert.doesNotMatch(sharingRepoSource, new RegExp(forbidden));
+        assert.doesNotMatch(deletionSource, new RegExp(forbidden));
+    }
+});
+
+test('user deletion flow only uses current Telegram user ownership', () => {
+    const deletionSource = fs.readFileSync(new URL('../src/commands/userDataDeletion.ts', import.meta.url), 'utf8');
+
+    assert.match(deletionSource, /const telegramId = ctx\.from\?\.id/);
+    assert.match(deletionSource, /getUserByTelegramId\(ctx\.db, telegramId\)/);
+    assert.doesNotMatch(deletionSource, /Number\(ctx\.message\.text/);
+    assert.doesNotMatch(deletionSource, /parseInt\(ctx\.message\.text/);
+    assert.match(deletionSource, /getCollectionById\(ctx\.db, collectionId\)/);
+    assert.match(deletionSource, /collection\.owner_user_id !== user\.user_id/);
+    assert.match(deletionSource, /لم أجد هذه المجموعة أو ليست تابعة لحسابك/);
 });

@@ -394,9 +394,16 @@ export async function deleteWordForUser(
     if (!word) return false;
 
     await runBatch(db, [
+        { sql: 'DELETE FROM word_collection_items WHERE word_id = ? AND owner_user_id = ?', params: [wordId, userId] },
         { sql: 'DELETE FROM list_words WHERE word_id = ?', params: [wordId] },
         { sql: 'DELETE FROM word_pictograms WHERE word_id = ?', params: [wordId] },
         { sql: 'DELETE FROM word_audio WHERE word_id = ?', params: [wordId] },
+        { sql: 'DELETE FROM word_audio_cache WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
+        { sql: 'DELETE FROM tts_request_locks WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
+        { sql: 'DELETE FROM word_learning_stats WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
+        { sql: 'UPDATE notification_events SET word_id = NULL WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
+        { sql: 'UPDATE tts_last_messages SET word_id = NULL WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
+        { sql: 'UPDATE temporary_messages SET word_id = NULL WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
         { sql: 'DELETE FROM reviews WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
         { sql: 'DELETE FROM user_words WHERE word_id = ? AND user_id = ?', params: [wordId, userId] },
         { sql: 'DELETE FROM words WHERE word_id = ? AND added_by = ?', params: [wordId, userId] },

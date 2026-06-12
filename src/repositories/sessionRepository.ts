@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { queryOne, run } from '../db/queries.js';
 
-export type BotSessionType = 'learn' | 'train' | 'add_word' | 'word_edit' | 'challenge' | 'register' | 'rename' | 'profile_rename' | 'support_proof' | 'admin_broadcast' | 'admin_announcement' | 'admin_source' | 'admin_source_add' | 'admin_source_edit' | 'admin_private_message' | 'admin_confirm' | 'csv_update' | 'word_selection' | 'word_search' | 'ai_word' | 'train_explain' | 'shared_word_search' | 'shared_word_selection' | 'shared_word_copy_selection' | 'collection_create' | 'collection_add_word_direct' | 'collection_csv_upload' | 'collection_add_existing_words' | 'collection_edit' | 'global_search';
+export type BotSessionType = 'learn' | 'train' | 'add_word' | 'word_edit' | 'challenge' | 'register' | 'rename' | 'profile_rename' | 'support_proof' | 'admin_broadcast' | 'admin_announcement' | 'admin_source' | 'admin_source_add' | 'admin_source_edit' | 'admin_private_message' | 'admin_confirm' | 'csv_update' | 'word_selection' | 'word_search' | 'ai_word' | 'train_explain' | 'shared_word_search' | 'shared_word_selection' | 'shared_word_copy_selection' | 'collection_create' | 'collection_add_word_direct' | 'collection_csv_upload' | 'collection_add_existing_words' | 'collection_edit' | 'global_search' | 'delete_confirmation';
 
 export interface BotSession<T> {
     session_id: string;

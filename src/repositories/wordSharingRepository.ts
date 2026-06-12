@@ -309,11 +309,61 @@ export async function updateCollection(db: D1Database, collectionId: number, own
     await run(db, `UPDATE word_collections SET ${sets.join(', ')} WHERE id = ? AND owner_user_id = ?`, params);
 }
 
-export async function deleteCollection(db: D1Database, collectionId: number, ownerUserId: number): Promise<void> {
+export async function deleteCollection(db: D1Database, collectionId: number, ownerUserId: number): Promise<boolean> {
+    const collection = await queryOne<{ id: number }>(
+        db,
+        'SELECT id FROM word_collections WHERE id = ? AND owner_user_id = ? AND is_deleted = 0',
+        [collectionId, ownerUserId]
+    );
+    if (!collection) return false;
+
     // We do soft delete by deleting the links and the collection itself.
     // The requirement says: "وضّح أن الحذف يحذف المجموعة والربط فقط، ولا يحذف الكلمات من حساب المستخدم"
     // Since word_collection_items has collection_id, deleting it removes the links.
     // Words are stored in words and user_words, so they remain unaffected.
     await run(db, `DELETE FROM word_collection_items WHERE collection_id = ? AND EXISTS (SELECT 1 FROM word_collections WHERE id = ? AND owner_user_id = ?)`, [collectionId, collectionId, ownerUserId]);
-    await run(db, `DELETE FROM word_collections WHERE id = ? AND owner_user_id = ?`, [collectionId, ownerUserId]);
+    const result = await run(db, `DELETE FROM word_collections WHERE id = ? AND owner_user_id = ?`, [collectionId, ownerUserId]);
+    return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
+}
+
+export async function deleteAllCollectionsForUser(db: D1Database, ownerUserId: number): Promise<number> {
+    const row = await queryOne<{ count: number }>(
+        db,
+        'SELECT COUNT(*) AS count FROM word_collections WHERE owner_user_id = ? AND is_deleted = 0',
+        [ownerUserId]
+    );
+    const count = row?.count ?? 0;
+    if (count === 0) return 0;
+
+    await run(
+        db,
+        `DELETE FROM word_collection_items
+         WHERE owner_user_id = ?
+            OR collection_id IN (SELECT id FROM word_collections WHERE owner_user_id = ?)`,
+        [ownerUserId, ownerUserId]
+    );
+    await run(db, 'DELETE FROM word_collections WHERE owner_user_id = ?', [ownerUserId]);
+    return count;
+}
+
+export async function deleteCollectionWordsForUser(db: D1Database, collectionId: number, ownerUserId: number): Promise<number | null> {
+    const collection = await queryOne<{ id: number }>(
+        db,
+        'SELECT id FROM word_collections WHERE id = ? AND owner_user_id = ? AND is_deleted = 0',
+        [collectionId, ownerUserId]
+    );
+    if (!collection) return null;
+
+    const result = await run(
+        db,
+        `DELETE FROM word_collection_items
+         WHERE collection_id = ?
+           AND owner_user_id = ?
+           AND EXISTS (
+                SELECT 1 FROM word_collections
+                WHERE id = ? AND owner_user_id = ?
+           )`,
+        [collectionId, ownerUserId, collectionId, ownerUserId]
+    );
+    return (result.meta as { changes?: number })?.changes ?? 0;
 }

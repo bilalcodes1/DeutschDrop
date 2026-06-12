@@ -5,13 +5,11 @@ import {
     createWordAndAssignToUser,
     countSearchWordsByUser,
     countWordsByUser,
-    deleteAllWordsForUser,
     deleteWordForUser,
     deleteWordsForUser,
     DUPLICATE_WORD_ERROR,
     getPeerWordSuggestions,
     getWordById,
-    getWordsByUser,
     getWordsByUserPaginated,
     getWordsByUserPaginatedFallback,
     searchWordsByUser,
@@ -380,35 +378,6 @@ export function registerAddWordCommand(bot: Bot<BotContext>): void {
         });
     });
 
-    bot.callbackQuery('word_delete_all', async (ctx) => {
-        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
-        if (!user) {
-            await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
-            return;
-        }
-        const words = await getWordsByUser(ctx.db, user.user_id);
-        await replaceWithText(
-            ctx,
-            `سيتم حذف كل كلماتك وعددها ${words.length}. هل أنت متأكد؟`,
-            new InlineKeyboard()
-                .text('✅ نعم احذف كل كلماتي', 'word_delete_all_confirm').row()
-                .text('❌ إلغاء', 'words:select:page:1')
-        );
-        await ctx.answerCallbackQuery();
-    });
-
-    bot.callbackQuery('word_delete_all_confirm', async (ctx) => {
-        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
-        if (!user) {
-            await ctx.answerCallbackQuery('يرجى استخدام /start أولاً.');
-            return;
-        }
-        const deleted = await deleteAllWordsForUser(ctx.db, user.user_id);
-        await saveSelectionSession(ctx, user.user_id, []);
-        await replaceWithText(ctx, `تم حذف ${deleted} كلمة من حسابك ✅`, selectionActionsKeyboard(1));
-        await ctx.answerCallbackQuery();
-    });
-
     bot.callbackQuery(/^(?:word_detail_|words:detail:)(\d+)(?::(page|search):(\d+))?$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         const wordId = parseInt(ctx.match[1], 10);
@@ -676,6 +645,7 @@ function wordsPageKeyboard(words: Array<{ word_id: number; german: string; arabi
         .text('👥 كلمات المستخدمين', 'shared_users:page:1').row()
         .text('🗂 مجموعات الكلمات', 'collections:menu').row()
         .text('📥 العروض المشتركة', 'shared_offers:page:1').row()
+        .text('🗑 حذف كل كلماتي', 'user_delete:words').row()
         .text('➕ إضافة كلمة', 'add_word')
         .text('📤 رفع CSV', 'upload_csv').row()
         .text('⬅️ رجوع', 'menu_words')
@@ -741,6 +711,7 @@ async function showSelectionPanel(ctx: BotContext, userId: number, page: number)
 function selectionActionsKeyboard(page = 1): InlineKeyboard {
     return new InlineKeyboard()
         .text('☑️ تحديد', `words:select:page:${page}`).row()
+        .text('🗑 حذف كل كلماتي', 'user_delete:words').row()
         .text('⬅️ رجوع', 'menu_words')
         .text('🏠 الرئيسية', 'menu_main');
 }

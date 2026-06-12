@@ -134,6 +134,7 @@ function wordsMenuKeyboard(): InlineKeyboard {
         .text('👥 كلمات المستخدمين', 'shared_users:page:1').row()
         .text('🗂 مجموعات الكلمات', 'collections:menu').row()
         .text('📥 العروض المشتركة', 'shared_offers:page:1').row()
+        .text('🗑 حذف كل كلماتي', 'user_delete:words').row()
         .text('💡 اقتراحات', 'suggest_peer_words').row()
         .text('⬅️ رجوع', 'menu_main')
         .text('🏠 الرئيسية', 'menu_main');
@@ -154,7 +155,9 @@ export function moreMenuKeyboard(isAdmin: boolean = false): InlineKeyboard {
 
     if (isAdmin) keyboard.text('🛠 لوحة الأدمن', 'admin_panel').row();
 
-    return keyboard.text('🏠 الرئيسية', 'menu_main');
+    return keyboard
+        .text('🗑 حذف كل كلماتي ومجموعاتي', 'user_delete:data').row()
+        .text('🏠 الرئيسية', 'menu_main');
 }
 
 function aboutProjectText(): string {

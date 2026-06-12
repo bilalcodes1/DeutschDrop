@@ -1111,7 +1111,8 @@ async function showMyCollections(ctx: BotContext, userId: number, page: number):
     const keyboard = new InlineKeyboard()
         .text('➕ إنشاء مجموعة', 'collections:create').row()
         .text('🌍 مجموعات المستخدمين', 'collections:public:page:1').row()
-        .text('🔍 بحث عن مجموعة', 'collections:public_search').row();
+        .text('🔍 بحث عن مجموعة', 'collections:public_search').row()
+        .text('🗑 حذف كل مجموعاتي', 'user_delete:collections').row();
     for (const item of collections) keyboard.text(`🗂 ${item.title}`, `collection:view:${item.id}:page:1`).row();
     if (safePage > 1) keyboard.text('⬅️ السابق', `collections:mine:page:${safePage - 1}`);
     if (safePage < totalPages) keyboard.text('التالي ➡️', `collections:mine:page:${safePage + 1}`);
@@ -1127,6 +1128,7 @@ async function showCollectionsMenu(ctx: BotContext): Promise<void> {
         .text('🌍 مجموعات المستخدمين', 'collections:public:page:1').row()
         .text('🔍 بحث عن مجموعة', 'collections:public_search').row()
         .text('📥 مجموعات شاركوها معي', 'shared_offers:page:1').row()
+        .text('🗑 حذف كل مجموعاتي', 'user_delete:collections').row()
         .text('⬅️ رجوع إلى كلماتي', 'menu_words')
         .text('🏠 الرئيسية', 'menu_main'));
 }
@@ -1189,8 +1191,9 @@ async function showCollection(ctx: BotContext, userId: number, collectionId: num
         keyboard.text('➕ إضافة كلمة', `collection:add_direct:${collectionId}`)
             .text('📤 رفع CSV للمجموعة', `collection:csv_upload:${collectionId}`).row()
             .text('📚 إضافة من كلماتي', `collection:add_existing:${collectionId}:page:1`).row()
+            .text('🗑 حذف كل كلمات هذه المجموعة', `user_delete:collection_words:${collectionId}`).row()
             .text('✏️ تعديل المجموعة', `collection:edit:${collectionId}`)
-            .text('🗑 حذف المجموعة', `collection:delete:${collectionId}`).row();
+            .text('🗑 حذف هذه المجموعة', `user_delete:collection:${collectionId}`).row();
     } else {
         if (total > 0) {
             keyboard.text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row();
