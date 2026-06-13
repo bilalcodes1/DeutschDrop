@@ -12,14 +12,17 @@ import {
 import { deleteAllWordsForUser } from '../repositories/wordRepository';
 import { countAdminUsers as countUsersForAdmin, getAdminUserDetail, getAdminUserList, getUserByTelegramId, logAdminAction, resetUserStreak, resetUserXp, setUserBanned, softDeleteUser } from '../repositories/userRepository';
 import { isAdminTelegramId } from '../services/adminAccess';
-import { sendTelegramMessage } from '../services/notifications';
+import { sendTelegramMessage, sendTelegramPlainMessage, sendTelegramPlainPhoto } from '../services/notifications';
 import { parseVoiceRssKeys, VOICE_RSS_DAILY_LIMIT_PER_KEY, VOICE_RSS_GERMAN_PROVIDER, VOICE_RSS_GERMAN_VOICE } from '../services/tts/voiceRssGerman';
 import { createXpBoost } from '../services/xpBoosts';
 import { replaceWithText } from './wordPanel';
 
 interface BroadcastSession {
     step: 'awaiting_message' | 'confirm';
+    contentType?: 'text' | 'photo';
     message?: string;
+    photoFileId?: string;
+    caption?: string | null;
 }
 
 interface AnnouncementSession {
@@ -34,6 +37,9 @@ interface AdminPrivateMessageSession {
 }
 
 const USERS_PAGE_SIZE = 10;
+const BROADCAST_PAGE_SIZE = 100;
+const BROADCAST_RATE_LIMIT_BATCH = 25;
+const BROADCAST_RATE_LIMIT_DELAY_MS = 350;
 const TTS_STALE_CACHE_PREDICATE = `provider = 'cloudflareTts'
     OR provider IS NULL
     OR language IS NULL
@@ -182,12 +188,13 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
         if (!user) return;
 
         const session = await getBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast');
-        if (!session?.data.message) {
+        if (!hasBroadcastContent(session?.data)) {
             await replaceWithText(ctx, 'لا توجد رسالة جاهزة للإرسال.', adminPanelKeyboard());
             return;
         }
 
-        await sendBroadcast(ctx, user.user_id, session.data.message);
+        await replaceWithText(ctx, '⏳ جاري إرسال التبليغ على دفعات آمنة...', adminPanelKeyboard());
+        await sendBroadcast(ctx, user.user_id, session.data);
         await deleteBotSession(ctx.db, user.user_id, 'admin_broadcast');
     });
 
@@ -255,8 +262,8 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
             const text = ctx.message?.text?.trim();
             if (!text || text.startsWith('/')) return next();
 
-            await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', { step: 'confirm', message: text }, 30);
-            await previewBroadcast(ctx, text);
+            await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', { step: 'confirm', contentType: 'text', message: text }, 30);
+            await previewBroadcast(ctx, { contentType: 'text', message: text });
             return;
         }
 
@@ -282,6 +289,28 @@ export function registerAdminCommand(bot: Bot<BotContext>): void {
             new InlineKeyboard().text('✅ إرسال', 'admin_private_message_confirm').text('❌ إلغاء', 'admin_private_message_cancel'),
             'Markdown'
         );
+    });
+
+    bot.on('message:photo', async (ctx, next) => {
+        if (!isAdminTelegramId(ctx.env, ctx.from?.id)) return next();
+
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user) return next();
+
+        const session = await getBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast');
+        if (session?.data.step !== 'awaiting_message') return next();
+
+        const photo = ctx.message.photo?.[ctx.message.photo.length - 1];
+        if (!photo?.file_id) return next();
+        const caption = ctx.message.caption?.trim() || null;
+        const data: BroadcastSession = {
+            step: 'confirm',
+            contentType: 'photo',
+            photoFileId: photo.file_id,
+            caption,
+        };
+        await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', data, 30);
+        await previewBroadcast(ctx, data);
     });
 }
 
@@ -734,22 +763,34 @@ async function startBroadcastFlow(ctx: BotContext): Promise<void> {
     if (!user) return;
 
     await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', { step: 'awaiting_message' }, 30);
-    await replaceWithText(ctx, 'اكتب الرسالة التي تريد إرسالها لكل المستخدمين:', adminCancelKeyboard());
+    await replaceWithText(ctx, 'أرسل محتوى التبليغ لكل المستخدمين:\n\n- نص عادي أو يحتوي روابط\n- صورة فقط\n- صورة مع caption وروابط', adminCancelKeyboard());
 }
 
-async function previewBroadcast(ctx: BotContext, text: string): Promise<void> {
+async function previewBroadcast(ctx: BotContext, content: string | Omit<BroadcastSession, 'step'> | BroadcastSession): Promise<void> {
     const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    const data: BroadcastSession = typeof content === 'string'
+        ? { step: 'confirm', contentType: 'text', message: content }
+        : { ...content, step: 'confirm' };
     if (user) {
-        await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', { step: 'confirm', message: text }, 30);
+        await saveBotSession<BroadcastSession>(ctx.db, user.user_id, 'admin_broadcast', data, 30);
+    }
+
+    const keyboard = new InlineKeyboard()
+        .text('✅ إرسال للجميع', 'admin_broadcast_confirm')
+        .text('❌ إلغاء', 'admin_broadcast_cancel');
+
+    if (data.contentType === 'photo' && data.photoFileId) {
+        await ctx.replyWithPhoto(data.photoFileId, {
+            caption: `${data.caption ? `${data.caption}\n\n` : ''}📢 معاينة التبليغ\n\nهل تريد إرسالها لكل المستخدمين؟`,
+            reply_markup: keyboard,
+        });
+        return;
     }
 
     await replaceWithText(
         ctx,
-        `📢 *معاينة التبليغ:*\n\n${text}\n\nهل تريد إرسالها لكل المستخدمين؟`,
-        new InlineKeyboard()
-            .text('✅ إرسال للجميع', 'admin_broadcast_confirm')
-            .text('❌ إلغاء', 'admin_broadcast_cancel'),
-        'Markdown'
+        `📢 معاينة التبليغ:\n\n${data.message ?? ''}\n\nهل تريد إرسالها لكل المستخدمين؟`,
+        keyboard
     );
 }
 
@@ -759,23 +800,70 @@ function adminCancelKeyboard(): InlineKeyboard {
         .text('🛠 لوحة الأدمن', 'admin_panel');
 }
 
-async function sendBroadcast(ctx: BotContext, adminUserId: number, text: string): Promise<void> {
-    const users = await getAdminUserList(ctx.db, 10000, 0);
+async function sendBroadcast(ctx: BotContext, adminUserId: number, content: BroadcastSession): Promise<void> {
     let sent = 0;
     let failed = 0;
+    let totalTargets = 0;
+    let offset = 0;
 
-    for (const user of users) {
-        if (user.is_banned) continue;
-        try {
-            await sendTelegramMessage(ctx.env, user.telegram_user_id ?? user.telegram_id, text);
-            sent++;
-        } catch {
-            failed++;
+    while (true) {
+        const users = await getBroadcastRecipients(ctx, BROADCAST_PAGE_SIZE, offset);
+        if (users.length === 0) break;
+
+        for (const user of users) {
+            if (user.is_banned || user.is_deleted) continue;
+            totalTargets++;
+            try {
+                const ok = content.contentType === 'photo' && content.photoFileId
+                    ? await sendTelegramPlainPhoto(ctx.env, user.telegram_user_id ?? user.telegram_id, content.photoFileId, content.caption ?? null)
+                    : await sendTelegramPlainMessage(ctx.env, user.telegram_user_id ?? user.telegram_id, content.message ?? '');
+                if (ok) sent++; else failed++;
+            } catch {
+                failed++;
+            }
+            if ((sent + failed) % BROADCAST_RATE_LIMIT_BATCH === 0) {
+                await sleep(BROADCAST_RATE_LIMIT_DELAY_MS);
+            }
         }
+        offset += BROADCAST_PAGE_SIZE;
     }
 
-    await createBroadcastLog(ctx.db, adminUserId, text, sent, failed);
-    await replaceWithText(ctx, `تم الإرسال إلى ${sent} مستخدم ✅\nفشل الإرسال إلى ${failed} مستخدم ⚠️`, adminPanelKeyboard());
+    await createBroadcastLog(ctx.db, adminUserId, broadcastLogMessage(content), sent, failed);
+    await replaceWithText(
+        ctx,
+        `📢 انتهى البث.\n\nالمستهدفون: ${totalTargets}\nتم الإرسال إلى ${sent} مستخدم ✅\nفشل الإرسال إلى ${failed} مستخدم ⚠️`,
+        adminPanelKeyboard()
+    );
+}
+
+function hasBroadcastContent(data?: BroadcastSession): data is BroadcastSession {
+    if (!data) return false;
+    if (data.contentType === 'photo') return Boolean(data.photoFileId);
+    return Boolean(data.message?.trim());
+}
+
+async function getBroadcastRecipients(ctx: BotContext, limit: number, offset: number): Promise<Array<{ telegram_id: number; telegram_user_id: number | null; is_banned: number; is_deleted: number }>> {
+    const rows = await ctx.db.prepare(
+        `SELECT telegram_id, telegram_user_id, COALESCE(is_banned, 0) AS is_banned, COALESCE(is_deleted, 0) AS is_deleted
+         FROM users
+         WHERE display_name IS NOT NULL
+           AND COALESCE(is_banned, 0) = 0
+           AND COALESCE(is_deleted, 0) = 0
+         ORDER BY user_id
+         LIMIT ? OFFSET ?`
+    ).bind(limit, offset).all<{ telegram_id: number; telegram_user_id: number | null; is_banned: number; is_deleted: number }>();
+    return rows.results ?? [];
+}
+
+function broadcastLogMessage(content: BroadcastSession): string {
+    if (content.contentType === 'photo') {
+        return content.caption ? `[photo] ${content.caption}` : '[photo]';
+    }
+    return content.message ?? '';
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function startAnnouncementFlow(ctx: BotContext): Promise<void> {

@@ -102,6 +102,15 @@ export function registerSmartNotificationCommand(bot: Bot<BotContext>): void {
         await replaceWithText(ctx, '🔕 تم إيقاف الإشعارات. تقدر ترجع تشغلها من ⚙️ المزيد > 🔔 الإشعارات.', notificationDoneKeyboard());
     });
 
+    bot.callbackQuery('notif_pause', async (ctx) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (user) {
+            await ctx.db.prepare('UPDATE settings SET last_notification_at = datetime("now") WHERE user_id = ?').bind(user.user_id).run();
+        }
+        await ctx.answerCallbackQuery('تم التأجيل');
+        await replaceWithText(ctx, '🔕 تم تأجيل الإشعارات حسب فترة التنبيه عندك.', notificationDoneKeyboard());
+    });
+
     bot.callbackQuery('review_plan_delay', async (ctx) => {
         await ctx.answerCallbackQuery('تم التأجيل');
         await replaceWithText(ctx, '🔁 تم تأجيل الجلسة. سأذكرك لاحقاً حسب إعدادات الإشعارات.', notificationDoneKeyboard());

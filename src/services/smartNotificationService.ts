@@ -43,6 +43,29 @@ interface UserForNotification {
     updated_at: string | null;
 }
 
+const NOTIFICATION_RECENT_WORD_COOLDOWN_HOURS = 24;
+const SENSITIVE_NOTIFICATION_SESSION_TYPES = [
+    'train',
+    'challenge',
+    'add_word',
+    'word_edit',
+    'word_search',
+    'global_search',
+    'collection_create',
+    'collection_add_word_direct',
+    'collection_csv_upload',
+    'collection_add_existing_words',
+    'collection_edit',
+    'shared_word_search',
+    'support_proof',
+    'admin_broadcast',
+    'admin_announcement',
+    'admin_source_add',
+    'admin_source_edit',
+    'profile_rename',
+    'delete_confirmation',
+];
+
 export async function shouldSendNotification(db: D1Database, user: UserForNotification): Promise<boolean> {
     const settings = await getNotificationSettings(db, user.user_id);
     const mode = settings?.notification_mode ?? settings?.notification_intensity ?? 'normal';
@@ -50,6 +73,7 @@ export async function shouldSendNotification(db: D1Database, user: UserForNotifi
     const intervalHours = mode === 'custom' ? settings.notification_interval_hours ?? 2 : 6;
     if (settings.last_notification_at && withinHours(settings.last_notification_at, intervalHours)) return false;
     if (user.updated_at && withinMinutes(user.updated_at, 30)) return false;
+    if (await hasSensitiveNotificationSession(db, user.user_id)) return false;
 
     const sentToday = await countNotificationsToday(db, user.user_id);
     if (sentToday >= maxPerDay(mode)) return false;
@@ -110,7 +134,8 @@ export async function sendSmartNotification(env: Env, user: UserForNotification)
     if (!await shouldSendNotification(env.DB, user)) return false;
 
     try {
-        const notification = await selectNotificationForUser(env.DB, user.user_id);
+        const notification = await selectWrongHardDueNotificationForUser(env.DB, user.user_id);
+        if (!notification) return false;
         const eventId = await createNotificationEvent(env.DB, user.user_id, notification.type, notification.word?.word_id ?? null);
         const replyMarkup = withEventCallbacks(notification.replyMarkup, eventId, Boolean(notification.word));
 
@@ -145,6 +170,19 @@ export async function sendSmartNotification(env: Env, user: UserForNotification)
     } catch {
         return false;
     }
+}
+
+export async function selectWrongHardDueNotificationForUser(db: D1Database, userId: number): Promise<SmartNotification | null> {
+    const activePlan = await getActiveReviewPlanForNotification(db, userId);
+    if (activePlan) return buildReviewPlanNotification(activePlan);
+
+    const selected = await selectNotificationWord(db, userId, 'normal');
+    if (selected?.reason === 'hard' || selected?.reason === 'recent_wrong') return buildHardWordNotification(selected.word);
+    if (selected?.reason === 'due') {
+        const dueCount = await countDueWords(db, userId);
+        return buildDueWordNotification(selected.word, Math.max(1, dueCount), userId);
+    }
+    return null;
 }
 
 export async function getNotificationEventWord(db: D1Database, eventId: number): Promise<SmartWord | null> {
@@ -207,6 +245,19 @@ async function countNotificationsToday(db: D1Database, userId: number): Promise<
         'SELECT COUNT(*) AS count FROM notification_events WHERE user_id = ? AND date(sent_at) = date("now")'
     ).bind(userId).first<{ count: number }>();
     return row?.count ?? 0;
+}
+
+async function hasSensitiveNotificationSession(db: D1Database, userId: number): Promise<boolean> {
+    const placeholders = SENSITIVE_NOTIFICATION_SESSION_TYPES.map(() => '?').join(',');
+    const row = await db.prepare(
+        `SELECT 1
+         FROM bot_sessions
+         WHERE user_id = ?
+           AND expires_at > datetime('now')
+           AND type IN (${placeholders})
+         LIMIT 1`
+    ).bind(userId, ...SENSITIVE_NOTIFICATION_SESSION_TYPES).first();
+    return Boolean(row);
 }
 
 function maxPerDay(intensity: string): number {
@@ -272,11 +323,11 @@ async function selectDueWord(db: D1Database, userId: number): Promise<SmartWord 
                 SELECT 1 FROM notification_events ne
                 WHERE ne.user_id = ?
                   AND ne.word_id = w.word_id
-                  AND ne.sent_at >= datetime('now', '-24 hours')
+                  AND ne.sent_at >= datetime('now', ?)
            )
          ORDER BY uw.next_review ASC, RANDOM()
          LIMIT 1`
-    ).bind(userId, userId).first<SmartWord>();
+    ).bind(userId, userId, `-${NOTIFICATION_RECENT_WORD_COOLDOWN_HOURS} hours`).first<SmartWord>();
 }
 
 async function selectHardWord(db: D1Database, userId: number): Promise<SmartWord | null> {
@@ -291,11 +342,11 @@ async function selectHardWord(db: D1Database, userId: number): Promise<SmartWord
                 SELECT 1 FROM notification_events ne
                 WHERE ne.user_id = ?
                   AND ne.word_id = w.word_id
-                  AND ne.sent_at >= datetime('now', '-24 hours')
+                  AND ne.sent_at >= datetime('now', ?)
            )
          ORDER BY COALESCE(wls.difficulty_score, 0) DESC, uw.wrong_count DESC, RANDOM()
          LIMIT 1`
-    ).bind(userId, userId).first<SmartWord>();
+    ).bind(userId, userId, `-${NOTIFICATION_RECENT_WORD_COOLDOWN_HOURS} hours`).first<SmartWord>();
 }
 
 async function selectRecentWrongWord(db: D1Database, userId: number): Promise<SmartWord | null> {
@@ -309,11 +360,11 @@ async function selectRecentWrongWord(db: D1Database, userId: number): Promise<Sm
                 SELECT 1 FROM notification_events ne
                 WHERE ne.user_id = ?
                   AND ne.word_id = w.word_id
-                  AND ne.sent_at >= datetime('now', '-24 hours')
+                  AND ne.sent_at >= datetime('now', ?)
            )
          ORDER BY datetime(wls.last_wrong_at) DESC, wls.difficulty_score DESC
          LIMIT 1`
-    ).bind(userId, userId).first<SmartWord>();
+    ).bind(userId, userId, `-${NOTIFICATION_RECENT_WORD_COOLDOWN_HOURS} hours`).first<SmartWord>();
 }
 
 async function selectNewLowSeenWord(db: D1Database, userId: number): Promise<SmartWord | null> {
@@ -387,9 +438,9 @@ function withEventCallbacks(markup: SmartNotification['replyMarkup'], eventId: n
 function recallButtons(): SmartNotification['replyMarkup'] {
     return {
         inline_keyboard: [
-            [{ text: '👁 أظهر الجواب', callback_data: 'notif_show_{eventId}' }],
-            [{ text: '📚 راجع الآن', callback_data: 'menu_learn' }, { text: '🏋️ تدريب قصير', callback_data: 'train_quick' }],
-            [{ text: '🔕 إيقاف الإشعارات', callback_data: 'notif_disable' }],
+            [{ text: '👁 أظهر المعنى', callback_data: 'notif_show_{eventId}' }],
+            [{ text: '✅ أعرفها', callback_data: 'notif_known_{eventId}' }, { text: '❌ نسيتها', callback_data: 'notif_forgot_{eventId}' }],
+            [{ text: '🔕 إيقاف مؤقت', callback_data: 'notif_pause' }],
         ],
     };
 }
@@ -397,9 +448,9 @@ function recallButtons(): SmartNotification['replyMarkup'] {
 function trainingButtons(): SmartNotification['replyMarkup'] {
     return {
         inline_keyboard: [
-            [{ text: '👁 أظهر الجواب', callback_data: 'notif_show_{eventId}' }],
-            [{ text: '📚 راجع الآن', callback_data: 'menu_learn' }, { text: '🏋️ تدريب قصير', callback_data: 'train_quick' }],
-            [{ text: '🔕 إيقاف الإشعارات', callback_data: 'notif_disable' }],
+            [{ text: '👁 أظهر المعنى', callback_data: 'notif_show_{eventId}' }],
+            [{ text: '✅ أعرفها', callback_data: 'notif_known_{eventId}' }, { text: '❌ نسيتها', callback_data: 'notif_forgot_{eventId}' }],
+            [{ text: '🔕 إيقاف مؤقت', callback_data: 'notif_pause' }],
         ],
     };
 }

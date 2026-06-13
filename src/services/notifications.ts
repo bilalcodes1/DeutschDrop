@@ -36,6 +36,37 @@ export async function sendTelegramPhoto(
     });
 }
 
+export async function sendTelegramPlainMessage(
+    env: Env,
+    telegramId: number,
+    text: string,
+    replyMarkup?: unknown
+): Promise<TelegramSentMessage | null> {
+    const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: telegramId, text, reply_markup: replyMarkup }),
+    });
+    const payload = await response.json<{ ok?: boolean; result?: TelegramSentMessage }>().catch(() => null);
+    return payload?.ok ? payload.result ?? null : null;
+}
+
+export async function sendTelegramPlainPhoto(
+    env: Env,
+    telegramId: number,
+    photo: string,
+    caption?: string | null,
+    replyMarkup?: unknown
+): Promise<TelegramSentMessage | null> {
+    const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: telegramId, photo, caption: caption || undefined, reply_markup: replyMarkup }),
+    });
+    const payload = await response.json<{ ok?: boolean; result?: TelegramSentMessage }>().catch(() => null);
+    return payload?.ok ? payload.result ?? null : null;
+}
+
 export async function getPeerUser(db: D1Database, userId: number): Promise<User | null> {
     return queryOne<User>(
         db,

@@ -10,6 +10,8 @@ import { cleanupExpiredTemporaryMessages } from './services/temporaryMessageClea
 import { processPendingImports } from './services/csvImportBackground';
 import { Bot } from 'grammy';
 
+const SCHEDULED_USER_BATCH_LIMIT = 200;
+
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         const url = new URL(request.url);
@@ -120,8 +122,11 @@ async function sendChampionForPeriod(env: Env, period: Exclude<LeaderboardPeriod
          INNER JOIN settings s ON s.user_id = u.user_id
          WHERE u.is_banned = 0
            AND u.display_name IS NOT NULL
+           AND COALESCE(u.is_deleted, 0) = 0
            AND s.reminders_enabled = 1
-           AND COALESCE(s.leaderboard_notifications_enabled, 1) = 1`
+           AND COALESCE(s.leaderboard_notifications_enabled, 1) = 1
+         ORDER BY u.user_id
+         LIMIT ${SCHEDULED_USER_BATCH_LIMIT}`
     ).all<{ telegram_id: number }>();
 
     const title = period === 'daily' ? '👑 بطل اليوم' : period === 'weekly' ? '🔥 بطل الأسبوع' : '👑 بطل الشهر';
@@ -167,7 +172,12 @@ async function runCheckDueReviews(env: Env): Promise<void> {
          FROM users u
          INNER JOIN settings s ON s.user_id = u.user_id
          WHERE u.is_banned = 0
-           AND u.display_name IS NOT NULL`
+           AND COALESCE(u.is_deleted, 0) = 0
+           AND u.display_name IS NOT NULL
+           AND COALESCE(s.reminders_enabled, 1) = 1
+           AND COALESCE(s.notification_mode, s.notification_intensity, 'normal') != 'off'
+         ORDER BY COALESCE(s.last_notification_at, '1970-01-01'), u.user_id
+         LIMIT ${SCHEDULED_USER_BATCH_LIMIT}`
     ).all<{ user_id: number; telegram_id: number; updated_at: string | null }>();
 
     for (const user of users.results ?? []) {
@@ -182,7 +192,11 @@ async function runDailySummary(env: Env): Promise<void> {
         `SELECT u.user_id, u.telegram_id
          FROM users u
          INNER JOIN settings s ON s.user_id = u.user_id
-         WHERE s.reminders_enabled = 1`
+         WHERE s.reminders_enabled = 1
+           AND COALESCE(u.is_banned, 0) = 0
+           AND COALESCE(u.is_deleted, 0) = 0
+         ORDER BY u.user_id
+         LIMIT ${SCHEDULED_USER_BATCH_LIMIT}`
     ).all<{ user_id: number; telegram_id: number }>();
 
     for (const user of users.results ?? []) {
@@ -195,7 +209,11 @@ async function runTimedDailySummaries(env: Env): Promise<void> {
         `SELECT u.user_id, u.telegram_id, s.evening_time
          FROM users u
          INNER JOIN settings s ON s.user_id = u.user_id
-         WHERE s.reminders_enabled = 1`
+         WHERE s.reminders_enabled = 1
+           AND COALESCE(u.is_banned, 0) = 0
+           AND COALESCE(u.is_deleted, 0) = 0
+         ORDER BY u.user_id
+         LIMIT ${SCHEDULED_USER_BATCH_LIMIT}`
     ).all<{ user_id: number; telegram_id: number; evening_time: string }>();
 
     const hour = getBaghdadHour();

@@ -961,8 +961,31 @@ test('admin broadcast is protected and skips banned users', () => {
 
     assert.match(adminSource, /bot\.callbackQuery\('admin_broadcast_confirm'/);
     assert.match(adminSource, /requireAdmin\(ctx\)/);
-    assert.match(adminSource, /if \(user\.is_banned\) continue/);
+    assert.match(adminSource, /if \(user\.is_banned \|\| user\.is_deleted\) continue/);
+    assert.match(adminSource, /COALESCE\(is_banned, 0\) = 0/);
+    assert.match(adminSource, /COALESCE\(is_deleted, 0\) = 0/);
     assert.match(adminSource, /createBroadcastLog/);
+});
+
+test('admin broadcast supports text links photos captions and safe batched sending', () => {
+    const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
+    const notificationSource = fs.readFileSync(new URL('../src/services/notifications.ts', import.meta.url), 'utf8');
+
+    assert.match(adminSource, /contentType\?: 'text' \| 'photo'/);
+    assert.match(adminSource, /bot\.on\('message:photo'/);
+    assert.match(adminSource, /photoFileId: photo\.file_id/);
+    assert.match(adminSource, /caption = ctx\.message\.caption\?\.trim\(\) \|\| null/);
+    assert.match(adminSource, /replyWithPhoto/);
+    assert.match(adminSource, /sendTelegramPlainMessage/);
+    assert.match(adminSource, /sendTelegramPlainPhoto/);
+    assert.match(adminSource, /BROADCAST_PAGE_SIZE = 100/);
+    assert.match(adminSource, /BROADCAST_RATE_LIMIT_BATCH = 25/);
+    assert.match(adminSource, /await sleep\(BROADCAST_RATE_LIMIT_DELAY_MS\)/);
+    assert.match(adminSource, /المستهدفون: \$\{totalTargets\}/);
+    assert.match(notificationSource, /export async function sendTelegramPlainMessage/);
+    assert.match(notificationSource, /export async function sendTelegramPlainPhoto/);
+    assert.doesNotMatch(notificationSource, /sendTelegramPlainMessage[\s\S]*parse_mode/);
+    assert.doesNotMatch(notificationSource, /sendTelegramPlainPhoto[\s\S]*parse_mode/);
 });
 
 test('training and notification performance paths use candidate limits and safe loops', () => {
@@ -974,9 +997,10 @@ test('training and notification performance paths use candidate limits and safe 
     assert.match(trainSource, /getTrainingWordCandidates\(ctx\.db, user\.user_id, Math\.max\(100, count \* 6\)\)/);
     assert.match(wordRepoSource, /LIMIT \?/);
     assert.match(wordRepoSource, /RANDOM\(\)/);
-    assert.match(adminSource, /for \(const user of users\)/);
+    assert.match(adminSource, /getBroadcastRecipients\(ctx, BROADCAST_PAGE_SIZE, offset\)/);
     assert.match(adminSource, /try \{/);
     assert.match(notificationSource, /try \{/);
+    assert.match(notificationSource, /SENSITIVE_NOTIFICATION_SESSION_TYPES/);
 });
 
 test('pending support proofs are reachable only from admin panel', () => {
@@ -1449,7 +1473,8 @@ test('user with due words gets German word notification and avoids repeat for 24
     const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
     assert.match(serviceSource, /countDueWords/);
     assert.match(serviceSource, /SELECT w\.word_id, w\.german, w\.arabic, w\.example/);
-    assert.match(serviceSource, /ne\.sent_at >= datetime\('now', '-24 hours'\)/);
+    assert.match(serviceSource, /NOTIFICATION_RECENT_WORD_COOLDOWN_HOURS = 24/);
+    assert.match(serviceSource, /ne\.sent_at >= datetime\('now', \?\)/);
     assert.match(serviceSource, /🇩🇪 \$\{word\.german\}/);
 });
 
@@ -1476,12 +1501,35 @@ test('notification messages are real word questions with answer and disable acti
     assert.match(serviceSource, /✍️ اكتبها بالألماني/);
     assert.match(serviceSource, /🧩 أكمل الكلمة/);
     assert.match(serviceSource, /✍️ تلميح كتابة/);
-    assert.match(serviceSource, /👁 أظهر الجواب/);
-    assert.match(serviceSource, /🔕 إيقاف الإشعارات/);
+    assert.match(serviceSource, /👁 أظهر المعنى/);
+    assert.match(serviceSource, /✅ أعرفها/);
+    assert.match(serviceSource, /❌ نسيتها/);
+    assert.match(serviceSource, /🔕 إيقاف مؤقت/);
+    assert.match(commandSource, /notif_pause/);
     assert.match(commandSource, /notif_disable/);
     assert.match(commandSource, /notification_mode: 'off'/);
     assert.match(commandSource, /Latin: \$\{word\.pronunciation_latin\}/);
     assert.match(commandSource, /عربي: \$\{word\.pronunciation_ar\}/);
+});
+
+test('wrong and hard word notifications are scheduler-safe and cooldown-limited', () => {
+    const serviceSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
+    const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+
+    assert.match(serviceSource, /selectWrongHardDueNotificationForUser/);
+    assert.match(serviceSource, /selected\?\.reason === 'hard' \|\| selected\?\.reason === 'recent_wrong'/);
+    assert.match(serviceSource, /selected\?\.reason === 'due'/);
+    assert.match(serviceSource, /if \(!notification\) return false/);
+    assert.match(serviceSource, /NOTIFICATION_RECENT_WORD_COOLDOWN_HOURS = 24/);
+    assert.match(serviceSource, /hasSensitiveNotificationSession/);
+    assert.match(serviceSource, /type IN \(\$\{placeholders\}\)/);
+    for (const type of ['train', 'challenge', 'add_word', 'word_edit', 'word_search', 'global_search']) {
+        assert.match(serviceSource, new RegExp(`'${type}'`));
+    }
+    assert.match(indexSource, /SCHEDULED_USER_BATCH_LIMIT = 200/);
+    assert.match(indexSource, /LIMIT \$\{SCHEDULED_USER_BATCH_LIMIT\}/);
+    assert.match(indexSource, /COALESCE\(s\.notification_mode, s\.notification_intensity, 'normal'\) != 'off'/);
+    assert.match(indexSource, /COALESCE\(u\.is_deleted, 0\) = 0/);
 });
 
 test('notification intensity limits light normal intensive and disabled sends nothing', () => {
