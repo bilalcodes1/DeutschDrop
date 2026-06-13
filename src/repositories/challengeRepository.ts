@@ -34,7 +34,7 @@ export async function createAsyncChallenge(
     db: D1Database,
     creatorUserId: number,
     opponentUserId: number,
-    questions: Array<{ word_id: number; prompt: string; answer: string; options: string[]; direction: 'de_ar' | 'ar_de' }>,
+    questions: Array<{ word_id: number; prompt: string; answer: string; options: string[]; direction: 'de_ar' | 'ar_de'; type?: string; german?: string; helper?: string }>,
     metadata?: { sourceType?: string; sourceId?: string | number | null; wordOrigin?: unknown }
 ): Promise<number> {
     const result = await run(
@@ -60,11 +60,23 @@ export async function createAsyncChallenge(
         questions.map((question, index) => ({
             sql: `INSERT INTO challenge_questions (challenge_id, word_id, prompt, answer, options, direction, position)
                   VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            params: [challengeId, question.word_id, question.prompt, question.answer, JSON.stringify(question.options), question.direction, index],
+            params: [challengeId, question.word_id, question.prompt, question.answer, serializeChallengeQuestionOptions(question), question.direction, index],
         }))
     );
 
     return challengeId;
+}
+
+function serializeChallengeQuestionOptions(question: { options: string[]; type?: string; german?: string; helper?: string }): string {
+    if (!question.type && !question.german && !question.helper) {
+        return JSON.stringify(question.options);
+    }
+    return JSON.stringify({
+        options: question.options,
+        type: question.type,
+        german: question.german,
+        helper: question.helper,
+    });
 }
 
 export async function getChallenge(db: D1Database, challengeId: number): Promise<AsyncChallenge | null> {

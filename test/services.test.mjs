@@ -2478,6 +2478,47 @@ test('collection deletion uses confirmation and soft deletes', () => {
     assert.doesNotMatch(repoSource, /DELETE FROM words/);
 });
 
+test('collection sharing is visible and owner scoped', () => {
+    const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+
+    assert.match(sharingSource, /🔗 مشاركة المجموعة/);
+    assert.match(sharingSource, /share_collection:\$\{collectionId\}/);
+    assert.match(sharingSource, /اختر المستخدم الذي تريد مشاركة هذه المجموعة معه، أو ابحث عن مستخدم/);
+    assert.match(sharingSource, /🔍 بحث عن مستخدم/);
+    assert.match(sharingSource, /share_search:\$\{type\}:\$\{id\}/);
+    assert.match(sharingSource, /canShareOwnedCollection/);
+    assert.match(sharingSource, /collection\.owner_user_id !== senderUserId/);
+    assert.match(sharingSource, /COALESCE\(is_banned, 0\) = 0/);
+    assert.match(sharingSource, /COALESCE\(is_deleted, 0\) = 0/);
+    assert.doesNotMatch(sharingSource, /telegram_id LIKE/);
+    assert.match(sharingSource, /✅ تم مشاركة \$\{type === 'collection' \? 'المجموعة' : 'الكلمة'\} مع/);
+    assert.match(sharingSource, /📚 تمت مشاركة مجموعة معك:/);
+});
+
+test('collection challenge supports training-style modes without migrations', () => {
+    const challengeSource = fs.readFileSync(new URL('../src/commands/challenge.ts', import.meta.url), 'utf8');
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/challengeRepository.ts', import.meta.url), 'utf8');
+    const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
+
+    for (const label of ['✅ اختيارات', '🎲 مختلط', '🧩 حروف ناقصة', '🇮🇶 عربي → ألماني', '🇩🇪 ألماني → عربي', '✍️ كتابة']) {
+        assert.match(challengeSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(challengeSource, /collection_challenge_mode_\$\{collectionId\}_missing/);
+    assert.match(challengeSource, /challenge_collection_opp_\$\{collectionId\}_\$\{modeAlias\}_\$\{count\}_\$\{candidate\.user_id\}/);
+    assert.match(challengeSource, /buildTrainingQuestion\(words, word, trainingMode, index\)/);
+    assert.match(challengeSource, /normalizeAnswer\(answerText\) === normalizeAnswer\(active\.answer\)/);
+    assert.match(challengeSource, /parseStoredChallengeOptions/);
+    assert.match(challengeSource, /requiresMultipleChoiceDistractors/);
+    assert.match(challengeSource, /هذا النوع يحتاج 3 كلمات على الأقل/);
+    assert.match(repoSource, /serializeChallengeQuestionOptions/);
+    assert.match(repoSource, /type: question\.type/);
+    assert.match(repoSource, /helper: question\.helper/);
+    assert.match(trainSource, /export function buildTrainingQuestion/);
+    assert.match(trainSource, /export function normalizeAnswer/);
+    assert.match(addWordSource, /if \(user && await getBotSession\(ctx\.db, user\.user_id, 'challenge'\)\) \{\s*return next\(\);/s);
+});
+
 test('backward compatibility routes handle old message callbacks', () => {
     const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
     const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');

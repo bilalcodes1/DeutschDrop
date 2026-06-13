@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot/context';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
-import { getChallengeCandidates, getUserByTelegramId } from '../repositories/userRepository';
+import { getUserByTelegramId } from '../repositories/userRepository';
 import { copyWordToUser, countSearchWordsByUser, countWordsByUser, createWordAndAssignToUser, getWordById, getWordsByUserPaginated, searchDuplicateWordForUser, searchWordsByUser } from '../repositories/wordRepository';
 import {
     addWordsToCollection,
@@ -84,6 +84,15 @@ interface ShareSearchSession {
     ownerUserId?: number;
     collectionSearch?: boolean;
     userSearch?: boolean;
+    shareType?: 'word' | 'collection';
+    shareId?: number;
+}
+
+interface ShareTargetUser {
+    user_id: number;
+    display_name: string | null;
+    name: string | null;
+    username: string | null;
 }
 
 interface SharedSourceUserStatus {
@@ -158,6 +167,8 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
                 await showPublicCollections(ctx, user.user_id, 1, query);
             } else if (search.data.userSearch) {
                 await showPublicUsers(ctx, user.user_id, 1, query);
+            } else if (search.data.shareType && search.data.shareId) {
+                await showShareTargetUsers(ctx, user.user_id, search.data.shareType, search.data.shareId, query);
             } else if (search.data.ownerUserId) {
                 await showOtherUserWords(ctx, user.user_id, search.data.ownerUserId, 1, query);
             }
@@ -652,6 +663,18 @@ export function registerSharingCollectionsCommand(bot: Bot<BotContext>): void {
         const user = await currentUser(ctx);
         if (!user) return;
         await showShareTargetUsers(ctx, user.user_id, 'collection', Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery(/^share_search:(word|collection):(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        const type = ctx.match[1] as 'word' | 'collection';
+        const id = Number(ctx.match[2]);
+        if (type === 'collection' && !(await canShareOwnedCollection(ctx, user.user_id, id))) return;
+        await saveBotSession<ShareSearchSession>(ctx.db, user.user_id, 'shared_word_search', { shareType: type, shareId: id }, 30);
+        const label = type === 'collection' ? 'المجموعة' : 'الكلمة';
+        await replaceWithText(ctx, `🔍 اكتب اسم المستخدم الذي تريد مشاركة ${label} معه:`, backHomeKeyboard(type === 'collection' ? `collection:view:${id}:page:1` : `word_detail_${id}`));
     });
 
     bot.callbackQuery(/^share_to:(word|collection):(\d+):user:(\d+)$/, async (ctx) => {
@@ -1191,6 +1214,7 @@ async function showCollection(ctx: BotContext, userId: number, collectionId: num
         keyboard.text('➕ إضافة كلمة', `collection:add_direct:${collectionId}`)
             .text('📤 رفع CSV للمجموعة', `collection:csv_upload:${collectionId}`).row()
             .text('📚 إضافة من كلماتي', `collection:add_existing:${collectionId}:page:1`).row()
+            .text('🔗 مشاركة المجموعة', `share_collection:${collectionId}`).row()
             .text('🗑 حذف كل كلمات هذه المجموعة', `user_delete:collection_words:${collectionId}`).row()
             .text('✏️ تعديل المجموعة', `collection:edit:${collectionId}`)
             .text('🗑 حذف هذه المجموعة', `user_delete:collection:${collectionId}`).row();
@@ -1513,31 +1537,70 @@ async function copyCollection(ctx: BotContext, userId: number, collectionId: num
         .text('🏠 الرئيسية', 'menu_main'));
 }
 
-async function showShareTargetUsers(ctx: BotContext, senderUserId: number, type: 'word' | 'collection', id: number): Promise<void> {
-    const users = await getChallengeCandidates(ctx.db, senderUserId);
+async function showShareTargetUsers(ctx: BotContext, senderUserId: number, type: 'word' | 'collection', id: number, query?: string): Promise<void> {
+    if (type === 'collection' && !(await canShareOwnedCollection(ctx, senderUserId, id))) return;
+    const users = await getShareTargetUsers(ctx, senderUserId, query);
     const keyboard = new InlineKeyboard();
-    for (const user of users) keyboard.text(user.display_name ?? user.name, `share_to:${type}:${id}:user:${user.user_id}`).row();
+    for (const user of users) keyboard.text(user.display_name ?? user.name ?? user.username ?? 'مستخدم', `share_to:${type}:${id}:user:${user.user_id}`).row();
+    keyboard.text('🔍 بحث عن مستخدم', `share_search:${type}:${id}`).row();
     keyboard.text('⬅️ رجوع', type === 'collection' ? `collection:view:${id}:page:1` : `word_detail_${id}`).text('🏠 الرئيسية', 'menu_main');
-    await replaceWithText(ctx, 'اختر مستخدم للمشاركة:\n\nملاحظة: الكلمات التي تضيفها قد تظهر للمستخدمين الآخرين داخل البوت حتى يستفيدون منها.', keyboard);
+    const title = type === 'collection'
+        ? 'اختر المستخدم الذي تريد مشاركة هذه المجموعة معه، أو ابحث عن مستخدم.'
+        : 'اختر المستخدم الذي تريد مشاركة هذه الكلمة معه، أو ابحث عن مستخدم.';
+    const empty = users.length === 0 ? '\n\nلا توجد نتائج مطابقة حالياً.' : '';
+    await replaceWithText(ctx, `${title}${empty}`, keyboard);
 }
 
 async function createOfferAndNotify(ctx: BotContext, senderUserId: number, type: 'word' | 'collection', id: number, receiverUserId: number): Promise<void> {
     const receiver = await ctx.db.prepare('SELECT user_id, telegram_id AS chatId, display_name, name FROM users WHERE user_id = ? AND display_name IS NOT NULL AND COALESCE(is_banned, 0) = 0 AND COALESCE(is_deleted, 0) = 0').bind(receiverUserId).first<{ user_id: number; chatId: number; display_name: string | null; name: string }>();
     const sender = await ctx.db.prepare('SELECT display_name, name FROM users WHERE user_id = ?').bind(senderUserId).first<{ display_name: string | null; name: string }>();
     if (!receiver || !sender) return;
+    const collection = type === 'collection' ? await getCollectionById(ctx.db, id) : null;
+    if (type === 'collection' && (!collection || collection.owner_user_id !== senderUserId)) {
+        await replaceWithText(ctx, 'لا يمكنك مشاركة هذه المجموعة.', mainMenuKeyboard());
+        return;
+    }
     const payload = type === 'word' ? { wordIds: [id] } : { collectionId: id };
     const offerId = await createSharedWordOffer(ctx.db, senderUserId, receiverUserId, type, payload);
     if (!offerId) {
         await replaceWithText(ctx, 'تم إرسال نفس المشاركة لهذا المستخدم خلال آخر ساعة. انتظر قليلاً حتى لا تصير رسائل مزعجة.', mainMenuKeyboard());
         return;
     }
-    await sendTelegramMessage(ctx.env, receiver.chatId, `📤 ${displayUserName(sender)} شارك معك كلمات.`, {
+    const receiverText = type === 'collection'
+        ? `📚 تمت مشاركة مجموعة معك: ${collection?.title ?? 'مجموعة كلمات'}`
+        : `📤 ${displayUserName(sender)} شارك معك كلمة.`;
+    await sendTelegramMessage(ctx.env, receiver.chatId, receiverText, {
         inline_keyboard: [[
-            { text: '👁 عرض الكلمات', callback_data: `offer:accept:${offerId}` },
+            { text: type === 'collection' ? '📚 عرض المشاركة' : '👁 عرض الكلمات', callback_data: `offer:accept:${offerId}` },
             { text: '📥 نسخ إلى كلماتي', callback_data: `offer:accept:${offerId}` },
         ], [{ text: '❌ تجاهل', callback_data: `offer:ignore:${offerId}` }]],
     });
-    await replaceWithText(ctx, '✅ تم إرسال المشاركة.', mainMenuKeyboard());
+    await replaceWithText(ctx, `✅ تم مشاركة ${type === 'collection' ? 'المجموعة' : 'الكلمة'} مع ${displayUserName(receiver)}.`, mainMenuKeyboard());
+}
+
+async function canShareOwnedCollection(ctx: BotContext, userId: number, collectionId: number): Promise<boolean> {
+    const collection = await getCollectionById(ctx.db, collectionId);
+    if (!collection || collection.owner_user_id !== userId) {
+        await replaceWithText(ctx, 'لا يمكنك مشاركة هذه المجموعة.', mainMenuKeyboard());
+        return false;
+    }
+    return true;
+}
+
+async function getShareTargetUsers(ctx: BotContext, senderUserId: number, query?: string): Promise<ShareTargetUser[]> {
+    const like = `%${query ?? ''}%`;
+    const rows = await ctx.db.prepare(
+        `SELECT user_id, display_name, name, username
+         FROM users
+         WHERE user_id != ?
+           AND display_name IS NOT NULL
+           AND COALESCE(is_banned, 0) = 0
+           AND COALESCE(is_deleted, 0) = 0
+           AND (? = '%%' OR display_name LIKE ? OR name LIKE ? OR username LIKE ?)
+         ORDER BY COALESCE(last_active_at, updated_at, created_at) DESC, user_id DESC
+         LIMIT 10`
+    ).bind(senderUserId, like, like, like, like).all<ShareTargetUser>();
+    return rows.results ?? [];
 }
 
 async function handleOffer(ctx: BotContext, userId: number, action: 'accept' | 'ignore', offerId: number): Promise<void> {

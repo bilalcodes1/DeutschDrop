@@ -42,7 +42,7 @@ export interface TrainingSessionData {
     planId?: number;
 }
 
-type TrainingQuestionType =
+export type TrainingQuestionType =
     'multiple_choice' |
     'german_to_arabic' |
     'arabic_to_german' |
@@ -53,7 +53,7 @@ type TrainingQuestionType =
     'example_context' |
     'pictogram_recall';
 
-type TrainingMode = 'mixed' | 'typing' | 'missing' | 'de_ar' | 'ar_de' | 'hard' | 'exam' | 'plan';
+export type TrainingMode = 'mixed' | 'typing' | 'missing' | 'de_ar' | 'ar_de' | 'hard' | 'exam' | 'plan';
 
 export function registerTrainCommand(bot: Bot<BotContext>): void {
     bot.command('train', async (ctx) => {
@@ -564,7 +564,7 @@ export function validateTrainingSessionQuestions(session: TrainingSessionData, a
     return duplicates === 0 || availableUniqueWords < session.questions.length;
 }
 
-function buildTrainingQuestion(
+export function buildTrainingQuestion(
     words: Array<{ word_id: number; german: string; arabic: string; example: string | null }>,
     word: { word_id: number; german: string; arabic: string; example: string | null },
     mode: TrainingMode,
@@ -653,7 +653,7 @@ function chooseQuestionType(mode: TrainingMode, index: number, hasExample: boole
     return types[index % types.length];
 }
 
-function questionLabel(question: TrainingQuestion): string {
+export function questionLabel(question: TrainingQuestion): string {
     if (question.type === 'typing_de') return '✍️ اكتبها بالألماني';
     if (question.type === 'typing_ar') return '✍️ اكتب معناها بالعربي';
     if (question.type === 'missing_letters') return '🧩 أكمل الكلمة';
@@ -670,7 +670,7 @@ function maskGerman(value: string): string {
     }).join(' ');
 }
 
-function normalizeAnswer(value: string): string {
+export function normalizeAnswer(value: string): string {
     return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('de-DE');
 }
 

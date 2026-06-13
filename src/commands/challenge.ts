@@ -10,10 +10,24 @@ import { competitionNotificationsEnabled, displayUserName, sendTelegramMessage }
 import { addXp } from '../services/xpLevels';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
+import { buildTrainingQuestion, normalizeAnswer, questionLabel, type TrainingMode, type TrainingQuestion, type TrainingQuestionType } from './train';
+
+type CollectionChallengeMode = 'multiple_choice' | 'mixed' | 'missing' | 'ar_de' | 'de_ar' | 'typing';
+
+interface ChallengeQuestionData {
+    word_id: number;
+    prompt: string;
+    answer: string;
+    options: string[];
+    direction: 'de_ar' | 'ar_de';
+    type?: TrainingQuestionType;
+    german?: string;
+    helper?: string;
+}
 
 interface ChallengeSessionData {
     challengeId: number;
-    questions: Array<{ word_id: number; prompt: string; answer: string; options: string[]; direction: 'de_ar' | 'ar_de' }>;
+    questions: ChallengeQuestionData[];
     currentIndex: number;
     correctCount: number;
     startTime: number;
@@ -50,12 +64,7 @@ export function registerChallengeCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery(/^(?:collection_challenge_count_|train_collection_)(\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         const collectionId = Number(ctx.match[1]);
-        await replaceWithText(ctx, 'اختر عدد أسئلة تحدي المجموعة:', new InlineKeyboard()
-            .text('5', `collection_challenge_count_${collectionId}_5`)
-            .text('10', `collection_challenge_count_${collectionId}_10`)
-            .text('20', `collection_challenge_count_${collectionId}_20`).row()
-            .text('⬅️ رجوع', `collection:view:${collectionId}:page:1`)
-            .text('🏠 الرئيسية', 'menu_main'));
+        await showCollectionChallengeModes(ctx, collectionId);
     });
 
     bot.callbackQuery(/^challenge_collections:page:(\d+)$/, async (ctx) => {
@@ -65,12 +74,27 @@ export function registerChallengeCommand(bot: Bot<BotContext>): void {
 
     bot.callbackQuery(/^collection_challenge_count_(\d+)_(5|10|20)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
-        await showOpponentSelection(ctx, Number(ctx.match[2]), 'collection', Number(ctx.match[1]));
+        await showOpponentSelection(ctx, Number(ctx.match[2]), 'collection', Number(ctx.match[1]), 'multiple_choice');
+    });
+
+    bot.callbackQuery(/^collection_challenge_mode_(\d+)_(mc|mixed|missing|ar_de|de_ar|typing)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await showCollectionChallengeCounts(ctx, Number(ctx.match[1]), collectionModeFromAlias(ctx.match[2]));
+    });
+
+    bot.callbackQuery(/^collection_challenge_count_(\d+)_(mc|mixed|missing|ar_de|de_ar|typing)_(5|10|20)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await showOpponentSelection(ctx, Number(ctx.match[3]), 'collection', Number(ctx.match[1]), collectionModeFromAlias(ctx.match[2]));
     });
 
     bot.callbackQuery(/^challenge_collection_opp_(\d+)_(5|10|20)_(\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
-        await createCollectionChallenge(ctx, Number(ctx.match[1]), Number(ctx.match[2]), Number(ctx.match[3]));
+        await createCollectionChallenge(ctx, Number(ctx.match[1]), Number(ctx.match[2]), Number(ctx.match[3]), 'multiple_choice');
+    });
+
+    bot.callbackQuery(/^challenge_collection_opp_(\d+)_(mc|mixed|missing|ar_de|de_ar|typing)_(5|10|20)_(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await createCollectionChallenge(ctx, Number(ctx.match[1]), Number(ctx.match[3]), Number(ctx.match[4]), collectionModeFromAlias(ctx.match[2]));
     });
 
     bot.callbackQuery(/^challenge_start_(\d+)$/, async (ctx) => {
@@ -88,6 +112,19 @@ export function registerChallengeCommand(bot: Bot<BotContext>): void {
         const wordId = parseInt(ctx.match[2], 10);
         const isCorrect = ctx.match[3] === 'correct';
         await handleChallengeAnswer(ctx, challengeId, wordId, isCorrect);
+    });
+
+    bot.on('message:text', async (ctx, next) => {
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (!user || ctx.message.text.startsWith('/')) return next();
+        const session = await getBotSession<ChallengeSessionData>(ctx.db, user.user_id, 'challenge');
+        const current = session?.data.questions[session.data.currentIndex];
+        if (!session || !current) return next();
+        if (current.options.length > 0) {
+            await ctx.reply('⚔️ عندك تحدي فعال. استخدم أزرار الإجابة الحالية أو اضغط 🏠 الرئيسية لإنهاء الجلسة.');
+            return;
+        }
+        await handleTypedChallengeAnswer(ctx, current, ctx.message.text);
     });
 }
 
@@ -149,6 +186,29 @@ async function showChallengeCollections(ctx: BotContext, page: number): Promise<
     await replaceWithText(ctx, text, keyboard);
 }
 
+async function showCollectionChallengeModes(ctx: BotContext, collectionId: number): Promise<void> {
+    await replaceWithText(ctx, 'اختر نوع تحدي المجموعة:', new InlineKeyboard()
+        .text('✅ اختيارات', `collection_challenge_mode_${collectionId}_mc`).row()
+        .text('🎲 مختلط', `collection_challenge_mode_${collectionId}_mixed`).row()
+        .text('🧩 حروف ناقصة', `collection_challenge_mode_${collectionId}_missing`).row()
+        .text('🇮🇶 عربي → ألماني', `collection_challenge_mode_${collectionId}_ar_de`).row()
+        .text('🇩🇪 ألماني → عربي', `collection_challenge_mode_${collectionId}_de_ar`).row()
+        .text('✍️ كتابة', `collection_challenge_mode_${collectionId}_typing`).row()
+        .text('⬅️ رجوع', `collection:view:${collectionId}:page:1`)
+        .text('🏠 الرئيسية', 'menu_main'));
+}
+
+async function showCollectionChallengeCounts(ctx: BotContext, collectionId: number, mode: CollectionChallengeMode): Promise<void> {
+    const modeLabel = collectionChallengeModeLabel(mode);
+    const alias = collectionModeAlias(mode);
+    await replaceWithText(ctx, `اختر عدد أسئلة تحدي المجموعة:\n${modeLabel}`, new InlineKeyboard()
+        .text('5', `collection_challenge_count_${collectionId}_${alias}_5`)
+        .text('10', `collection_challenge_count_${collectionId}_${alias}_10`)
+        .text('20', `collection_challenge_count_${collectionId}_${alias}_20`).row()
+        .text('⬅️ رجوع', `collection_challenge_count_${collectionId}`)
+        .text('🏠 الرئيسية', 'menu_main'));
+}
+
 async function showChallengeCountForSource(ctx: BotContext, source: 'all' | 'mixed'): Promise<void> {
     const label = source === 'mixed' ? 'مختلط تلقائي من الطرفين' : 'كلماتي كلها';
     await replaceWithText(ctx, `اختر عدد الأسئلة:\n${label}`, new InlineKeyboard()
@@ -159,7 +219,7 @@ async function showChallengeCountForSource(ctx: BotContext, source: 'all' | 'mix
         .text('🏠 الرئيسية', 'menu_main'));
 }
 
-async function showOpponentSelection(ctx: BotContext, count: number, source: 'all' | 'mixed' | 'collection' = 'all', collectionId?: number): Promise<void> {
+async function showOpponentSelection(ctx: BotContext, count: number, source: 'all' | 'mixed' | 'collection' = 'all', collectionId?: number, collectionMode: CollectionChallengeMode = 'multiple_choice'): Promise<void> {
     const user = await getCurrentUser(ctx);
     if (!user) return;
 
@@ -170,18 +230,20 @@ async function showOpponentSelection(ctx: BotContext, count: number, source: 'al
     }
 
     const first = candidates[Math.floor(Math.random() * candidates.length)];
+    const modeAlias = collectionModeAlias(collectionMode);
     const randomCallback = source === 'collection' && collectionId
-        ? `challenge_collection_opp_${collectionId}_${count}_${first.user_id}`
+        ? `challenge_collection_opp_${collectionId}_${modeAlias}_${count}_${first.user_id}`
         : `challenge_opp_${count}_${first.user_id}:${source}`;
     const keyboard = new InlineKeyboard().text('🎲 منافس عشوائي', randomCallback).row();
     for (const candidate of candidates) {
         const callback = source === 'collection' && collectionId
-            ? `challenge_collection_opp_${collectionId}_${count}_${candidate.user_id}`
+            ? `challenge_collection_opp_${collectionId}_${modeAlias}_${count}_${candidate.user_id}`
             : `challenge_opp_${count}_${candidate.user_id}:${source}`;
         keyboard.text(candidate.display_name ?? candidate.name, callback).row();
     }
-    keyboard.text('⬅️ رجوع', source === 'collection' && collectionId ? `collection:view:${collectionId}:page:1` : 'menu_challenge');
-    await replaceWithText(ctx, `⚔️ اختر مستخدم للتحدي (${count} أسئلة):`, keyboard);
+    keyboard.text('⬅️ رجوع', source === 'collection' && collectionId ? `collection_challenge_count_${collectionId}_${modeAlias}` : 'menu_challenge');
+    const label = source === 'collection' ? `\nالنوع: ${collectionChallengeModeLabel(collectionMode)}` : '';
+    await replaceWithText(ctx, `⚔️ اختر مستخدم للتحدي (${count} أسئلة):${label}`, keyboard);
 }
 
 async function showChallengeHistory(ctx: BotContext, page: number): Promise<void> {
@@ -276,7 +338,7 @@ async function createChallenge(ctx: BotContext, count: number, opponentUserId: n
     await showChallengeQuestion(ctx, user.user_id);
 }
 
-async function createCollectionChallenge(ctx: BotContext, collectionId: number, count: number, opponentUserId: number): Promise<void> {
+async function createCollectionChallenge(ctx: BotContext, collectionId: number, count: number, opponentUserId: number, mode: CollectionChallengeMode = 'multiple_choice'): Promise<void> {
     const user = await getCurrentUser(ctx);
     if (!user) return;
     const peer = await ctx.db.prepare('SELECT * FROM users WHERE user_id = ? AND display_name IS NOT NULL AND COALESCE(is_banned, 0) = 0 AND COALESCE(is_deleted, 0) = 0')
@@ -294,11 +356,18 @@ async function createCollectionChallenge(ctx: BotContext, collectionId: number, 
             .text('🏠 الرئيسية', 'menu_main'));
         return;
     }
-    const questions = buildQuestions(words, count);
+    if (requiresMultipleChoiceDistractors(mode) && words.length < 3) {
+        await replaceWithText(ctx, 'هذا النوع يحتاج 3 كلمات على الأقل داخل المجموعة حتى تتكون خيارات كافية. جرّب كتابة أو أضف كلمات أكثر.', new InlineKeyboard()
+            .text('✍️ كتابة', `collection_challenge_mode_${collectionId}_typing`).row()
+            .text('⬅️ رجوع', `collection_challenge_count_${collectionId}`)
+            .text('🏠 الرئيسية', 'menu_main'));
+        return;
+    }
+    const questions = buildCollectionChallengeQuestions(words, count, mode);
     const challengeId = await createAsyncChallenge(ctx.db, user.user_id, peer.user_id, questions, {
         sourceType: 'collection',
         sourceId: collectionId,
-        wordOrigin: questions.map(question => ({ word_id: question.word_id, collection_id: collectionId })),
+        wordOrigin: questions.map(question => ({ word_id: question.word_id, collection_id: collectionId, mode, type: question.type ?? 'multiple_choice' })),
     });
     await saveBotSession<ChallengeSessionData>(ctx.db, user.user_id, 'challenge', {
         challengeId,
@@ -312,7 +381,7 @@ async function createCollectionChallenge(ctx: BotContext, collectionId: number, 
             inline_keyboard: [[{ text: '▶️ حل التحدي', callback_data: `challenge_start_${challengeId}` }]],
         });
     }
-    await replaceWithText(ctx, `⚔️ بدأ تحدي المجموعة #${challengeId}.`, mainMenuKeyboard());
+    await replaceWithText(ctx, `⚔️ بدأ تحدي المجموعة #${challengeId}.\nالنوع: ${collectionChallengeModeLabel(mode)}`, mainMenuKeyboard());
     await showChallengeQuestion(ctx, user.user_id);
 }
 
@@ -335,7 +404,7 @@ async function startExistingChallenge(ctx: BotContext, challengeId: number): Pro
         word_id: row.word_id,
         prompt: row.prompt,
         answer: row.answer,
-        options: JSON.parse(row.options) as string[],
+        ...parseStoredChallengeOptions(row.options),
         direction: row.direction,
     }));
 
@@ -350,7 +419,7 @@ async function startExistingChallenge(ctx: BotContext, challengeId: number): Pro
     await showChallengeQuestion(ctx, user.user_id);
 }
 
-async function showChallengeQuestion(ctx: BotContext, userId: number): Promise<void> {
+async function showChallengeQuestion(ctx: BotContext, userId: number, notice?: string): Promise<void> {
     const session = await getBotSession<ChallengeSessionData>(ctx.db, userId, 'challenge');
     if (!session || session.data.currentIndex >= session.data.questions.length) {
         if (session) await finishChallenge(ctx, userId, session.data);
@@ -363,8 +432,13 @@ async function showChallengeQuestion(ctx: BotContext, userId: number): Promise<v
     for (const option of question.options) {
         keyboard.text(option, `challenge_ans_${session.data.challengeId}_${question.word_id}_${option === question.answer ? 'correct' : 'wrong'}`).row();
     }
+    if (question.options.length === 0) {
+        keyboard.text('🏠 الرئيسية', 'menu_main');
+    }
 
-    await replaceWithText(ctx, `⚔️ (${progress}) ${question.direction === 'de_ar' ? 'اختر المعنى العربي' : 'اختر الكلمة الألمانية'}:\n\n*${question.prompt}*`, keyboard, 'Markdown');
+    const label = challengeQuestionLabel(question);
+    const helper = question.helper ? `\n\n${question.helper}` : '';
+    await replaceWithText(ctx, `${notice ? `${notice}\n\n` : ''}⚔️ (${progress}) ${label}:\n\n*${question.prompt}*${helper}`, keyboard, 'Markdown');
 }
 
 async function handleChallengeAnswer(ctx: BotContext, challengeId: number, wordId: number, isCorrect: boolean): Promise<void> {
@@ -382,7 +456,26 @@ async function handleChallengeAnswer(ctx: BotContext, challengeId: number, wordI
     session.data.currentIndex++;
     await saveBotSession(ctx.db, user.user_id, 'challenge', session.data, 120);
     await ctx.answerCallbackQuery(isCorrect ? '✅ صحيح' : '❌ خطأ');
-    await showChallengeQuestion(ctx, user.user_id);
+    await showChallengeQuestion(ctx, user.user_id, isCorrect ? '✅ صحيح' : `❌ خطأ\nالصحيح: *${current.answer}*`);
+}
+
+async function handleTypedChallengeAnswer(ctx: BotContext, current: ChallengeQuestionData, answerText: string): Promise<void> {
+    const user = await getCurrentUser(ctx);
+    if (!user) return;
+    const session = await getBotSession<ChallengeSessionData>(ctx.db, user.user_id, 'challenge');
+    if (!session || session.data.currentIndex >= session.data.questions.length) return;
+    const active = session.data.questions[session.data.currentIndex];
+    if (active.word_id !== current.word_id || active.options.length > 0) return;
+
+    const isCorrect = normalizeAnswer(answerText) === normalizeAnswer(active.answer);
+    if (isCorrect) session.data.correctCount++;
+    session.data.currentIndex++;
+    await saveBotSession(ctx.db, user.user_id, 'challenge', session.data, 120);
+    await showChallengeQuestion(
+        ctx,
+        user.user_id,
+        isCorrect ? '✅ صحيح!' : `❌ خطأ\nجوابك: *${answerText.trim()}*\nالصحيح: *${active.answer}*`
+    );
 }
 
 async function finishChallenge(ctx: BotContext, userId: number, session: ChallengeSessionData): Promise<void> {
@@ -460,8 +553,100 @@ function buildQuestions(words: Array<{ word_id: number; german: string; arabic: 
         const answer = direction === 'de_ar' ? word.arabic : word.german;
         const prompt = direction === 'de_ar' ? word.german : word.arabic;
         const options = shuffle([answer, ...buildDistractors(words, word.word_id, direction, 2)]);
-        return { word_id: word.word_id, prompt, answer, options, direction };
+        return { word_id: word.word_id, prompt, answer, options, direction, type: 'multiple_choice', german: word.german };
     });
+}
+
+function buildCollectionChallengeQuestions(
+    words: Array<{ word_id: number; german: string; arabic: string; example: string | null }>,
+    count: number,
+    mode: CollectionChallengeMode
+): ChallengeSessionData['questions'] {
+    if (mode === 'multiple_choice') return buildQuestions(words, count);
+    const selected = shuffle(words).slice(0, count);
+    return selected.map((word, index) => {
+        const trainingMode = collectionModeToTrainingMode(mode);
+        const question = buildTrainingQuestion(words, word, trainingMode, index);
+        return trainingQuestionToChallengeQuestion(question);
+    });
+}
+
+function trainingQuestionToChallengeQuestion(question: TrainingQuestion): ChallengeQuestionData {
+    return {
+        word_id: question.word_id,
+        prompt: question.prompt,
+        answer: question.answer,
+        options: question.options,
+        direction: question.direction,
+        type: question.type,
+        german: question.german,
+        helper: question.helper,
+    };
+}
+
+function parseStoredChallengeOptions(raw: string): Pick<ChallengeQuestionData, 'options' | 'type' | 'german' | 'helper'> {
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) return { options: parsed.filter((value): value is string => typeof value === 'string') };
+        if (parsed && typeof parsed === 'object') {
+            const value = parsed as { options?: unknown; choices?: unknown; type?: unknown; german?: unknown; helper?: unknown };
+            const options = Array.isArray(value.options)
+                ? value.options
+                : Array.isArray(value.choices)
+                    ? value.choices
+                    : [];
+            return {
+                options: options.filter((item): item is string => typeof item === 'string'),
+                type: typeof value.type === 'string' ? value.type as TrainingQuestionType : undefined,
+                german: typeof value.german === 'string' ? value.german : undefined,
+                helper: typeof value.helper === 'string' ? value.helper : undefined,
+            };
+        }
+    } catch {
+        // Old or malformed rows fall back to an empty typed-answer question.
+    }
+    return { options: [] };
+}
+
+function challengeQuestionLabel(question: ChallengeQuestionData): string {
+    if (question.type) return questionLabel(question as TrainingQuestion);
+    return question.direction === 'de_ar' ? 'اختر المعنى العربي' : 'اختر الكلمة الألمانية';
+}
+
+function collectionModeAlias(mode: CollectionChallengeMode): string {
+    if (mode === 'multiple_choice') return 'mc';
+    return mode;
+}
+
+function collectionModeFromAlias(alias: string): CollectionChallengeMode {
+    if (alias === 'mc') return 'multiple_choice';
+    if (alias === 'mixed' || alias === 'missing' || alias === 'ar_de' || alias === 'de_ar' || alias === 'typing') return alias;
+    return 'multiple_choice';
+}
+
+function collectionChallengeModeLabel(mode: CollectionChallengeMode): string {
+    const labels: Record<CollectionChallengeMode, string> = {
+        multiple_choice: 'اختيارات',
+        mixed: 'مختلط',
+        missing: 'حروف ناقصة',
+        ar_de: 'عربي → ألماني',
+        de_ar: 'ألماني → عربي',
+        typing: 'كتابة',
+    };
+    return labels[mode];
+}
+
+function collectionModeToTrainingMode(mode: CollectionChallengeMode): TrainingMode {
+    if (mode === 'multiple_choice') return 'de_ar';
+    if (mode === 'missing') return 'missing';
+    if (mode === 'typing') return 'typing';
+    if (mode === 'ar_de') return 'ar_de';
+    if (mode === 'de_ar') return 'de_ar';
+    return 'mixed';
+}
+
+function requiresMultipleChoiceDistractors(mode: CollectionChallengeMode): boolean {
+    return mode === 'multiple_choice' || mode === 'mixed' || mode === 'ar_de' || mode === 'de_ar';
 }
 
 async function getMixedChallengeWords(ctx: BotContext, creatorUserId: number, opponentUserId: number, count: number): Promise<Array<{ word_id: number; german: string; arabic: string }>> {
