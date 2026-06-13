@@ -124,6 +124,16 @@ CREATE TABLE IF NOT EXISTS word_pictograms (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_word_pictograms_word_id ON word_pictograms(word_id);
 
+CREATE TABLE IF NOT EXISTS word_visual_cache (
+    word_id INTEGER PRIMARY KEY,
+    visual_type TEXT NOT NULL CHECK (visual_type IN ('emoji', 'emoji_combo', 'image_url', 'fallback', 'manual')),
+    visual_value TEXT NOT NULL,
+    source TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE CASCADE
+);
+
 -- 5. user_uploaded_lists
 CREATE TABLE IF NOT EXISTS user_uploaded_lists (
     list_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -539,6 +549,19 @@ CREATE TABLE IF NOT EXISTS word_collection_items (
     FOREIGN KEY (owner_user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS game_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    collection_id INTEGER NOT NULL,
+    session_data TEXT NOT NULL,
+    finished INTEGER NOT NULL DEFAULT 0 CHECK (finished IN (0, 1)),
+    xp_awarded INTEGER NOT NULL DEFAULT 0 CHECK (xp_awarded IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (collection_id) REFERENCES word_collections(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS shared_word_offers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sender_user_id INTEGER NOT NULL,
@@ -594,6 +617,9 @@ CREATE INDEX IF NOT EXISTS idx_temporary_messages_kind ON temporary_messages(use
 CREATE INDEX IF NOT EXISTS idx_word_collections_owner ON word_collections(owner_user_id, is_deleted, updated_at);
 CREATE INDEX IF NOT EXISTS idx_word_collections_public ON word_collections(visibility, is_deleted, updated_at);
 CREATE INDEX IF NOT EXISTS idx_word_collection_items_collection ON word_collection_items(collection_id, position);
+CREATE INDEX IF NOT EXISTS idx_game_sessions_user_expires ON game_sessions(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_game_sessions_collection ON game_sessions(collection_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_word_visual_cache_source ON word_visual_cache(source, updated_at);
 CREATE INDEX IF NOT EXISTS idx_shared_word_offers_receiver ON shared_word_offers(receiver_user_id, status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_shared_word_offers_cooldown ON shared_word_offers(sender_user_id, receiver_user_id, offer_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_tts_request_locks_expires ON tts_request_locks(expires_at);

@@ -22,6 +22,7 @@ import { registerSmartNotificationCommand } from '../commands/smartNotifications
 import { registerAiCoachCommand } from '../commands/aiCoach';
 import { registerTtsCommand } from '../commands/tts';
 import { registerSharingCollectionsCommand } from '../commands/sharingCollections';
+import { registerGameCommand } from '../commands/game';
 import { registerSearchCommand } from '../commands/search';
 import { registerDailyQuestsCommand } from '../commands/dailyQuests';
 import { registerMyBoostCommand } from '../commands/myBoost';
@@ -96,6 +97,7 @@ export function createBot(token: string, env: Env, executionCtx?: ExecutionConte
     registerSupportCommand(bot);
     registerSourcesCommand(bot);
     registerSharingCollectionsCommand(bot);
+    registerGameCommand(bot);
     registerAddWordCommand(bot);
     registerUploadCommand(bot);
     registerTrainCommand(bot);

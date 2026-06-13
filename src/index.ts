@@ -9,6 +9,7 @@ import { getLeaderboardByPeriod, type LeaderboardPeriod } from './services/xpLev
 import { cleanupExpiredTemporaryMessages } from './services/temporaryMessageCleanup';
 import { processPendingImports } from './services/csvImportBackground';
 import { Bot } from 'grammy';
+import { handleGameRoute } from './game/routes';
 
 const SCHEDULED_USER_BATCH_LIMIT = 200;
 
@@ -36,6 +37,9 @@ export default {
                 },
             });
         }
+
+        const gameResponse = await handleGameRoute(request, env);
+        if (gameResponse) return gameResponse;
 
         // Default: 404
         return new Response('Not Found', { status: 404 });

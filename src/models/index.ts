@@ -6,6 +6,7 @@ export interface Env {
     DB: D1Database;
     AI?: { run(model: string, input: unknown): Promise<unknown> };
     TELEGRAM_BOT_TOKEN: string;
+    PUBLIC_BASE_URL?: string;
     ADMIN_TELEGRAM_IDS?: string;
     AI_ENABLED?: string;
     AI_PROVIDER_ORDER?: string;

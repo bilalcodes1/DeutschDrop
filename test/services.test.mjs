@@ -12,6 +12,8 @@ import { selectTrainingWords } from '../dist/services/srs.js';
 import { calculateDifficultyScore, shouldBeHard } from '../dist/services/adaptiveReview.js';
 import { buildYouglishDirectUrl } from '../dist/services/youglish.js';
 import { normalizeArabicSearch, normalizeGermanSearch, rankWordSearchResults } from '../dist/services/wordSearch.js';
+import { resolveEmojiVisual, validateManualVisual } from '../dist/services/gameVisualService.js';
+import { calculateGameXp, GAME_QUESTION_LIMIT } from '../dist/services/gameSessionService.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -2693,4 +2695,113 @@ test('user deletion flow only uses current Telegram user ownership', () => {
     assert.match(deletionSource, /getCollectionById\(ctx\.db, collectionId\)/);
     assert.match(deletionSource, /collection\.owner_user_id !== user\.user_id/);
     assert.match(deletionSource, /لم أجد هذه المجموعة أو ليست تابعة لحسابك/);
+});
+
+test('collection game is visible from main menu and collection pages', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+    const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
+    const gameSource = fs.readFileSync(new URL('../src/commands/game.ts', import.meta.url), 'utf8');
+
+    assert.match(menuSource, /🎮 لعبة الصور والكلمات/);
+    assert.match(menuSource, /game:menu/);
+    assert.match(botSource, /registerGameCommand\(bot\);\s*registerAddWordCommand\(bot\);/s);
+    assert.match(gameSource, /bot\.callbackQuery\('game:menu'/);
+    assert.match(gameSource, /showGameCollections\(ctx, user\.user_id, 1\)/);
+    assert.match(gameSource, /game:collections:page:/);
+    assert.match(gameSource, /createGameSession\(ctx\.db, userId, collectionId\)/);
+    assert.match(gameSource, /webApp\('🚀 افتح اللعبة', url\)/);
+
+    assert.match(sharingSource, /🎮 العب بهذه المجموعة/);
+    assert.match(sharingSource, /game:start_collection:\$\{collectionId\}/);
+    assert.match(sharingSource, /collection_challenge_count_\$\{collectionId\}/);
+    assert.match(sharingSource, /share_collection:\$\{collectionId\}/);
+    assert.match(sharingSource, /collection:add_existing:\$\{collectionId\}:page:1/);
+    assert.match(sharingSource, /user_delete:collection:\$\{collectionId\}/);
+});
+
+test('collection game sessions are token scoped and collection permission checked', () => {
+    const serviceSource = fs.readFileSync(new URL('../src/services/gameSessionService.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0039_collection_game.sql', import.meta.url), 'utf8');
+    const schemaSource = fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS game_sessions/);
+    assert.match(migrationSource, /token_hash TEXT PRIMARY KEY/);
+    assert.match(migrationSource, /user_id INTEGER NOT NULL/);
+    assert.match(migrationSource, /collection_id INTEGER NOT NULL/);
+    assert.match(migrationSource, /xp_awarded INTEGER NOT NULL DEFAULT 0/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS word_visual_cache/);
+    assert.doesNotMatch(migrationSource, /\bDROP TABLE\b|\bALTER TABLE\b/i);
+    assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS game_sessions/);
+
+    assert.match(serviceSource, /crypto\.getRandomValues\(bytes\)/);
+    assert.match(serviceSource, /crypto\.subtle\.digest\('SHA-256'/);
+    assert.match(serviceSource, /GAME_SESSION_TTL_MINUTES = 30/);
+    assert.match(serviceSource, /\+\$\{GAME_SESSION_TTL_MINUTES\} minutes/);
+    assert.match(serviceSource, /c\.owner_user_id = \? OR c\.visibility = 'public'/);
+    assert.match(serviceSource, /COALESCE\(u\.is_banned, 0\) = 0/);
+    assert.match(serviceSource, /COALESCE\(u\.is_deleted, 0\) = 0/);
+    assert.match(serviceSource, /ORDER BY i\.position ASC, i\.id ASC\s+LIMIT \?/);
+    assert.equal(GAME_QUESTION_LIMIT, 10);
+});
+
+test('collection game routes reject missing token and never trust client score', () => {
+    const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+    const routeSource = fs.readFileSync(new URL('../src/game/routes.ts', import.meta.url), 'utf8');
+    const htmlSource = fs.readFileSync(new URL('../src/game/html.ts', import.meta.url), 'utf8');
+    const serviceSource = fs.readFileSync(new URL('../src/services/gameSessionService.ts', import.meta.url), 'utf8');
+
+    assert.match(indexSource, /handleGameRoute\(request, env\)/);
+    assert.match(routeSource, /url\.pathname === '\/game'/);
+    assert.match(routeSource, /url\.pathname === '\/game\/api\/session'/);
+    assert.match(routeSource, /url\.pathname === '\/game\/api\/answer'/);
+    assert.match(routeSource, /url\.pathname === '\/game\/api\/finish'/);
+    assert.match(routeSource, /missing_token/);
+    assert.match(routeSource, /statusForError\(message\)/);
+    assert.doesNotMatch(routeSource, /searchParams\.get\(['"]user/i);
+    assert.doesNotMatch(routeSource, /searchParams\.get\(['"]collection/i);
+    assert.doesNotMatch(routeSource, /correct_count|score|xpGained.*body|body.*score/i);
+    assert.match(htmlSource, /api\('\/game\/api\/session\?token='/);
+    assert.match(htmlSource, /api\('\/game\/api\/answer'/);
+    assert.match(htmlSource, /api\('\/game\/api\/finish'/);
+    assert.match(serviceSource, /answerGameQuestion/);
+    assert.match(serviceSource, /normalizeAnswer\(answer\) === normalizeAnswer\(question\.correctAnswer\)/);
+});
+
+test('collection game visual resolution always returns a visual and manual validation is safe', () => {
+    const visualSource = fs.readFileSync(new URL('../src/services/gameVisualService.ts', import.meta.url), 'utf8');
+    const wordPanelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
+    const gameSource = fs.readFileSync(new URL('../src/commands/game.ts', import.meta.url), 'utf8');
+
+    assert.deepEqual(resolveEmojiVisual('Haus', 'بيت').value, '🏠');
+    assert.deepEqual(resolveEmojiVisual('Universität', 'جامعة').value, '🏫📚');
+    assert.notEqual(resolveEmojiVisual('Unbekannteswort', 'شيء غير معروف').value, '');
+    assert.equal(validateManualVisual('😀')?.source, 'manual');
+    assert.equal(validateManualVisual('https://example.com/image.png')?.type, 'image_url');
+    assert.equal(validateManualVisual('http://example.com/image.png'), null);
+    assert.equal(validateManualVisual('javascript:alert(1)'), null);
+    assert.equal(validateManualVisual('data:image/png;base64,abc'), null);
+
+    assert.match(visualSource, /getPictogramByWordId\(db, word\.word_id\)/);
+    assert.match(visualSource, /source === 'manual'/);
+    assert.match(visualSource, /fallback_letter/);
+    assert.match(wordPanelSource, /🎨 تعديل رمز اللعبة/);
+    assert.match(gameSource, /saveBotSession<WordVisualEditSession>\(ctx\.db, user\.user_id, 'word_visual_edit'/);
+    assert.match(gameSource, /validateManualVisual\(text\)/);
+    assert.match(gameSource, /upsertManualVisual\(ctx\.db, wordId, visual\)/);
+});
+
+test('collection game finish awards capped XP once through addXp', () => {
+    const serviceSource = fs.readFileSync(new URL('../src/services/gameSessionService.ts', import.meta.url), 'utf8');
+
+    assert.equal(calculateGameXp(0, 0), 0);
+    assert.equal(calculateGameXp(5, 3), 6);
+    assert.equal(calculateGameXp(30, 30), 20);
+    assert.match(serviceSource, /reason: 'collection_game'/);
+    assert.match(serviceSource, /sourceType: 'collection_game'/);
+    assert.match(serviceSource, /allowDailyCap: true/);
+    assert.match(serviceSource, /metadata:[\s\S]*collection_id:[\s\S]*correct_count:[\s\S]*total_count:[\s\S]*game_session:/);
+    assert.match(serviceSource, /WHERE token_hash = \? AND xp_awarded = 0/);
+    assert.match(serviceSource, /if \(getChanges\(claimed\) > 0 && xpBase > 0\)/);
+    assert.doesNotMatch(serviceSource, /allowDailyCap: false/);
 });

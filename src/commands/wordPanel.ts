@@ -102,6 +102,7 @@ function wordDetailKeyboard(word: Word, hasPictogram: boolean, backCallback: str
     } else {
         keyboard.text('🖼 تعيين رمز', `pictogram:change:${wordId}`).row();
     }
+    keyboard.text('🎨 تعديل رمز اللعبة', `word_visual_edit:${wordId}`).row();
 
     return keyboard
         .text('✏️ تعديل', `edit_word_${wordId}`)
