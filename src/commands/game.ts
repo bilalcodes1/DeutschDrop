@@ -141,7 +141,7 @@ export async function startGameForCollection(ctx: BotContext, userId: number, co
         const url = `${publicBaseUrl(ctx)}/game?token=${encodeURIComponent(session.token)}&v=${encodeURIComponent(GAME_UI_VERSION)}`;
         await replaceWithText(
             ctx,
-            `🎮 تحدي الصور والكلمات\n\nالمجموعة:\n${session.collection.title}\n\nعدد الأسئلة: ${session.totalQuestions}\n\nافتح اللعبة في Safari أو Chrome حتى يعمل المايكروفون والصوت بشكل صحيح.`,
+            `🎮 تحدي الصور والكلمات\n\nالمجموعة:\n${session.collection.title}\n\nاللعبة ستستخدم كلمات هذه المجموعة.\nعدد الكلمات: ${session.totalQuestions}\n\nافتح اللعبة في Safari أو Chrome حتى يعمل المايكروفون والصوت بشكل صحيح.`,
             new InlineKeyboard()
                 .url('🌐 فتح اللعبة بالمتصفح', url).row()
                 .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)

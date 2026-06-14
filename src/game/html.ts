@@ -221,6 +221,7 @@ export function renderCollectionGameHtml(): string {
     }
     .rocket-wrap.launch { animation: rocket-float 1.25s ease-in-out infinite; }
     .rocket-wrap.boost { animation: rocket-boost .48s ease-out; }
+    .rocket-wrap.drop-back { animation: rocket-drop-back .46s ease-out; }
     .rocket-wrap.collision { rotate: -16deg; scale: .94; animation: rocket-hit .36s linear 2; }
     @keyframes rocket-float {
       0%, 100% { transform: translateY(0) rotate(-1deg); }
@@ -234,6 +235,11 @@ export function renderCollectionGameHtml(): string {
     @keyframes rocket-boost {
       0% { transform: translateY(0) scale(1); }
       45% { transform: translateY(-34px) scale(1.08); }
+      100% { transform: translateY(0) scale(1); }
+    }
+    @keyframes rocket-drop-back {
+      0% { transform: translateY(0) scale(1); }
+      50% { transform: translateY(28px) scale(.96); }
       100% { transform: translateY(0) scale(1); }
     }
     .rocket-body {
@@ -421,15 +427,21 @@ export function renderCollectionGameHtml(): string {
     const app = document.getElementById('app');
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     let state = null;
-    let recognition = null;
-    let listening = false;
+    let activeRecognition = null;
+    let isListening = false;
+    let isChecking = false;
+    let isGameOver = false;
+    let isRestarting = false;
+    let microphoneEnabled = false;
     let speechTimer = null;
-    let questionTimer = null;
+    let activeTimerId = null;
+    let autoListenTimer = null;
     let roundClosed = false;
     let requestBusy = false;
     let finishBusy = false;
     let restartBusy = false;
     let gameState = 'loading';
+    let currentQuestionIndex = -1;
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'": '&#39;'}[c]));
@@ -466,41 +478,57 @@ export function renderCollectionGameHtml(): string {
       app.dataset.state = next;
     }
     function renderStart() {
+      stopListening();
+      clearTimers();
+      isGameOver = false;
+      isChecking = false;
+      isRestarting = false;
       setGameState('ready');
+      const totalWords = state.totalWords || state.totalQuestions || 0;
       app.innerHTML = '<section class="screen"><div class="panel">' +
         '<div class="result-emoji">🚀</div>' +
         '<h1>تحدي الصور والكلمات</h1>' +
         '<p class="sub">' + escapeHtml(state.collectionTitle) + '</p>' +
+        '<p class="sub">عدد الكلمات: ' + totalWords + '</p>' +
         '<p class="notice">إذا المايكروفون لا يعمل، افتح الرابط في Safari أو Chrome.</p>' +
-        '<p class="sub">ماكو اختيارات. فقط شوف الإيموجي وانطق الكلمة بالألماني.</p>' +
-        '<button class="primary" id="startBtn">ابدأ الصعود</button>' +
+        '<p class="sub">اللعبة ستستخدم كلمات هذه المجموعة. ماكو اختيارات؛ شوف الإيموجي وانطق بالألماني.</p>' +
+        '<button class="primary" id="startBtn">🎙 تفعيل المايكروفون وابدأ</button>' +
         '</div></section>';
       document.getElementById('startBtn').onclick = () => {
         if (!isSpeechSupported()) {
           renderError('متصفحك لا يدعم التعرف على الصوت. افتح اللعبة في Chrome أو Safari حديث.');
           return;
         }
-        renderFlight();
+        microphoneEnabled = true;
+        renderFlight('انطق بالألماني', true);
       };
     }
-    function renderFlight(message = 'انطق الكلمة بالألماني') {
+    function renderFlight(message = 'انطق بالألماني', autoStart = false) {
       const question = state.currentQuestion;
       if (!question) return finish();
       setGameState('obstacle');
       roundClosed = false;
       requestBusy = false;
+      isChecking = false;
+      isGameOver = false;
+      currentQuestionIndex = question.questionIndex;
       clearTimers();
       app.classList.remove('shake-screen');
+      const totalWords = state.totalWords || state.totalQuestions || 0;
+      const completedWords = state.completedWords ?? state.correctCount ?? 0;
+      const attemptsLeft = question.attemptsLeft ?? 3;
       app.innerHTML = '<section class="flight">' +
-        '<div class="hud"><div class="meters">' + state.heightMeters + '</div><div class="hud-label">meters above the ground · محاولات: ' + question.attemptsLeft + '</div><div class="timer"><div class="timer-fill" id="timerFill"></div></div></div>' +
+        '<div class="hud"><div class="meters">' + state.heightMeters + '</div><div class="hud-label">meters above the ground</div><div class="hud-label">التقدم: ' + (completedWords + 1) + ' / ' + totalWords + ' · المنجزة: ' + completedWords + ' · محاولات: ' + attemptsLeft + '</div><div class="timer"><div class="timer-fill" id="timerFill"></div></div></div>' +
         '<div class="obstacle" id="obstacle"><div class="obstacle-emoji">' + emoji(question.visualEmoji) + '</div></div>' +
         rocketMarkup() +
-        '<div class="controls"><button class="mic" id="micBtn" aria-label="انطق الكلمة">🎙</button><div class="status" id="status">' + escapeHtml(message) + '</div><div class="tiny">محاولتان فقط · de-DE</div></div>' +
+        '<div class="controls"><button class="mic" id="micBtn" aria-label="انطق الكلمة">🎙</button><div class="status" id="status">' + escapeHtml(message) + '</div><div class="tiny">المايك يعمل تلقائياً بعد التفعيل · de-DE</div></div>' +
         '</section>';
-      document.getElementById('micBtn').onclick = listen;
+      document.getElementById('micBtn').onclick = enableMicrophoneAndListen;
       startQuestionTimer(question.timeLimit || 10);
+      if (autoStart || microphoneEnabled) scheduleAutoListen(420);
     }
     function startQuestionTimer(seconds) {
+      clearTimeout(activeTimerId);
       const fill = document.getElementById('timerFill');
       if (fill) {
         fill.style.transition = 'none';
@@ -510,81 +538,96 @@ export function renderCollectionGameHtml(): string {
           fill.style.transform = 'scaleX(0)';
         });
       }
-      questionTimer = setTimeout(() => {
+      activeTimerId = setTimeout(() => {
         if (roundClosed) return;
         setStatus('انتهى الوقت!');
-        submitSpeech('', []);
+        submitSpeech('', [], 'timeout');
       }, seconds * 1000);
     }
+    function enableMicrophoneAndListen() {
+      microphoneEnabled = true;
+      if (!activeTimerId && state.currentQuestion && gameState === 'obstacle') startQuestionTimer(state.currentQuestion.timeLimit || 10);
+      listen();
+    }
+    function scheduleAutoListen(delay = 500) {
+      clearTimeout(autoListenTimer);
+      if (!microphoneEnabled || isGameOver || isRestarting || gameState !== 'obstacle') return;
+      autoListenTimer = setTimeout(() => listen(), delay);
+    }
     function listen() {
-      if (listening || requestBusy || roundClosed || !state.currentQuestion) return;
+      if (isListening || requestBusy || isChecking || roundClosed || isGameOver || isRestarting || !state.currentQuestion) return;
       if (!isSpeechSupported()) return renderError('متصفحك لا يدعم التعرف على الصوت. افتح اللعبة في Chrome أو Safari حديث.');
       setGameState('listening');
-      listening = true;
+      isListening = true;
       setStatus('أسمعك...');
       document.getElementById('rocket')?.classList.add('launch');
       document.getElementById('micBtn')?.classList.add('listening');
-      recognition = new Recognition();
-      recognition.lang = 'de-DE';
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      if ('maxAlternatives' in recognition) recognition.maxAlternatives = 5;
-      recognition.onresult = event => {
+      activeRecognition = new Recognition();
+      activeRecognition.lang = 'de-DE';
+      activeRecognition.continuous = false;
+      activeRecognition.interimResults = false;
+      if ('maxAlternatives' in activeRecognition) activeRecognition.maxAlternatives = 5;
+      activeRecognition.onresult = event => {
         const result = event.results && event.results[0];
         const alternatives = result ? Array.from(result).map(item => item.transcript).filter(Boolean) : [];
         const transcript = alternatives[0] || '';
         stopListening();
-        if (!transcript) return noSpeech();
-        submitSpeech(transcript, alternatives);
+        if (!transcript) return noSpeech('no_speech');
+        submitSpeech(transcript, alternatives, 'speech');
       };
-      recognition.onerror = event => {
+      activeRecognition.onerror = event => {
         stopListening();
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          setStatus('فعّل المايكروفون حتى تلعب.');
+          microphoneEnabled = false;
+          showMicrophoneRecovery('المتصفح منع المايكروفون. فعّله حتى تكمل.');
           return;
         }
-        noSpeech();
+        if (event.error === 'no-speech') return noSpeech('no_speech');
+        noSpeech('speech_error');
       };
-      recognition.onend = () => {
-        if (listening) {
+      activeRecognition.onend = () => {
+        if (isListening) {
           stopListening();
-          noSpeech();
+          noSpeech('no_speech');
         }
       };
       try {
-        recognition.lang = 'de-DE';
-        if (recognition.lang !== 'de-DE') recognition.lang = 'de-DE';
-        recognition.start();
+        activeRecognition.lang = 'de-DE';
+        if (activeRecognition.lang !== 'de-DE') activeRecognition.lang = 'de-DE';
+        activeRecognition.start();
         speechTimer = setTimeout(() => {
           stopListening();
-          noSpeech();
+          noSpeech('no_speech');
         }, 5200);
       } catch {
         stopListening();
-        noSpeech();
+        showMicrophoneRecovery('تعذر تشغيل المايكروفون تلقائياً. اضغط للتفعيل.');
       }
     }
-    function noSpeech() {
+    function noSpeech(reason = 'no_speech') {
       if (roundClosed) return;
-      submitSpeech('', []);
+      submitSpeech('', [], reason);
     }
     function stopListening() {
-      listening = false;
+      isListening = false;
       clearTimeout(speechTimer);
       speechTimer = null;
       document.getElementById('micBtn')?.classList.remove('listening');
-      try { recognition && recognition.stop(); } catch {}
-      recognition = null;
+      try { activeRecognition && activeRecognition.stop(); } catch {}
+      activeRecognition = null;
     }
     function clearTimers() {
       clearTimeout(speechTimer);
-      clearTimeout(questionTimer);
+      clearTimeout(activeTimerId);
+      clearTimeout(autoListenTimer);
       speechTimer = null;
-      questionTimer = null;
+      activeTimerId = null;
+      autoListenTimer = null;
     }
-    async function submitSpeech(transcript, alternatives) {
+    async function submitSpeech(transcript, alternatives, reason = 'speech') {
       if (requestBusy || roundClosed || !state.currentQuestion) return;
       requestBusy = true;
+      isChecking = true;
       roundClosed = true;
       clearTimers();
       stopListening();
@@ -594,9 +637,10 @@ export function renderCollectionGameHtml(): string {
         const result = await api('/game/api/answer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, questionIndex: state.currentQuestion.questionIndex, transcript, alternatives, reason: transcript ? 'speech' : 'timeout_or_no_speech' })
+          body: JSON.stringify({ token, questionIndex: state.currentQuestion.questionIndex, transcript, alternatives, reason })
         });
         state = result;
+        isChecking = false;
         if (result.correct) {
           setGameState('correct');
           const obstacle = document.getElementById('obstacle');
@@ -613,8 +657,10 @@ export function renderCollectionGameHtml(): string {
           setGameState('obstacle');
           requestBusy = false;
           roundClosed = false;
-          setStatus('ما سمعتك/مو واضحة. تأكد تنطق بالألماني. باقي محاولة: ' + result.attemptsLeft);
+          currentQuestionIndex = state.currentQuestion.questionIndex;
+          applyPartialWrong(result.attemptsLeft);
           startQuestionTimer(state.currentQuestion.timeLimit || 8);
+          scheduleAutoListen(700);
           return;
         }
         crashAndFinish();
@@ -622,8 +668,31 @@ export function renderCollectionGameHtml(): string {
         renderError('تعذر تسجيل النطق. افتح اللعبة مرة ثانية من البوت.');
       }
     }
+    function applyPartialWrong(attemptsLeft) {
+      app.classList.add('shake-screen');
+      const rocket = document.getElementById('rocket');
+      const obstacle = document.getElementById('obstacle');
+      rocket?.classList.remove('drop-back');
+      obstacle?.classList.remove('collision');
+      void rocket?.offsetWidth;
+      rocket?.classList.add('drop-back');
+      obstacle?.classList.add('collision');
+      const totalWords = state.totalWords || state.totalQuestions || 0;
+      const completedWords = state.completedWords ?? state.correctCount ?? 0;
+      const label = document.querySelectorAll('.hud .hud-label')[1];
+      if (label) label.textContent = 'التقدم: ' + (completedWords + 1) + ' / ' + totalWords + ' · المنجزة: ' + completedWords + ' · محاولات: ' + attemptsLeft;
+      setStatus('غلط، حاول مرة ثانية — باقي ' + attemptsLeft);
+      setTimeout(() => {
+        app.classList.remove('shake-screen');
+        rocket?.classList.remove('drop-back');
+        obstacle?.classList.remove('collision');
+      }, 460);
+    }
     function crashAndFinish() {
       setGameState('gameOver');
+      isGameOver = true;
+      stopListening();
+      clearTimers();
       document.getElementById('obstacle')?.classList.add('collision');
       document.getElementById('rocket')?.classList.add('collision');
       app.classList.add('shake-screen');
@@ -633,6 +702,7 @@ export function renderCollectionGameHtml(): string {
       if (finishBusy) return;
       finishBusy = true;
       clearTimers();
+      stopListening();
       try {
         state = await api('/game/api/finish', {
           method: 'POST',
@@ -648,13 +718,16 @@ export function renderCollectionGameHtml(): string {
     }
     function renderGameOver() {
       setGameState('gameOver');
+      isGameOver = true;
       const failed = state.failedQuestion;
+      const totalWords = state.totalWords || state.totalQuestions || 0;
+      const completedWords = state.completedWords ?? state.correctCount ?? 0;
       app.innerHTML = '<section class="screen game-over"><div class="panel">' +
         '<h1>خسرت بسبب</h1>' +
         '<div class="result-emoji">' + emoji(failed.failedVisualEmoji) + '</div>' +
         '<div class="answer-line"><strong class="correct-word">' + escapeHtml(failed.correctAnswer) + '</strong><button class="sound" id="speakBtn" aria-label="استمع للنطق الصحيح">🔊</button></div>' +
         '<p class="sub">وصلت إلى ' + state.heightMeters + ' متر</p>' +
-        '<p class="notice">✅ صحيح: ' + state.correctCount + ' · XP: +' + (state.xpGained || 0) + '</p>' +
+        '<p class="notice">أنجزت ' + completedWords + ' من ' + totalWords + ' · XP: +' + (state.xpGained || 0) + '</p>' +
         '<button class="primary" id="restartBtn">إعادة اللعب</button>' +
         '<button class="secondary" onclick="history.back()">رجوع للبوت</button>' +
         '</div></section>';
@@ -663,11 +736,14 @@ export function renderCollectionGameHtml(): string {
     }
     function renderWin() {
       setGameState('finished');
+      isGameOver = true;
+      const totalWords = state.totalWords || state.totalQuestions || 0;
+      const completedWords = state.completedWords ?? state.correctCount ?? 0;
       app.innerHTML = '<section class="screen"><div class="panel">' +
         '<div class="result-emoji">🏆</div>' +
         '<h1>ممتاز 🚀</h1>' +
-        '<p class="sub">أنهيت الجولة بنجاح</p>' +
-        '<p class="notice">✅ صحيح: ' + state.correctCount + ' · الارتفاع: ' + state.heightMeters + ' متر · XP: +' + (state.xpGained || 0) + '</p>' +
+        '<p class="sub">أكملت كل كلمات المجموعة</p>' +
+        '<p class="notice">✅ ' + completedWords + ' / ' + totalWords + ' · الارتفاع: ' + state.heightMeters + ' متر · XP: +' + (state.xpGained || 0) + '</p>' +
         '<button class="primary" id="restartBtn">إعادة اللعب</button>' +
         '<button class="secondary" onclick="history.back()">رجوع للبوت</button>' +
         '</div></section>';
@@ -676,6 +752,8 @@ export function renderCollectionGameHtml(): string {
     async function restartGame() {
       if (restartBusy) return;
       restartBusy = true;
+      isRestarting = true;
+      isGameOver = false;
       setGameState('restarting');
       clearTimers();
       stopListening();
@@ -692,11 +770,13 @@ export function renderCollectionGameHtml(): string {
         token = next.token;
         history.replaceState(null, '', next.gameUrl || ('/game?token=' + encodeURIComponent(token)));
         state = await api('/game/api/session?token=' + encodeURIComponent(token));
+        microphoneEnabled = false;
         renderStart();
       } catch {
         renderError('تعذر بدء جولة جديدة. افتح اللعبة من البوت مرة ثانية.');
       } finally {
         restartBusy = false;
+        isRestarting = false;
       }
     }
     function speakGerman(text) {
@@ -725,9 +805,24 @@ export function renderCollectionGameHtml(): string {
       const status = document.getElementById('status');
       if (status) status.innerHTML = message;
     }
+    function showMicrophoneRecovery(message) {
+      setGameState('obstacle');
+      clearTimers();
+      requestBusy = false;
+      isChecking = false;
+      roundClosed = false;
+      setStatus(escapeHtml(message));
+      const mic = document.getElementById('micBtn');
+      if (mic) {
+        mic.textContent = '🎙';
+        mic.classList.remove('listening');
+        mic.onclick = enableMicrophoneAndListen;
+      }
+    }
     function renderError(message) {
       setGameState('error');
       clearTimers();
+      stopListening();
       app.innerHTML = '<section class="screen"><div class="panel">' +
         '<div class="result-emoji">🛰️</div><h1>تحدي الصور والكلمات</h1>' +
         '<p class="notice danger">' + escapeHtml(message) + '</p>' +
@@ -735,6 +830,25 @@ export function renderCollectionGameHtml(): string {
         '<button class="secondary" onclick="history.back()">رجوع للبوت</button>' +
         '</div></section>';
     }
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopListening();
+        clearTimers();
+      } else if (microphoneEnabled && gameState === 'obstacle' && !requestBusy && !roundClosed && !isGameOver) {
+        if (!activeTimerId && state.currentQuestion) startQuestionTimer(state.currentQuestion.timeLimit || 10);
+        scheduleAutoListen(500);
+      }
+    });
+    window.addEventListener('pagehide', () => {
+      stopListening();
+      clearTimers();
+    });
+    window.addEventListener('pageshow', () => {
+      if (microphoneEnabled && gameState === 'obstacle' && !requestBusy && !roundClosed && !isGameOver) {
+        if (!activeTimerId && state.currentQuestion) startQuestionTimer(state.currentQuestion.timeLimit || 10);
+        scheduleAutoListen(500);
+      }
+    });
     load();
   </script>
 </body>

@@ -4,9 +4,9 @@ import { queryAll, queryOne, run } from '../db/queries';
 import { addXp, getTotalXp } from './xpLevels';
 import { getRequiredVisualForWord, type GameVisual } from './gameVisualService';
 
-export const GAME_QUESTION_LIMIT = 10;
+export const GAME_QUESTION_LIMIT = 100;
 export const GAME_UI_VERSION = 'speech-rocket-emoji-v2';
-export const GAME_MAX_ATTEMPTS = 2;
+export const GAME_MAX_ATTEMPTS = 3;
 const GAME_SESSION_TTL_MINUTES = 30;
 
 export interface PlayableCollection {
@@ -37,13 +37,19 @@ export interface GameSessionData {
     speechLang: 'de-DE';
     collectionTitle: string;
     totalQuestions: number;
+    totalWords: number;
     currentIndex: number;
     correctCount: number;
+    completedWords: number;
     wrongCount: number;
+    failedAttempts: number;
+    attemptsByWord: Record<string, number>;
     streak: number;
     bestStreak: number;
     heightMeters: number;
+    score: number;
     gameOver: boolean;
+    gameWon: boolean;
     questions: GameQuestion[];
     startedAt: string;
     finishedAt?: string;
@@ -67,6 +73,7 @@ export interface PublicGameQuestion {
     visualEmoji: string;
     attemptsLeft: number;
     timeLimit: number;
+    timeLimitSeconds: number;
 }
 
 export interface PublicGameState {
@@ -74,12 +81,17 @@ export interface PublicGameState {
     speechLang: 'de-DE';
     collectionTitle: string;
     totalQuestions: number;
+    totalWords: number;
     currentIndex: number;
     correctCount: number;
+    completedWords: number;
     wrongCount: number;
+    failedAttempts: number;
+    attemptsUsed: number;
     score: number;
     heightMeters: number;
     gameOver: boolean;
+    gameWon: boolean;
     finished: boolean;
     xpAwarded: boolean;
     xpGained: number;
@@ -187,13 +199,19 @@ export async function createGameSession(db: D1Database, userId: number, collecti
         speechLang: 'de-DE',
         collectionTitle: collection.title,
         totalQuestions: questions.length,
+        totalWords: questions.length,
         currentIndex: 0,
         correctCount: 0,
+        completedWords: 0,
         wrongCount: 0,
+        failedAttempts: 0,
+        attemptsByWord: {},
         streak: 0,
         bestStreak: 0,
         heightMeters: 0,
+        score: 0,
         gameOver: false,
+        gameWon: false,
         questions,
         startedAt: new Date().toISOString(),
     };
@@ -230,6 +248,7 @@ export async function answerGameQuestion(
     }
 
     const data = parseSessionData(session);
+    normalizeGameData(data);
     if (questionIndex !== data.currentIndex) throw new Error('question_mismatch');
     const question = data.questions[data.currentIndex];
     if (!question) throw new Error('question_not_found');
@@ -237,6 +256,7 @@ export async function answerGameQuestion(
     const spokenAnswers = [transcript, ...alternatives].filter(Boolean);
     const correct = spokenAnswers.some(answer => isAcceptedGermanAnswer(answer, question.correctAnswer));
     question.attemptsMade = Math.min(GAME_MAX_ATTEMPTS, (question.attemptsMade ?? 0) + 1);
+    data.attemptsByWord[String(question.wordId)] = question.attemptsMade;
     question.transcript = transcript;
     question.alternatives = alternatives.slice(0, 3);
     question.answerReason = answerReason.slice(0, 40);
@@ -244,11 +264,16 @@ export async function answerGameQuestion(
     if (correct) {
         question.answered = true;
         data.correctCount += 1;
+        data.completedWords = data.correctCount;
         data.streak += 1;
         data.bestStreak = Math.max(data.bestStreak, data.streak);
         data.heightMeters += heightGainForCorrect(data.correctCount, data.streak);
+        data.score = calculateGameScore(data.heightMeters, data.correctCount);
         data.currentIndex += 1;
+        data.gameWon = data.currentIndex >= data.questions.length;
     } else {
+        data.wrongCount += 1;
+        data.failedAttempts += 1;
         const attemptsLeft = Math.max(0, GAME_MAX_ATTEMPTS - question.attemptsMade);
         if (attemptsLeft > 0) {
             await updateSessionData(db, session.token_hash, data, 0, session.xp_awarded);
@@ -262,14 +287,15 @@ export async function answerGameQuestion(
         }
 
         question.answered = true;
-        data.wrongCount += 1;
         data.streak = 0;
         data.gameOver = true;
+        data.gameWon = false;
         data.failedQuestion = question;
         data.finishedAt = new Date().toISOString();
     }
 
     const finished = data.gameOver || data.currentIndex >= data.questions.length ? 1 : 0;
+    if (data.currentIndex >= data.questions.length && !data.gameOver) data.gameWon = true;
     if (finished) data.finishedAt = new Date().toISOString();
     await updateSessionData(db, session.token_hash, data, finished, session.xp_awarded);
 
@@ -284,6 +310,7 @@ export async function answerGameQuestion(
 export async function restartGameSession(db: D1Database, token: string): Promise<{ token: string; totalQuestions: number }> {
     const session = await requireValidSession(db, token);
     const data = parseSessionData(session);
+    normalizeGameData(data);
     const isTerminal = session.finished === 1 || data.gameOver || data.currentIndex >= data.totalQuestions;
     if (isTerminal && session.xp_awarded === 0) {
         await finishGameSession(db, token);
@@ -299,6 +326,7 @@ export async function restartGameSession(db: D1Database, token: string): Promise
 export async function finishGameSession(db: D1Database, token: string): Promise<PublicGameState> {
     const session = await requireValidSession(db, token);
     const data = parseSessionData(session);
+    normalizeGameData(data);
     if (data.currentIndex < data.questions.length && session.finished !== 1) {
         data.finishedAt = new Date().toISOString();
     }
@@ -307,7 +335,8 @@ export async function finishGameSession(db: D1Database, token: string): Promise<
         return toPublicState(session);
     }
 
-    const xpBase = calculateGameXp(data.correctCount, data.bestStreak);
+    const completedWords = data.completedWords ?? data.correctCount;
+    const xpBase = calculateGameXp(completedWords, data.heightMeters);
     let xpGained = 0;
     const claimed = await run(
         db,
@@ -327,8 +356,12 @@ export async function finishGameSession(db: D1Database, token: string): Promise<
                 collection_id: session.collection_id,
                 correct_count: data.correctCount,
                 total_count: data.totalQuestions,
+                total_words: data.totalWords ?? data.totalQuestions,
+                completed_words: completedWords,
+                failed_word_id: data.failedQuestion?.wordId ?? null,
                 height_meters: data.heightMeters,
                 score: calculateGameScore(data.heightMeters, data.correctCount),
+                attempts_used: Object.values(data.attemptsByWord ?? {}).reduce((sum, value) => sum + Number(value || 0), 0),
                 mode: 'speech_rocket',
                 game_session: session.token_hash,
             },
@@ -373,8 +406,10 @@ export async function findMissingVisualsForCollection(db: D1Database, userId: nu
     return missing;
 }
 
-export function calculateGameXp(correctCount: number, bestStreak: number): number {
-    return Math.min(20, Math.max(0, correctCount) + Math.floor(Math.max(0, bestStreak) / 3));
+export function calculateGameXp(completedWords: number, heightMeters: number): number {
+    const safeCompleted = Math.max(0, completedWords);
+    const heightBonus = Math.floor(Math.max(0, heightMeters) / 600);
+    return Math.min(20, safeCompleted + Math.floor(safeCompleted / 5) + heightBonus);
 }
 
 async function requireValidSession(db: D1Database, token: string): Promise<GameSessionRecord> {
@@ -392,9 +427,8 @@ async function requireValidSession(db: D1Database, token: string): Promise<GameS
 }
 
 async function buildQuestions(db: D1Database, words: Word[]): Promise<GameQuestion[]> {
-    const questionWords = words.slice(0, GAME_QUESTION_LIMIT);
     const questions: GameQuestion[] = [];
-    for (const [index, word] of questionWords.entries()) {
+    for (const [index, word] of words.entries()) {
         const visual = await getRequiredVisualForWord(db, word);
         if (!visual) throw new MissingGameVisualError(word, 0);
         questions.push({
@@ -409,18 +443,27 @@ async function buildQuestions(db: D1Database, words: Word[]): Promise<GameQuesti
 
 function toPublicState(session: GameSessionRecord): PublicGameState {
     const data = parseSessionData(session);
+    normalizeGameData(data);
     const question = session.finished === 1 || data.gameOver ? null : data.questions[data.currentIndex] ?? null;
+    const completedWords = data.completedWords ?? data.correctCount;
+    const totalWords = data.totalWords ?? data.totalQuestions;
+    const score = data.score ?? calculateGameScore(data.heightMeters, data.correctCount);
     return {
         mode: 'speech_rocket',
         speechLang: 'de-DE',
         collectionTitle: data.collectionTitle,
         totalQuestions: data.totalQuestions,
+        totalWords,
         currentIndex: Math.min(data.currentIndex, data.totalQuestions),
         correctCount: data.correctCount,
+        completedWords,
         wrongCount: data.wrongCount,
-        score: calculateGameScore(data.heightMeters, data.correctCount),
+        failedAttempts: data.failedAttempts ?? data.wrongCount,
+        attemptsUsed: Object.values(data.attemptsByWord ?? {}).reduce((sum, value) => sum + Number(value || 0), 0),
+        score,
         heightMeters: data.heightMeters,
         gameOver: data.gameOver,
+        gameWon: data.gameWon ?? (!data.gameOver && data.currentIndex >= data.questions.length),
         finished: session.finished === 1 || data.gameOver || data.currentIndex >= data.totalQuestions,
         xpAwarded: session.xp_awarded === 1,
         xpGained: data.xpGained ?? 0,
@@ -437,16 +480,27 @@ function toPublicState(session: GameSessionRecord): PublicGameState {
 }
 
 function publicQuestion(question: GameQuestion): PublicGameQuestion {
+    const timeLimit = timeLimitForQuestion(question.questionIndex);
     return {
         questionIndex: question.questionIndex,
         visualEmoji: question.visual.value,
         attemptsLeft: Math.max(0, GAME_MAX_ATTEMPTS - (question.attemptsMade ?? 0)),
-        timeLimit: timeLimitForQuestion(question.questionIndex),
+        timeLimit,
+        timeLimitSeconds: timeLimit,
     };
 }
 
 function parseSessionData(session: GameSessionRecord): GameSessionData {
     return JSON.parse(session.session_data) as GameSessionData;
+}
+
+function normalizeGameData(data: GameSessionData): void {
+    data.totalWords = data.totalWords ?? data.totalQuestions;
+    data.completedWords = data.completedWords ?? data.correctCount;
+    data.failedAttempts = data.failedAttempts ?? data.wrongCount ?? 0;
+    data.attemptsByWord = data.attemptsByWord ?? {};
+    data.score = data.score ?? calculateGameScore(data.heightMeters, data.correctCount);
+    data.gameWon = data.gameWon ?? (!data.gameOver && data.currentIndex >= data.questions.length);
 }
 
 async function updateSessionData(db: D1Database, tokenHash: string, data: GameSessionData, finished: number, xpAwarded: number): Promise<void> {
