@@ -7,6 +7,7 @@ import {
     createGameSession,
     MissingGameVisualError,
     countPlayableGameCollections,
+    findMissingVisualsForCollection,
     getPlayableGameCollections,
 } from '../services/gameSessionService';
 import { upsertManualVisual, validateManualVisual } from '../services/gameVisualService';
@@ -27,7 +28,9 @@ export function registerGameCommand(bot: Bot<BotContext>): void {
     });
 
     bot.on('message:text', async (ctx, next) => {
-        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        const telegramId = ctx.from?.id;
+        if (!telegramId) return next();
+        const user = await getUserByTelegramId(ctx.db, telegramId);
         if (!user) return next();
 
         if (await getBotSession(ctx.db, user.user_id, 'train')) return next();
@@ -80,7 +83,7 @@ export function registerGameCommand(bot: Bot<BotContext>): void {
         await saveBotSession<WordVisualEditSession>(ctx.db, user.user_id, 'word_visual_edit', { wordId }, 30);
         await replaceWithText(
             ctx,
-            `🎨 تعديل الرمز\n\n🇩🇪 ${word.german}\n🇮🇶 ${word.arabic}\n\nأرسل إيموجي أو إيموجيين أو رابط صورة HTTPS لهذه الكلمة.`,
+            `🎨 تعديل الإيموجي\n\n🇩🇪 ${word.german}\n🇮🇶 ${word.arabic}\n\nأرسل إيموجي واحد أو إيموجيين يوضحون المعنى.\n\nالصور والروابط غير مقبولة داخل اللعبة.`,
             new InlineKeyboard()
                 .text('❌ إلغاء', `word_visual_cancel:${wordId}`).row()
                 .text('⬅️ رجوع للكلمة', `word_detail_${wordId}`)
@@ -154,7 +157,7 @@ export async function startGameForCollection(ctx: BotContext, userId: number, co
             );
             await replaceWithText(
                 ctx,
-                `🎨 بعض الكلمات تحتاج إيموجي حتى تشتغل اللعبة.\n\n🇩🇪 ${error.word.german}\n🇮🇶 ${error.word.arabic}\n\nأرسل إيموجي أو إيموجيين أو رابط صورة HTTPS لهذه الكلمة.`,
+                `🎨 بعض كلمات هذه المجموعة تحتاج إيموجي حتى تبدأ اللعبة.\n\nالكلمة:\n🇩🇪 ${error.word.german}\n\nالمعنى:\n🇮🇶 ${error.word.arabic}\n\nأرسل إيموجي واحد أو إيموجيين يوضحون المعنى.\n\nالصور والروابط غير مقبولة.`,
                 new InlineKeyboard()
                     .text('❌ إلغاء', `word_visual_cancel:${error.word.word_id}`).row()
                     .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
@@ -186,17 +189,39 @@ async function handleManualVisualText(ctx: BotContext, userId: number, wordId: n
     const visual = validateManualVisual(text);
     if (!visual) {
         await ctx.reply(
-            'الرمز غير صالح.\n\nأرسل إيموجي أو إيموجيين أو رابط صورة يبدأ بـ https:// فقط.',
+            'الإيموجي غير صالح.\n\nأرسل إيموجي واحد أو إيموجيين فقط.\nلا ترسل نصاً عادياً أو رابطاً أو صورة.',
             { reply_markup: new InlineKeyboard().text('❌ إلغاء', `word_visual_cancel:${wordId}`) }
         );
         return;
     }
 
     await upsertManualVisual(ctx.db, wordId, visual);
-    await deleteBotSession(ctx.db, userId, 'word_visual_edit');
     if (collectionId) {
+        const missing = await findMissingVisualsForCollection(ctx.db, userId, collectionId);
+        const nextMissing = missing.find(item => item.word_id !== wordId);
+        if (nextMissing) {
+            await saveBotSession<WordVisualEditSession>(
+                ctx.db,
+                userId,
+                'word_visual_edit',
+                { wordId: nextMissing.word_id, collectionId },
+                30
+            );
+            await ctx.reply(
+                `تم حفظ الإيموجي ✅\n\nباقي كلمة تحتاج إيموجي:\n\n🇩🇪 ${nextMissing.german}\n🇮🇶 ${nextMissing.arabic}\n\nأرسل إيموجي واحد أو إيموجيين يوضحون المعنى.`,
+                {
+                    reply_markup: new InlineKeyboard()
+                        .text('❌ إلغاء', `word_visual_cancel:${nextMissing.word_id}`).row()
+                        .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
+                        .text('🏠 الرئيسية', 'menu_main'),
+                }
+            );
+            return;
+        }
+
+        await deleteBotSession(ctx.db, userId, 'word_visual_edit');
         await ctx.reply(
-            'تم حفظ الرمز لهذه الكلمة ✅\n\nتقدر تبدأ اللعبة الآن.',
+            'تم حفظ كل الإيموجيات المطلوبة ✅\n\nتقدر تبدأ اللعبة الآن.',
             {
                 reply_markup: new InlineKeyboard()
                     .text('🚀 ابدأ اللعبة الآن', `game:start_collection:${collectionId}`).row()
@@ -206,6 +231,7 @@ async function handleManualVisualText(ctx: BotContext, userId: number, wordId: n
         );
         return;
     }
+    await deleteBotSession(ctx.db, userId, 'word_visual_edit');
     await showWordDetailPanel(ctx, wordId, 'تم حفظ الرمز لهذه الكلمة ✅');
 }
 

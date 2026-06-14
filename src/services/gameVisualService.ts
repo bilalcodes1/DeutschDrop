@@ -1,9 +1,9 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Word } from '../models';
 import { queryOne, run } from '../db/queries';
-import { getPictogramByWordId } from '../repositories/pictogramRepository';
 
-export type GameVisualType = 'emoji' | 'emoji_combo' | 'image_url' | 'fallback' | 'manual';
+export type GameVisualType = 'emoji' | 'emoji_combo' | 'fallback' | 'manual';
+type StoredGameVisualType = GameVisualType | 'image_url';
 
 export interface GameVisual {
     type: GameVisualType;
@@ -14,7 +14,7 @@ export interface GameVisual {
 
 interface VisualCacheRow {
     word_id: number;
-    visual_type: GameVisualType;
+    visual_type: StoredGameVisualType;
     visual_value: string;
     source: string;
     confidence: number;
@@ -53,13 +53,20 @@ const GERMAN_EMOJI_MAP: Record<string, string> = {
     land: '🌍',
     sprache: '🗣️',
     deutsch: '🇩🇪',
+    deutschland: '🇩🇪',
     arabisch: '🌙🗣️',
+    ente: '🦆',
+    tiger: '🐯',
+    vogel: '🐦',
+    fisch: '🐟',
     apfel: '🍎',
     banane: '🍌',
-    milch: '🥛',
     kaffee: '☕',
     tee: '🍵',
-    essenzeit: '🍽️',
+    milch: '🥛',
+    ei: '🥚',
+    käse: '🧀',
+    kaese: '🧀',
     arbeit: '💼',
     lernen: '📚',
     schreiben: '✍️',
@@ -78,7 +85,11 @@ const GERMAN_EMOJI_MAP: Record<string, string> = {
     lehrer: '🧑‍🏫',
     lehrerin: '🧑‍🏫',
     arzt: '🧑‍⚕️',
+    ärztin: '👩‍⚕️',
+    aerztin: '👩‍⚕️',
     krankenhaus: '🏥',
+    polizei: '👮',
+    feuerwehr: '🚒',
     geld: '💶',
     zeit: '⏰',
     tag: '☀️',
@@ -90,12 +101,37 @@ const GERMAN_EMOJI_MAP: Record<string, string> = {
     baum: '🌳',
     blume: '🌸',
     tier: '🐾',
-    vogel: '🐦',
-    fisch: '🐟',
     meer: '🌊',
     berg: '⛰️',
     straße: '🛣️',
     strasse: '🛣️',
+    kaufen: '🛒',
+    verkaufen: '🏷️',
+    reisen: '✈️🧳',
+    flugzeug: '✈️',
+    fahrrad: '🚲',
+    handy: '📱',
+    computer: '💻',
+    telefon: '☎️',
+    brief: '✉️',
+    frage: '❓',
+    antwort: '💬',
+    herz: '❤️',
+    liebe: '❤️',
+    kopf: '🧠',
+    auge: '👁️',
+    ohr: '👂',
+    hand: '✋',
+    fuß: '🦶',
+    fuss: '🦶',
+    zahn: '🦷',
+    kleid: '👗',
+    schuh: '👟',
+    jacke: '🧥',
+    ball: '⚽',
+    türkei: '🇹🇷',
+    tuerkei: '🇹🇷',
+    irak: '🇮🇶',
 };
 
 const ARABIC_EMOJI_KEYWORDS: Array<[RegExp, string]> = [
@@ -107,7 +143,7 @@ const ARABIC_EMOJI_KEYWORDS: Array<[RegExp, string]> = [
     [/شعر/, '💇'],
     [/ركض|يجري|جري/, '🏃'],
     [/مشي|يمشي/, '🚶'],
-    [/أكل|طعام|يأكل/, '🍽️'],
+    [/أكل|اكل|طعام|يأكل/, '🍽️'],
     [/شرب|يشرب/, '🥤'],
     [/سيارة/, '🚗'],
     [/باص|حافلة/, '🚌'],
@@ -121,32 +157,53 @@ const ARABIC_EMOJI_KEYWORDS: Array<[RegExp, string]> = [
     [/قطة/, '🐱'],
     [/كلب/, '🐶'],
     [/رجل/, '👨'],
-    [/امرأة|نساء/, '👩'],
+    [/امرأة|امراة|نساء/, '👩'],
     [/طفل|ولد|بنت/, '🧒'],
     [/مدينة/, '🏙️'],
     [/بلد|دولة/, '🌍'],
     [/لغة|كلام/, '🗣️'],
-    [/ألماني|المانية|الألمانية/, '🇩🇪'],
+    [/ألماني|الماني|المانية|الألمانية/, '🇩🇪'],
     [/عربي|العربية/, '🌙🗣️'],
+    [/بطة|بط/, '🦆'],
+    [/نمر|ببر/, '🐯'],
+    [/طائر|عصفور/, '🐦'],
+    [/سمك|سمكة/, '🐟'],
+    [/تفاح/, '🍎'],
+    [/موز/, '🍌'],
+    [/قهوة/, '☕'],
+    [/شاي/, '🍵'],
+    [/حليب|لبن/, '🥛'],
+    [/بيض|بيضة/, '🥚'],
+    [/جبن/, '🧀'],
+    [/عمل|شغل|وظيفة/, '💼'],
+    [/طبيب|دكتور/, '🧑‍⚕️'],
+    [/مستشفى/, '🏥'],
+    [/شرطة/, '👮'],
+    [/إطفاء|اطفاء/, '🚒'],
+    [/مال|نقود|فلوس/, '💶'],
+    [/وقت|زمن/, '⏰'],
+    [/يوم/, '☀️'],
+    [/ليل/, '🌙'],
+    [/شمس/, '☀️'],
+    [/مطر/, '🌧️'],
+    [/ثلج/, '❄️'],
+    [/بارد/, '🥶'],
+    [/حار|دافئ/, '🔥'],
+    [/كبير/, '📏⬆️'],
+    [/صغير/, '📏⬇️'],
+    [/سريع/, '⚡'],
+    [/بطيء|بطيئ/, '🐢'],
+    [/شراء|يشتري|تسوق/, '🛒💶'],
+    [/سفر|رحلة/, '✈️🧳'],
+    [/قراءة|يقرأ/, '👀📖'],
+    [/كتابة|يكتب/, '✍️📄'],
+    [/تعلم|يدرس/, '🧠📘'],
 ];
 
 export async function getVisualForWord(db: D1Database, word: Word): Promise<GameVisual> {
     const cached = await getCachedVisual(db, word.word_id);
-    if (cached?.source === 'manual') {
-        return rowToVisual(cached);
-    }
-
-    const pictogram = await getPictogramByWordId(db, word.word_id);
-    if (pictogram?.thumbnail_url || pictogram?.image_url) {
-        return {
-            type: 'image_url',
-            value: pictogram.thumbnail_url || pictogram.image_url,
-            source: 'word_pictograms',
-            confidence: 0.95,
-        };
-    }
-
-    if (cached) return rowToVisual(cached);
+    const cachedVisual = cached ? rowToVisual(cached) : null;
+    if (cachedVisual && isClearGameVisual(cachedVisual)) return cachedVisual;
 
     const resolved = resolveEmojiVisual(word.german, word.arabic);
     await upsertAutoVisual(db, word.word_id, resolved);
@@ -159,7 +216,13 @@ export async function getRequiredVisualForWord(db: D1Database, word: Word): Prom
 }
 
 export function isClearGameVisual(visual: GameVisual | null | undefined): visual is GameVisual {
-    return Boolean(visual && visual.type !== 'fallback' && visual.source !== 'fallback_letter' && visual.value.trim());
+    return Boolean(
+        visual
+        && visual.type !== 'fallback'
+        && visual.source !== 'fallback_letter'
+        && visual.value.trim()
+        && isEmojiOnly(visual.value)
+    );
 }
 
 export function resolveEmojiVisual(german: string, arabic: string): GameVisual {
@@ -167,46 +230,36 @@ export function resolveEmojiVisual(german: string, arabic: string): GameVisual {
     for (const key of keys) {
         const emoji = GERMAN_EMOJI_MAP[key];
         if (emoji) {
-            return { type: emoji.length > 3 ? 'emoji_combo' : 'emoji', value: emoji, source: 'emoji_mapping', confidence: 0.85 };
+            return { type: emoji.length > 3 ? 'emoji_combo' : 'emoji', value: emoji, source: 'emoji_mapping', confidence: 0.9 };
         }
     }
 
     for (const [pattern, emoji] of ARABIC_EMOJI_KEYWORDS) {
         if (pattern.test(arabic)) {
-            return { type: emoji.length > 3 ? 'emoji_combo' : 'emoji', value: emoji, source: 'emoji_mapping_ar', confidence: 0.75 };
+            return { type: emoji.length > 3 ? 'emoji_combo' : 'emoji', value: emoji, source: 'emoji_mapping_ar', confidence: 0.8 };
         }
     }
 
     const combo = resolveEmojiCombo(german, arabic);
-    if (combo) return { type: 'emoji_combo', value: combo, source: 'emoji_combo', confidence: 0.55 };
+    if (combo) return { type: 'emoji_combo', value: combo, source: 'emoji_combo', confidence: 0.68 };
 
     const first = german.trim().replace(/^(der|die|das)\s+/i, '').charAt(0).toUpperCase() || '؟';
     return { type: 'fallback', value: `🔤 ${first}`, source: 'fallback_letter', confidence: 0.2 };
 }
 
 export async function resolveOnlineEmojiProvider(_german: string, _arabic: string): Promise<GameVisual | null> {
-    // Provider layer placeholder for no-key sources such as EmojiHub/OpenMoji/CLDR.
-    // It is intentionally not called during active gameplay; visuals are resolved before session creation and cached.
+    // No-key provider layer reserved for EmojiHub, OpenMoji metadata, or Unicode CLDR annotations.
+    // It must run only while resolving/caching a word visual before a session starts, never per active question.
     return null;
 }
 
 export function validateManualVisual(input: string): GameVisual | null {
     const value = input.trim();
-    if (!value || value.length > 300) return null;
-
-    if (/^https:\/\//i.test(value)) {
-        try {
-            const url = new URL(value);
-            if (url.protocol !== 'https:' || value.length > 300) return null;
-            return { type: 'image_url', value, source: 'manual', confidence: 1 };
-        } catch {
-            return null;
-        }
-    }
-
-    if (/^(?:javascript|data|http):/i.test(value)) return null;
+    if (!value || value.length > 40) return null;
+    if (/^(?:https?|javascript|data):/i.test(value)) return null;
     if (/[\p{L}\p{N}]/u.test(value)) return null;
-    if (Array.from(value.replace(/\s+/g, '')).length > 8) return null;
+    if (!isEmojiOnly(value)) return null;
+    if (countEmojiUnits(value) > 3) return null;
 
     return { type: 'manual', value, source: 'manual', confidence: 1 };
 }
@@ -249,13 +302,15 @@ async function upsertAutoVisual(db: D1Database, wordId: number, visual: GameVisu
     );
 }
 
-function rowToVisual(row: VisualCacheRow): GameVisual {
-    return {
+function rowToVisual(row: VisualCacheRow): GameVisual | null {
+    if (row.visual_type === 'image_url') return null;
+    const visual: GameVisual = {
         type: row.visual_type,
         value: row.visual_value,
         source: row.source,
         confidence: row.confidence,
     };
+    return isEmojiOnly(visual.value) ? visual : null;
 }
 
 function normalizeGermanKeys(value: string): string[] {
@@ -275,13 +330,36 @@ function normalizeGermanKeys(value: string): string[] {
 
 function resolveEmojiCombo(german: string, arabic: string): string | null {
     const text = `${german} ${arabic}`.toLocaleLowerCase('de-DE');
-    if (/gut|جيد|تمام|حالة/.test(text)) return '✅✨';
+    if (/universität|universitaet|جامعة/.test(text)) return '🏫📚';
+    if (/sprache|لغة|كلام/.test(text)) return '🗣️💬';
+    if (/schreiben|كتابة|يكتب/.test(text)) return '✍️📄';
+    if (/lesen|قراءة|يقرأ/.test(text)) return '👀📖';
+    if (/lernen|تعلم|يدرس/.test(text)) return '🧠📘';
+    if (/arbeiten|arbeit|عمل|شغل|وظيفة/.test(text)) return '💼⚙️';
+    if (/reisen|سفر|رحلة/.test(text)) return '✈️🧳';
     if (/krank|مرض|مريض/.test(text)) return '🤒🏥';
+    if (/kaufen|شراء|يشتري|تسوق/.test(text)) return '🛒💶';
+    if (/gut|جيد|تمام|حالة/.test(text)) return '✅✨';
     if (/schnell|سريع/.test(text)) return '⚡🏃';
-    if (/langsam|بطيء/.test(text)) return '🐢⏳';
+    if (/langsam|بطيء|بطيئ/.test(text)) return '🐢⏳';
     if (/groß|gross|كبير/.test(text)) return '📏⬆️';
     if (/klein|صغير/.test(text)) return '📏⬇️';
     if (/kalt|بارد/.test(text)) return '❄️🥶';
     if (/warm|heiß|heiss|حار|دافئ/.test(text)) return '🔥☀️';
     return null;
+}
+
+function isEmojiOnly(value: string): boolean {
+    const compact = value.replace(/\s+/g, '');
+    if (!compact) return false;
+    if (/[\p{L}\p{N}]/u.test(compact)) return false;
+    return /[\p{Extended_Pictographic}\p{Regional_Indicator}]/u.test(compact);
+}
+
+function countEmojiUnits(value: string): number {
+    const compact = value.replace(/\s+/g, '');
+    const flags = compact.match(/\p{Regional_Indicator}\p{Regional_Indicator}/gu) ?? [];
+    const withoutFlags = compact.replace(/\p{Regional_Indicator}\p{Regional_Indicator}/gu, '');
+    const pictographs = withoutFlags.match(/\p{Extended_Pictographic}/gu) ?? [];
+    return flags.length + pictographs.length;
 }

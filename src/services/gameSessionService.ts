@@ -20,7 +20,6 @@ export interface PlayableCollection {
 export interface GameQuestion {
     questionIndex: number;
     wordId: number;
-    prompt: string;
     visual: GameVisual;
     correctAnswer: string;
     answered?: boolean;
@@ -61,9 +60,9 @@ export interface GameSessionRecord {
 
 export interface PublicGameQuestion {
     questionIndex: number;
-    wordId: number;
-    prompt: string;
-    visual: GameVisual;
+    visualEmoji: string;
+    attemptsLeft: number;
+    timeLimit: number;
 }
 
 export interface PublicGameState {
@@ -74,15 +73,17 @@ export interface PublicGameState {
     currentIndex: number;
     correctCount: number;
     wrongCount: number;
+    score: number;
     heightMeters: number;
     gameOver: boolean;
     finished: boolean;
     xpAwarded: boolean;
     xpGained: number;
-    question: PublicGameQuestion | null;
+    currentQuestion: PublicGameQuestion | null;
     failedQuestion?: {
-        visual: GameVisual;
+        failedVisualEmoji: string;
         correctAnswer: string;
+        correctPronunciationText: string;
         heightMeters: number;
     };
 }
@@ -292,6 +293,7 @@ export async function finishGameSession(db: D1Database, token: string): Promise<
                 correct_count: data.correctCount,
                 total_count: data.totalQuestions,
                 height_meters: data.heightMeters,
+                score: calculateGameScore(data.heightMeters, data.correctCount),
                 mode: 'speech_rocket',
                 game_session: session.token_hash,
             },
@@ -363,7 +365,6 @@ async function buildQuestions(db: D1Database, words: Word[]): Promise<GameQuesti
         questions.push({
             questionIndex: index,
             wordId: word.word_id,
-            prompt: word.arabic,
             visual,
             correctAnswer: word.german,
         });
@@ -382,16 +383,18 @@ function toPublicState(session: GameSessionRecord): PublicGameState {
         currentIndex: Math.min(data.currentIndex, data.totalQuestions),
         correctCount: data.correctCount,
         wrongCount: data.wrongCount,
+        score: calculateGameScore(data.heightMeters, data.correctCount),
         heightMeters: data.heightMeters,
         gameOver: data.gameOver,
         finished: session.finished === 1 || data.gameOver || data.currentIndex >= data.totalQuestions,
         xpAwarded: session.xp_awarded === 1,
         xpGained: data.xpGained ?? 0,
-        question: question ? publicQuestion(question) : null,
+        currentQuestion: question ? publicQuestion(question) : null,
         failedQuestion: data.failedQuestion
             ? {
-                visual: data.failedQuestion.visual,
+                failedVisualEmoji: data.failedQuestion.visual.value,
                 correctAnswer: data.failedQuestion.correctAnswer,
+                correctPronunciationText: data.failedQuestion.correctAnswer,
                 heightMeters: data.heightMeters,
             }
             : undefined,
@@ -401,9 +404,9 @@ function toPublicState(session: GameSessionRecord): PublicGameState {
 function publicQuestion(question: GameQuestion): PublicGameQuestion {
     return {
         questionIndex: question.questionIndex,
-        wordId: question.wordId,
-        prompt: question.prompt,
-        visual: question.visual,
+        visualEmoji: question.visual.value,
+        attemptsLeft: 2,
+        timeLimit: timeLimitForQuestion(question.questionIndex),
     };
 }
 
@@ -443,7 +446,15 @@ function stripGermanArticle(value: string): string {
 }
 
 function heightGainForCorrect(correctCount: number, streak: number): number {
-    return 50 + Math.floor(correctCount / 3) * 10 + Math.floor(streak / 3) * 5;
+    return 60 + Math.floor(correctCount / 3) * 10 + Math.floor(streak / 3) * 5;
+}
+
+function timeLimitForQuestion(questionIndex: number): number {
+    return Math.max(7, 10 - Math.floor(questionIndex / 3));
+}
+
+function calculateGameScore(heightMeters: number, correctCount: number): number {
+    return Math.max(0, heightMeters) + Math.max(0, correctCount) * 10;
 }
 
 function createToken(): string {
