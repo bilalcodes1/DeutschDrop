@@ -21,6 +21,8 @@ export function renderCollectionGameHtml(): string {
       --worm-scale: clamp(.82, 2.4vw, 1.08);
       --play-top: calc(var(--safe-top) + clamp(92px, 12dvh, 124px));
       --play-bottom: calc(var(--safe-bottom) + clamp(118px, 17dvh, 158px));
+      --bubble-left: 64%;
+      --bubble-top: 34%;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
@@ -127,6 +129,13 @@ export function renderCollectionGameHtml(): string {
     .seaweed.w1 { left: 7%; height: 118px; rotate: -8deg; }
     .seaweed.w2 { right: 10%; height: 152px; animation-delay: -1.2s; }
     .seaweed.w3 { left: 28%; width: 24px; height: 86px; animation-delay: -.7s; opacity: .48; }
+    body.celebrating .seaweed {
+      animation-duration: 1.8s;
+    }
+    body.celebrating .coral::after {
+      animation-duration: .9s;
+      opacity: .95;
+    }
     @keyframes weed-sway {
       from { transform: skewX(-5deg); }
       to { transform: skewX(7deg); }
@@ -143,6 +152,22 @@ export function renderCollectionGameHtml(): string {
         radial-gradient(circle at 54% 12%, #ff7899 0 14px, transparent 15px),
         radial-gradient(circle at 78% 34%, #ffb05d 0 12px, transparent 13px);
       opacity: .76;
+    }
+    .coral::after {
+      content: "";
+      position: absolute;
+      inset: -18px -12px auto auto;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.88);
+      box-shadow: -28px 16px 0 rgba(255,255,255,.52), -10px 34px 0 rgba(255,255,255,.48);
+      opacity: .72;
+      animation: coral-sparkle 2.4s ease-in-out infinite;
+    }
+    @keyframes coral-sparkle {
+      0%, 100% { opacity: .28; transform: scale(.72); }
+      50% { opacity: .92; transform: scale(1.15); }
     }
     .fish {
       position: absolute;
@@ -312,8 +337,9 @@ export function renderCollectionGameHtml(): string {
     }
     .meaning-bubble {
       position: absolute;
-      top: clamp(82px, 17dvh, 150px);
-      right: clamp(18px, 7vw, 54px);
+      left: var(--bubble-left);
+      top: var(--bubble-top);
+      translate: -50% -50%;
       width: var(--bubble-size);
       min-height: var(--bubble-size);
       display: grid;
@@ -353,35 +379,6 @@ export function renderCollectionGameHtml(): string {
       line-height: 1.16;
       overflow-wrap: anywhere;
     }
-    .visual-row {
-      position: absolute;
-      left: 50%;
-      bottom: -20px;
-      translate: -50% 0;
-      display: flex;
-      flex-direction: row;
-      flex-wrap: nowrap;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      min-width: 74px;
-      padding: 7px 12px;
-      border-radius: 999px;
-      color: #054364;
-      background: rgba(232, 255, 255, .66);
-      border: 1px solid rgba(255,255,255,.58);
-      box-shadow: 0 10px 22px rgba(4, 59, 91, .13);
-      font-size: clamp(22px, 6vw, 34px);
-      line-height: 1;
-      text-shadow: none;
-      white-space: nowrap;
-    }
-    .visual-row span {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      line-height: 1;
-    }
     @keyframes bubble-float {
       0%, 100% { transform: translateY(0); }
       50% { transform: translateY(-10px); }
@@ -396,6 +393,9 @@ export function renderCollectionGameHtml(): string {
     .meaning-bubble.bubble-pop {
       animation: bubble-pop .62s ease-out forwards;
     }
+    .meaning-bubble.final-pop {
+      animation: final-bubble-pop .94s cubic-bezier(.15,.86,.25,1.08) forwards;
+    }
     .meaning-bubble.bubble-bite {
       animation: bubble-bite .42s ease-in-out forwards;
     }
@@ -409,6 +409,12 @@ export function renderCollectionGameHtml(): string {
       0%, 100% { transform: scale(1); }
       35% { transform: scale(1.035) rotate(2deg); }
       70% { transform: scale(.96) translateX(-10px); }
+    }
+    @keyframes final-bubble-pop {
+      0% { opacity: 1; transform: scale(1); filter: brightness(1); }
+      22% { opacity: 1; transform: scale(1.16) rotate(-3deg); filter: brightness(1.18); }
+      52% { opacity: .88; transform: scale(.92) translateX(-24px); clip-path: circle(46% at 42% 52%); }
+      100% { opacity: 0; transform: scale(.12) translateX(-60px); clip-path: circle(8% at 30% 50%); }
     }
     .meaning-bubble.bubble-shake {
       animation: bubble-shake .34s linear 3;
@@ -454,6 +460,31 @@ export function renderCollectionGameHtml(): string {
       animation: sparkle-pop .7s ease-out forwards;
       animation-delay: var(--delay, 0s);
     }
+    .win-burst {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 3;
+    }
+    .win-burst i {
+      position: absolute;
+      left: var(--x);
+      bottom: -30px;
+      width: var(--s, 12px);
+      height: var(--s, 12px);
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.74);
+      background: rgba(190,255,248,.28);
+      box-shadow: 0 0 16px rgba(255,255,255,.42);
+      animation: win-bubble-rise var(--d, 3s) ease-out infinite;
+      animation-delay: var(--delay, 0s);
+    }
+    @keyframes win-bubble-rise {
+      0% { opacity: 0; transform: translate3d(0, 0, 0) scale(.7); }
+      15% { opacity: .95; }
+      100% { opacity: 0; transform: translate3d(var(--drift, 12px), -112dvh, 0) scale(1.25); }
+    }
     @keyframes pop-particle {
       to {
         opacity: 0;
@@ -467,15 +498,31 @@ export function renderCollectionGameHtml(): string {
     }
     .worm {
       position: absolute;
-      left: clamp(18px, 8vw, 62px);
-      top: clamp(245px, 43dvh, 390px);
+      left: 0;
+      top: 0;
       width: clamp(190px, 52vw, 300px);
       height: 112px;
+      transform: translate3d(var(--worm-x, 22px), var(--worm-y, 48%), 0) scaleX(var(--worm-facing, 1));
+      transform-origin: center;
+      transition: transform 1.7s cubic-bezier(.35,.84,.26,1);
+      will-change: transform;
+      z-index: 2;
+    }
+    .worm-body {
+      width: 100%;
+      height: 100%;
       transform: scale(var(--worm-scale));
       transform-origin: 28% 60%;
       filter: drop-shadow(0 22px 24px rgba(0, 47, 76, .24));
-      will-change: transform, translate, rotate;
+      will-change: transform, filter;
       animation: worm-swim 2.1s ease-in-out infinite, worm-breathe 3.4s ease-in-out infinite;
+    }
+    .worm.worm-listening .worm-body {
+      animation-duration: 1.9s, 3.1s;
+    }
+    .worm.worm-chasing {
+      transition-duration: .72s;
+      transition-timing-function: cubic-bezier(.18,.86,.16,1);
     }
     @keyframes worm-swim {
       0%, 100% { translate: 0 0; rotate: -2deg; }
@@ -485,10 +532,11 @@ export function renderCollectionGameHtml(): string {
       0%, 100% { filter: drop-shadow(0 22px 24px rgba(0, 47, 76, .24)); }
       50% { filter: drop-shadow(0 26px 28px rgba(0, 47, 76, .19)); }
     }
-    .worm.worm-chomp {
+    .worm.worm-chomp .worm-body,
+    .worm.worm-eating .worm-body {
       animation: worm-chomp .82s cubic-bezier(.18,.88,.22,1.04) forwards;
     }
-    .worm.worm-grow {
+    .worm.worm-grow .worm-body {
       animation: worm-chomp .82s cubic-bezier(.18,.88,.22,1.04) forwards, worm-grow .92s ease-out forwards;
     }
     @keyframes worm-chomp {
@@ -503,8 +551,17 @@ export function renderCollectionGameHtml(): string {
       72% { filter: drop-shadow(0 26px 30px rgba(220, 255, 255, .34)); }
       100% { filter: drop-shadow(0 22px 24px rgba(0, 47, 76, .24)); }
     }
-    .worm.worm-retreat {
+    .worm.worm-retreat .worm-body {
       animation: worm-retreat .48s ease-out;
+    }
+    .worm.worm-celebrate .worm-body {
+      animation: worm-celebrate 1.05s ease-in-out infinite;
+      filter: drop-shadow(0 0 20px rgba(215,255,255,.72)) drop-shadow(0 24px 28px rgba(0, 47, 76, .18));
+    }
+    @keyframes worm-celebrate {
+      0%, 100% { transform: scale(calc(var(--worm-scale) * 1.16)) rotate(-4deg); }
+      30% { transform: scale(calc(var(--worm-scale) * 1.24)) translateY(-12px) rotate(7deg); }
+      62% { transform: scale(calc(var(--worm-scale) * 1.19)) translateY(4px) rotate(-8deg); }
     }
     @keyframes worm-retreat {
       0% { transform: scale(var(--worm-scale)) translateX(0); }
@@ -547,11 +604,15 @@ export function renderCollectionGameHtml(): string {
     .worm-mouth {
       transition: d .2s ease;
     }
-    .worm.worm-chomp .worm-mouth {
+    .worm.worm-chomp .worm-mouth,
+    .worm.worm-eating .worm-mouth {
       stroke-width: 9;
     }
     .worm.worm-happy .worm-mouth {
       stroke: #7b3157;
+    }
+    .worm.worm-celebrate .worm-mouth {
+      stroke-width: 7;
     }
     .worm.worm-confused .worm-mouth {
       d: path("M184 72 Q197 64 211 72");
@@ -675,6 +736,13 @@ export function renderCollectionGameHtml(): string {
       display: grid;
       place-items: center;
     }
+    .result-worm .worm {
+      position: relative;
+      transform: none;
+      left: auto;
+      top: auto;
+      transition: none;
+    }
     .answer-line {
       display: inline-grid;
       grid-auto-flow: column;
@@ -738,6 +806,17 @@ export function renderCollectionGameHtml(): string {
       font-weight: 850;
       opacity: .9;
     }
+    .win-celebration .panel {
+      gap: 14px;
+      transform: translateY(-.8dvh);
+    }
+    .win-celebration h1 {
+      text-shadow: 0 5px 16px rgba(0, 54, 91, .45);
+    }
+    .win-celebration .result-worm {
+      width: min(390px, 86vw);
+      min-height: 148px;
+    }
     @media (max-height: 720px) {
       :root {
         --bubble-size: clamp(142px, 38vw, 210px);
@@ -746,8 +825,6 @@ export function renderCollectionGameHtml(): string {
         --play-top: calc(var(--safe-top) + 78px);
         --play-bottom: calc(var(--safe-bottom) + 92px);
       }
-      .meaning-bubble { top: clamp(64px, 14dvh, 110px); }
-      .worm { top: clamp(205px, 40dvh, 320px); }
       .status { font-size: 14px; }
       .hint { display: none; }
     }
@@ -756,8 +833,6 @@ export function renderCollectionGameHtml(): string {
       .hud-pill { min-height: 42px; padding: 5px 4px; border-radius: 15px; }
       .hud-value { font-size: clamp(14px, 4vw, 18px); }
       .hud-label { font-size: 9px; }
-      .meaning-bubble { right: 12px; }
-      .worm { left: 8px; }
       .summary-grid { grid-template-columns: 1fr; }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -816,6 +891,12 @@ export function renderCollectionGameHtml(): string {
     let ambientOsc = null;
     let ambientLfo = null;
     let lastListenCueAt = 0;
+    let bubblePositions = {};
+    let currentBubblePosition = null;
+    let wormPosition = { x: 26, y: 180 };
+    let wormDirection = 1;
+    let wormMoveTimer = null;
+    let soundEnabled = true;
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'": '&#39;'}[c]));
@@ -825,21 +906,6 @@ export function renderCollectionGameHtml(): string {
     }
     function meaning(value) {
       return escapeHtml(String(value || 'المعنى').trim() || 'المعنى');
-    }
-    function graphemes(value) {
-      const raw = String(value || '').trim();
-      if (!raw) return [];
-      try {
-        if (Intl && Intl.Segmenter) {
-          return Array.from(new Intl.Segmenter('de', { granularity: 'grapheme' }).segment(raw), item => item.segment).filter(part => part.trim());
-        }
-      } catch {}
-      return Array.from(raw).filter(part => part.trim());
-    }
-    function visualMarkup(value) {
-      const parts = graphemes(value).slice(0, 3);
-      if (parts.length === 0) return '';
-      return '<div class="visual-row" aria-hidden="true">' + parts.map(part => '<span>' + escapeHtml(part) + '</span>').join('') + '</div>';
     }
     function initAudio() {
       if (audioCtx) return;
@@ -921,6 +987,7 @@ export function renderCollectionGameHtml(): string {
       source.start(now);
     }
     function playSound(kind) {
+      if (!soundEnabled) return;
       resumeAudio();
       if (!audioCtx) return;
       if (kind === 'listen') {
@@ -941,10 +1008,12 @@ export function renderCollectionGameHtml(): string {
         playTone(260, .22, .028, 'sine');
         playTone(170, .32, .022, 'sine', .18);
       } else if (kind === 'win') {
-        playTone(520, .12, .030, 'sine');
-        playTone(720, .12, .027, 'sine', .12);
-        playTone(980, .18, .024, 'sine', .24);
-        playNoise(.10, .018, .33);
+        playNoise(.12, .020);
+        playTone(420, .11, .026, 'sine');
+        playTone(620, .11, .026, 'sine', .10);
+        playTone(840, .14, .024, 'triangle', .20);
+        playTone(1120, .20, .020, 'sine', .34);
+        playNoise(.16, .018, .46);
       } else if (kind === 'tap') {
         playTone(640, .08, .012, 'sine');
       }
@@ -973,6 +1042,7 @@ export function renderCollectionGameHtml(): string {
       const tailOffset = growth * 18;
       const crown = crowned ? '<text x="202" y="-9" font-size="38" text-anchor="middle">👑</text>' : '';
       return '<div class="worm ' + extraClass + '" id="worm" style="width: calc(clamp(190px, 52vw, 300px) + ' + (growth * 14) + 'px)">' +
+        '<div class="worm-body">' +
         '<svg class="worm-svg" viewBox="' + (-tailOffset) + ' -34 ' + (310 + tailOffset) + ' 156" role="img" aria-label="دودة بحرية">' +
         '<defs><linearGradient id="wormGrad" x1="0" x2="1"><stop offset="0%" stop-color="#ffd66b"/><stop offset="45%" stop-color="#ff9cc9"/><stop offset="100%" stop-color="#8be7ff"/></linearGradient></defs>' +
         '<g>' +
@@ -990,9 +1060,117 @@ export function renderCollectionGameHtml(): string {
         '<path d="M214 33 Q244 16 251 48 Q231 44 214 58" fill="#8be7ff" stroke="rgba(255,255,255,.45)" stroke-width="3"/>' +
         '<path d="M170 33 Q146 13 136 44 Q156 43 171 57" fill="#8be7ff" stroke="rgba(255,255,255,.45)" stroke-width="3"/>' +
         crown +
-        '</g></svg></div>';
+        '</g></svg></div></div>';
+    }
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+    function getPlayfield() {
+      return document.querySelector('.playfield');
+    }
+    function randomBetween(min, max) {
+      return min + Math.random() * (max - min);
+    }
+    function randomBubblePosition(questionIndex) {
+      const baseX = randomBetween(28, 72);
+      const baseY = randomBetween(24, 66);
+      const stagger = Number(questionIndex || 0) % 4;
+      return {
+        x: clamp(baseX + (stagger === 1 ? -7 : stagger === 2 ? 6 : 0), 24, 76),
+        y: clamp(baseY + (stagger === 3 ? -8 : stagger === 0 ? 4 : 0), 20, 70),
+      };
+    }
+    function getBubblePosition(questionIndex) {
+      const key = String(questionIndex);
+      if (!bubblePositions[key]) bubblePositions[key] = randomBubblePosition(questionIndex);
+      currentBubblePosition = bubblePositions[key];
+      return currentBubblePosition;
+    }
+    function bubblePositionStyle(questionIndex) {
+      const position = getBubblePosition(questionIndex);
+      return '--bubble-left:' + position.x.toFixed(2) + '%;--bubble-top:' + position.y.toFixed(2) + '%;';
+    }
+    function applyWormPosition(className = 'worm-idle') {
+      const worm = document.getElementById('worm');
+      if (!worm) return;
+      worm.classList.remove('worm-idle', 'worm-listening', 'worm-chasing', 'worm-eating');
+      if (className) worm.classList.add(className);
+      worm.style.setProperty('--worm-x', Math.round(wormPosition.x) + 'px');
+      worm.style.setProperty('--worm-y', Math.round(wormPosition.y) + 'px');
+      worm.style.setProperty('--worm-facing', String(wormDirection));
+    }
+    function safeWormTarget() {
+      const field = getPlayfield();
+      const worm = document.getElementById('worm');
+      if (!field || !worm) return { x: 26, y: 180 };
+      const bounds = field.getBoundingClientRect();
+      const wormWidth = Math.max(160, worm.getBoundingClientRect().width || 220);
+      const wormHeight = Math.max(90, worm.getBoundingClientRect().height || 112);
+      return {
+        x: randomBetween(12, Math.max(12, bounds.width - wormWidth - 8)),
+        y: randomBetween(20, Math.max(22, bounds.height - wormHeight - 10)),
+      };
+    }
+    function startWormIdleMovement(mode = 'worm-idle') {
+      clearTimeout(wormMoveTimer);
+      const worm = document.getElementById('worm');
+      const field = getPlayfield();
+      if (!worm || !field || isGameOver || isRestarting) return;
+      const tick = () => {
+        if (!document.getElementById('worm') || !['bubble', 'listening', 'preparing'].includes(gameState)) return;
+        const next = safeWormTarget();
+        wormDirection = next.x >= wormPosition.x ? 1 : -1;
+        wormPosition = next;
+        applyWormPosition(gameState === 'listening' ? 'worm-listening' : mode);
+        wormMoveTimer = setTimeout(tick, 1450 + Math.random() * 1150);
+      };
+      if (!Number.isFinite(wormPosition.y) || wormPosition.y < 10) wormPosition = safeWormTarget();
+      applyWormPosition(mode);
+      wormMoveTimer = setTimeout(tick, 180);
+    }
+    function stopWormMovement() {
+      clearTimeout(wormMoveTimer);
+      wormMoveTimer = null;
+    }
+    function moveWormToBubble(finalWin = false) {
+      stopWormMovement();
+      const worm = document.getElementById('worm');
+      const bubble = document.getElementById('meaningBubble');
+      const field = getPlayfield();
+      if (!worm || !bubble || !field) return;
+      const fieldRect = field.getBoundingClientRect();
+      const bubbleRect = bubble.getBoundingClientRect();
+      const wormRect = worm.getBoundingClientRect();
+      const targetX = bubbleRect.left - fieldRect.left - wormRect.width * .52;
+      const targetY = bubbleRect.top - fieldRect.top + bubbleRect.height * .18 - wormRect.height * .48;
+      const maxX = Math.max(8, fieldRect.width - wormRect.width - 8);
+      const maxY = Math.max(8, fieldRect.height - wormRect.height - 8);
+      wormDirection = targetX >= wormPosition.x ? 1 : -1;
+      wormPosition = { x: clamp(targetX, 8, maxX), y: clamp(targetY, 8, maxY) };
+      applyWormPosition('worm-chasing');
+      setTimeout(() => {
+        worm.classList.add('worm-eating', 'worm-chomp', 'worm-grow', 'worm-happy');
+        if (finalWin) worm.classList.add('worm-celebrate');
+      }, 520);
+    }
+    function winBurstMarkup() {
+      return '<div class="win-burst" aria-hidden="true">' + Array.from({ length: 26 }, (_, i) => {
+        const x = (8 + (i * 13) % 86).toFixed(1) + '%';
+        const size = 7 + (i % 5) * 3;
+        const duration = (2.4 + (i % 6) * .22).toFixed(2) + 's';
+        const delay = (-1.8 + (i % 8) * .18).toFixed(2) + 's';
+        const drift = ((i % 2 === 0 ? 1 : -1) * (10 + i % 9)).toString() + 'px';
+        return '<i style="--x:' + x + ';--s:' + size + 'px;--d:' + duration + ';--delay:' + delay + ';--drift:' + drift + '"></i>';
+      }).join('') + '</div>';
+    }
+    function formatDuration(ms) {
+      const seconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+      const minutes = Math.floor(seconds / 60);
+      const rest = seconds % 60;
+      return minutes > 0 ? minutes + ':' + String(rest).padStart(2, '0') : rest + 's';
     }
     function renderStart() {
+      document.body.classList.remove('celebrating');
       stopListening();
       clearTimers();
       isGameOver = false;
@@ -1022,6 +1200,7 @@ export function renderCollectionGameHtml(): string {
       };
     }
     function renderPlay(message = 'انطق الكلمة الألمانية', autoStart = false) {
+      document.body.classList.remove('celebrating');
       const question = state.currentQuestion;
       if (!question) return finish();
       setGameState('bubble');
@@ -1035,6 +1214,7 @@ export function renderCollectionGameHtml(): string {
       const totalWords = state.totalWords || state.totalQuestions || 0;
       const completedWords = state.completedWords ?? state.correctCount ?? 0;
       const attemptsLeft = question.attemptsLeft ?? 3;
+      const bubbleStyle = bubblePositionStyle(question.questionIndex);
       app.innerHTML = '<section class="game">' +
         '<div class="hud">' +
         '<div class="hud-pill"><div class="hud-value" id="scoreValue">⭐ ' + state.score + '</div><div class="hud-label">النقاط</div></div>' +
@@ -1044,7 +1224,7 @@ export function renderCollectionGameHtml(): string {
         '</div>' +
         '<div class="timer"><div class="timer-fill" id="timerFill"></div></div>' +
         '<div class="playfield">' +
-        '<div class="meaning-bubble bubble-spawn" id="meaningBubble"><div class="meaning-text">' + meaning(question.arabicMeaning) + '</div>' + visualMarkup(question.visualEmoji) + '<div class="pop-particles" id="popParticles">' + Array.from({ length: 8 }, (_, i) => '<i style="--angle:' + (i * 45) + 'deg;--distance:' + (52 + i * 5) + 'px"></i>').join('') + Array.from({ length: 5 }, (_, i) => '<b class="success-sparkle" style="--x:' + ((i - 2) * 24) + 'px;--y:' + (-28 - i * 8) + 'px;--delay:' + (i * .035) + 's"></b>').join('') + '</div></div>' +
+        '<div class="meaning-bubble bubble-spawn" id="meaningBubble" style="' + bubbleStyle + '"><div class="meaning-text">' + meaning(question.arabicMeaning) + '</div><div class="pop-particles" id="popParticles">' + Array.from({ length: 12 }, (_, i) => '<i style="--angle:' + (i * 30) + 'deg;--distance:' + (52 + i * 5) + 'px"></i>').join('') + Array.from({ length: 7 }, (_, i) => '<b class="success-sparkle" style="--x:' + ((i - 3) * 22) + 'px;--y:' + (-28 - i * 8) + 'px;--delay:' + (i * .035) + 's"></b>').join('') + '</div></div>' +
         wormMarkup('', completedWords) +
         '</div>' +
         '<div class="controls"><div class="status" id="status">' + escapeHtml(message) + '</div><div class="bottom-actions"><button class="voice-action hidden" id="micRecoverBtn">🎙 فعّل المايكروفون</button><button class="mini-action" id="leaveBtn">حفظ وخروج</button></div><div class="hint">قل الكلمة المناسبة للمعنى · يستمع بالألمانية <span id="listeningIndicator" aria-hidden="true"></span></div></div>' +
@@ -1052,6 +1232,7 @@ export function renderCollectionGameHtml(): string {
       document.getElementById('micRecoverBtn').onclick = enableMicrophoneAndListen;
       document.getElementById('leaveBtn').onclick = leaveGame;
       startQuestionTimer(question.timeLimit || 10);
+      requestAnimationFrame(() => startWormIdleMovement('worm-idle'));
       if (autoStart || microphoneEnabled) scheduleAutoListen(420);
     }
     function startQuestionTimer(seconds) {
@@ -1093,6 +1274,7 @@ export function renderCollectionGameHtml(): string {
       isListening = true;
       setStatus('يستمع بالألمانية...');
       playSound('listen');
+      applyWormPosition('worm-listening');
       document.getElementById('listenChip')?.classList.add('active');
       renderVoiceWaves(true);
       setRecoveryButton(false);
@@ -1179,9 +1361,11 @@ export function renderCollectionGameHtml(): string {
       clearTimeout(speechTimer);
       clearTimeout(activeTimerId);
       clearTimeout(autoListenTimer);
+      clearTimeout(wormMoveTimer);
       speechTimer = null;
       activeTimerId = null;
       autoListenTimer = null;
+      wormMoveTimer = null;
     }
     async function submitSpeech(transcript, alternatives, reason = 'speech', confidence, interimTranscript = '') {
       if (requestBusy || roundClosed || !state.currentQuestion) return;
@@ -1203,14 +1387,16 @@ export function renderCollectionGameHtml(): string {
         isChecking = false;
         if (result.correct) {
           setGameState('correct');
+          const finalWin = Boolean(result.finished && result.gameWon && !result.failedQuestion);
           playSound('correct');
+          if (finalWin) setTimeout(() => playSound('win'), 560);
+          moveWormToBubble(finalWin);
           document.getElementById('meaningBubble')?.classList.add('bubble-bite');
           document.getElementById('popParticles')?.classList.add('active');
-          document.getElementById('worm')?.classList.add('worm-chomp', 'worm-grow', 'worm-happy');
           document.getElementById('scoreValue')?.classList.add('score-pulse');
-          setStatus('صحيح! +' + Math.max(1, Math.min(4, state.correctCount)) + ' XP');
-          setTimeout(() => document.getElementById('meaningBubble')?.classList.add('bubble-pop'), 260);
-          setTimeout(() => result.finished ? finish() : renderPlay('صحيح! فقاعة جديدة 🫧'), 900);
+          setStatus(finalWin ? 'ممتاز! أكملت المجموعة 🎉' : 'صحيح! الدودة أكلت الفقاعة');
+          setTimeout(() => document.getElementById('meaningBubble')?.classList.add(finalWin ? 'final-pop' : 'bubble-pop'), finalWin ? 520 : 300);
+          setTimeout(() => finalWin ? finish('win') : renderPlay('صحيح! فقاعة جديدة 🫧'), finalWin ? 1500 : 1050);
           return;
         }
         if (result.tryAgain && state.currentQuestion) {
@@ -1263,7 +1449,7 @@ export function renderCollectionGameHtml(): string {
       app.classList.add('screen-shake');
       setTimeout(() => finish(), 760);
     }
-    async function finish() {
+    async function finish(reason = 'round_finished') {
       if (finishBusy) return;
       finishBusy = true;
       clearTimers();
@@ -1272,7 +1458,7 @@ export function renderCollectionGameHtml(): string {
         state = await api('/game/api/finish', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, reason: 'round_finished' })
+          body: JSON.stringify({ token, reason })
         });
         exitFinishSent = true;
         state.failedQuestion ? renderGameOver() : renderWin();
@@ -1283,6 +1469,7 @@ export function renderCollectionGameHtml(): string {
       }
     }
     function renderGameOver() {
+      document.body.classList.remove('celebrating');
       setGameState('gameOver');
       isGameOver = true;
       const failed = state.failedQuestion;
@@ -1305,16 +1492,18 @@ export function renderCollectionGameHtml(): string {
       document.getElementById('leaveResultBtn')?.addEventListener('click', leaveGame);
     }
     function renderWin() {
+      document.body.classList.add('celebrating');
       setGameState('finished');
       isGameOver = true;
       playSound('win');
       const totalWords = state.totalWords || state.totalQuestions || 0;
       const completedWords = state.completedWords ?? state.correctCount ?? 0;
-      app.innerHTML = '<section class="screen"><div class="panel">' +
-        '<div class="result-worm">' + wormMarkup('', 5, true) + '</div>' +
-        '<h1>ممتاز! أكلت كل الفقاعات</h1>' +
-        '<p class="sub">الدودة خلصت مجموعة الكلمات بنجاح.</p>' +
-        '<div class="summary-grid"><div class="summary-card"><strong>' + completedWords + ' / ' + totalWords + '</strong><span>أكملت</span></div><div class="summary-card"><strong>' + state.score + '</strong><span>النقاط</span></div><div class="summary-card"><strong>+' + (state.xpGained || 0) + '</strong><span>XP</span></div></div>' +
+      const challengeCard = state.isChallenge ? '<div class="summary-card"><strong>⚔️</strong><span>تحدي مسجل</span></div>' : '';
+      app.innerHTML = '<section class="screen win-celebration">' + winBurstMarkup() + '<div class="panel">' +
+        '<div class="result-worm">' + wormMarkup('worm-celebrate worm-happy', Math.max(5, completedWords), true) + '</div>' +
+        '<h1>ممتاز! أكملت المجموعة</h1>' +
+        '<p class="sub">الدودة أكلت كل الفقاعات بنجاح</p>' +
+        '<div class="summary-grid"><div class="summary-card"><strong>' + totalWords + ' / ' + totalWords + '</strong><span>الكلمات المكتملة</span></div><div class="summary-card"><strong>' + state.score + '</strong><span>النقاط المكتسبة</span></div><div class="summary-card"><strong>+' + (state.xpGained || 0) + '</strong><span>XP المكتسب</span></div><div class="summary-card"><strong>' + formatDuration(state.durationMs) + '</strong><span>الوقت</span></div>' + challengeCard + '</div>' +
         '<button class="primary" id="restartBtn">العب مرة ثانية</button>' +
         '<button class="secondary" id="leaveResultBtn">العودة إلى البوت</button>' +
         '</div></section>';
@@ -1322,6 +1511,7 @@ export function renderCollectionGameHtml(): string {
       document.getElementById('leaveResultBtn')?.addEventListener('click', leaveGame);
     }
     async function restartGame() {
+      document.body.classList.remove('celebrating');
       if (restartBusy) return;
       restartBusy = true;
       isRestarting = true;
@@ -1340,6 +1530,10 @@ export function renderCollectionGameHtml(): string {
           body: JSON.stringify({ token })
         });
         token = next.token;
+        bubblePositions = {};
+        currentBubblePosition = null;
+        wormPosition = { x: 26, y: 180 };
+        wormDirection = 1;
         history.replaceState(null, '', next.gameUrl || ('/game?token=' + encodeURIComponent(token)));
         state = await api('/game/api/session?token=' + encodeURIComponent(token));
         microphoneEnabled = false;
@@ -1376,7 +1570,7 @@ export function renderCollectionGameHtml(): string {
     function finishPayload(reason = 'exit') {
       return JSON.stringify({ token, reason });
     }
-    async function finishOnExit(waitForResponse) {
+    async function finishOnExit(waitForResponse, reason = 'page_exit') {
       if (!token || isRestarting) return state;
       stopListening();
       clearTimers();
@@ -1386,13 +1580,13 @@ export function renderCollectionGameHtml(): string {
         state = await api('/game/api/finish', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: finishPayload('button_exit')
+          body: finishPayload(reason)
         });
         exitFinishSent = true;
         return state;
       }
       exitFinishSent = true;
-      const payload = finishPayload('page_exit');
+      const payload = finishPayload(reason);
       try {
         if (navigator.sendBeacon) {
           const blob = new Blob([payload], { type: 'application/json' });
@@ -1413,7 +1607,7 @@ export function renderCollectionGameHtml(): string {
       if (finishBusy || isRestarting) return;
       finishBusy = true;
       try {
-        const saved = await finishOnExit(true);
+        const saved = await finishOnExit(true, 'button_exit');
         renderExitSaved(saved?.xpGained || 0);
       } catch {
         renderExitSaved(state?.xpGained || 0);
@@ -1422,6 +1616,7 @@ export function renderCollectionGameHtml(): string {
       }
     }
     function renderExitSaved(xpGained) {
+      document.body.classList.remove('celebrating');
       app.innerHTML = '<section class="screen"><div class="panel">' +
         '<div class="result-worm">' + wormMarkup('', 2) + '</div>' +
         '<h1>تم حفظ تقدمك</h1>' +
@@ -1456,6 +1651,7 @@ export function renderCollectionGameHtml(): string {
       setRecoveryButton(true);
     }
     function renderError(message) {
+      document.body.classList.remove('celebrating');
       setGameState('error');
       clearTimers();
       stopListening();
@@ -1468,17 +1664,17 @@ export function renderCollectionGameHtml(): string {
     }
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
-        finishOnExit(false);
+        finishOnExit(false, 'visibility_hidden');
       } else if (microphoneEnabled && gameState === 'bubble' && !requestBusy && !roundClosed && !isGameOver) {
         if (!activeTimerId && state.currentQuestion) startQuestionTimer(state.currentQuestion.timeLimit || 10);
         scheduleAutoListen(500);
       }
     });
     window.addEventListener('pagehide', () => {
-      finishOnExit(false);
+      finishOnExit(false, 'pagehide');
     });
     window.addEventListener('beforeunload', () => {
-      finishOnExit(false);
+      finishOnExit(false, 'beforeunload');
     });
     window.addEventListener('pageshow', () => {
       if (microphoneEnabled && gameState === 'bubble' && !requestBusy && !roundClosed && !isGameOver) {

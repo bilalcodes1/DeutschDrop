@@ -7,7 +7,7 @@ import { pickWinnerByScoreAndDuration } from '../repositories/challengeRepositor
 import { displayUserName, sendTelegramMessage } from './notifications';
 
 export const GAME_QUESTION_LIMIT = 100;
-export const GAME_UI_VERSION = 'underwater-worm-v1';
+export const GAME_UI_VERSION = 'underwater-worm-v2';
 export const GAME_MAX_ATTEMPTS = 3;
 const GAME_NO_SPEECH_GRACE_COUNT = 1;
 const GAME_SESSION_TTL_MINUTES = 30;
@@ -68,6 +68,8 @@ export interface GameSessionData {
     questions: GameQuestion[];
     startedAt: string;
     finishedAt?: string;
+    finishReason?: string;
+    finishNotificationSent?: boolean;
     failedQuestion?: GameQuestion;
     xpGained?: number;
 }
@@ -139,6 +141,8 @@ export interface PublicGameState {
     finished: boolean;
     xpAwarded: boolean;
     xpGained: number;
+    durationMs: number;
+    isChallenge: boolean;
     currentQuestion: PublicGameQuestion | null;
     failedQuestion?: {
         failedVisualEmoji: string;
@@ -558,13 +562,14 @@ export async function restartGameSession(db: D1Database, token: string): Promise
     return { token: next.token, totalQuestions: next.totalQuestions };
 }
 
-export async function finishGameSession(db: D1Database, token: string, env?: Env): Promise<PublicGameState> {
+export async function finishGameSession(db: D1Database, token: string, env?: Env, finishReason = 'unknown'): Promise<PublicGameState> {
     const session = await requireValidSession(db, token);
     const data = parseSessionData(session);
     normalizeGameData(data);
     if (data.currentIndex < data.questions.length && session.finished !== 1) {
         data.finishedAt = new Date().toISOString();
     }
+    data.finishReason = sanitizeFinishReason(finishReason);
 
     if (session.xp_awarded === 1) {
         return toPublicState(session);
@@ -601,6 +606,7 @@ export async function finishGameSession(db: D1Database, token: string, env?: Env
                 height_meters: data.heightMeters,
                 score: calculateGameScore(data.heightMeters, data.correctCount),
                 duration_ms: calculateDurationMs(data.startedAt, data.finishedAt ?? new Date().toISOString()),
+                finish_reason: data.finishReason,
                 result: data.challengeId ? 'pending' : null,
                 attempts_used: Object.values(data.attemptsByWord ?? {}).reduce((sum, value) => sum + Number(value || 0), 0),
                 mode: 'speech_rocket',
@@ -614,9 +620,14 @@ export async function finishGameSession(db: D1Database, token: string, env?: Env
 
     data.xpGained = xpGained;
     data.finishedAt = data.finishedAt ?? new Date().toISOString();
+    if (getChanges(claimed) > 0 && env) {
+        data.finishNotificationSent = true;
+    }
     await updateSessionData(db, session.token_hash, data, 1, 1);
     if (getChanges(claimed) > 0 && data.challengeId && data.challengeRole) {
         await submitGameChallengeSessionResult(db, env, session, data, xpGained);
+    } else if (getChanges(claimed) > 0 && env) {
+        await sendGameFinishNotification(db, env, session.user_id, data, xpGained);
     }
     return toPublicState({ ...session, session_data: JSON.stringify(data), finished: 1, xp_awarded: 1 });
 }
@@ -794,7 +805,7 @@ async function submitGameChallengeSessionResult(
             if (finalChallenge) await announceGameChallengeResult(db, env, finalChallenge);
         }
     } else if (env) {
-        await notifyGameChallengeWaiting(db, env, session.user_id);
+        await notifyGameChallengeWaiting(db, env, session.user_id, data, xpGained);
     }
 }
 
@@ -840,6 +851,7 @@ function toPublicState(session: GameSessionRecord): PublicGameState {
     const completedWords = data.completedWords ?? data.correctCount;
     const totalWords = data.totalWords ?? data.totalQuestions;
     const score = data.score ?? calculateGameScore(data.heightMeters, data.correctCount);
+    const finishedAt = data.finishedAt ?? new Date().toISOString();
     return {
         mode: 'speech_rocket',
         speechLang: 'de-DE',
@@ -859,6 +871,8 @@ function toPublicState(session: GameSessionRecord): PublicGameState {
         finished: session.finished === 1 || data.gameOver || data.currentIndex >= data.totalQuestions,
         xpAwarded: session.xp_awarded === 1,
         xpGained: data.xpGained ?? 0,
+        durationMs: calculateDurationMs(data.startedAt, finishedAt),
+        isChallenge: Boolean(data.challengeId),
         currentQuestion: question ? publicQuestion(question) : null,
         failedQuestion: data.failedQuestion
             ? {
@@ -1023,10 +1037,53 @@ async function announceGameChallengeResult(db: D1Database, env: Env, challenge: 
     await sendTelegramMessage(env, opponent.telegram_id, result).catch(() => {});
 }
 
-async function notifyGameChallengeWaiting(db: D1Database, env: Env, userId: number): Promise<void> {
+async function sendGameFinishNotification(
+    db: D1Database,
+    env: Env,
+    userId: number,
+    data: GameSessionData,
+    xpGained: number
+): Promise<void> {
     const user = await queryOne<Pick<User, 'telegram_id'>>(db, 'SELECT telegram_id FROM users WHERE user_id = ?', [userId]);
     if (!user) return;
-    await sendTelegramMessage(env, user.telegram_id, '✅ انتهيت من تحدي دودة البحر.\nبانتظار الطرف الآخر.').catch(() => {});
+    const totalWords = data.totalWords ?? data.totalQuestions;
+    const completedWords = data.completedWords ?? data.correctCount;
+    const score = calculateGameScore(data.heightMeters, data.correctCount);
+    const message = data.gameWon
+        ? `🎉 مبروك! أكملت مجموعة الكلمات في لعبة الدودة.\n` +
+            `✅ الكلمات المكتملة: ${completedWords} / ${totalWords}\n` +
+            `⭐ النقاط المكتسبة: +${score}\n` +
+            `💎 XP المكتسب: +${xpGained}\n` +
+            `🐛 الدودة وصلت لأقصى طول!`
+        : completedWords > 0
+            ? `🌊 تم حفظ تقدمك في لعبة الدودة!\n` +
+                `✅ الكلمات المكتملة: ${completedWords} / ${totalWords}\n` +
+                `⭐ النقاط المكتسبة: +${score}\n` +
+                `💎 XP المكتسب: +${xpGained}\n` +
+                `🐛 طول الدودة: ${completedWords} مراحل\n` +
+                `ارجع للعبة بأي وقت تكمل تحديك.`
+            : `🌊 تم إغلاق لعبة الدودة.\nلم يتم تسجيل تقدم جديد هذه المرة.`;
+    await sendTelegramMessage(env, user.telegram_id, message).catch(() => {});
+}
+
+async function notifyGameChallengeWaiting(
+    db: D1Database,
+    env: Env,
+    userId: number,
+    data: GameSessionData,
+    xpGained: number
+): Promise<void> {
+    const user = await queryOne<Pick<User, 'telegram_id'>>(db, 'SELECT telegram_id FROM users WHERE user_id = ?', [userId]);
+    if (!user) return;
+    const totalWords = data.totalWords ?? data.totalQuestions;
+    const completedWords = data.completedWords ?? data.correctCount;
+    const score = calculateGameScore(data.heightMeters, data.correctCount);
+    const message = `⚔️ تم حفظ نتيجتك في تحدي الدودة!\n` +
+        `✅ الكلمات المكتملة: ${completedWords} / ${totalWords}\n` +
+        `⭐ النقاط: ${score}\n` +
+        `💎 XP: +${xpGained}\n` +
+        `⏳ بانتظار نتيجة الطرف الآخر...`;
+    await sendTelegramMessage(env, user.telegram_id, message).catch(() => {});
 }
 
 function formatMs(value: number | null): string {
@@ -1035,6 +1092,11 @@ function formatMs(value: number | null): string {
     const minutes = Math.floor(seconds / 60);
     const rest = seconds % 60;
     return minutes > 0 ? `${minutes}:${String(rest).padStart(2, '0')}` : `${rest}s`;
+}
+
+function sanitizeFinishReason(reason: string): string {
+    const normalized = String(reason || 'unknown').trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+    return normalized || 'unknown';
 }
 
 function shuffle<T>(array: T[]): T[] {

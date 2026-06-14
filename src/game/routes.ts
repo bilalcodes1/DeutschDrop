@@ -40,7 +40,7 @@ export async function handleGameRoute(request: Request, env: Env): Promise<Respo
     if (url.pathname === '/game/api/finish' && request.method === 'POST') {
         return jsonResult(async () => {
             const body = await readJson<{ token?: string; reason?: string }>(request);
-            return finishGameSession(env.DB, body.token ?? '', env);
+            return finishGameSession(env.DB, body.token ?? '', env, String(body.reason ?? 'unknown'));
         });
     }
 
