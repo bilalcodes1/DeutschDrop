@@ -6,6 +6,15 @@ export function renderCollectionGameHtml(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>تحدي الصور والكلمات</title>
   <style>
+    :root {
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --hud-top: calc(var(--safe-top) + clamp(10px, 2.5vh, 22px));
+      --obstacle-top: clamp(176px, 31dvh, 292px);
+      --rocket-bottom: calc(var(--safe-bottom) + clamp(92px, 14dvh, 158px));
+      --status-bottom: calc(var(--safe-bottom) + clamp(18px, 4dvh, 48px));
+      --panel-width: min(520px, 92vw);
+    }
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
     body {
@@ -79,7 +88,7 @@ export function renderCollectionGameHtml(): string {
       width: 100vw;
       height: 100dvh;
       overflow: hidden;
-      padding: env(safe-area-inset-top) 18px env(safe-area-inset-bottom);
+      padding: var(--safe-top) 18px var(--safe-bottom);
     }
     .screen {
       min-height: 100dvh;
@@ -89,7 +98,7 @@ export function renderCollectionGameHtml(): string {
       text-shadow: 0 4px 12px rgba(20, 74, 120, .42);
     }
     .panel {
-      width: min(520px, 92vw);
+      width: var(--panel-width);
       display: grid;
       justify-items: center;
       gap: 18px;
@@ -136,24 +145,24 @@ export function renderCollectionGameHtml(): string {
     }
     .hud {
       position: absolute;
-      top: calc(env(safe-area-inset-top) + 18px);
+      top: var(--hud-top);
       left: 50%;
       translate: -50% 0;
       width: min(480px, 92vw);
       display: grid;
       justify-items: center;
-      gap: 8px;
+      gap: 6px;
       z-index: 7;
       pointer-events: none;
       text-shadow: 0 4px 10px rgba(21, 88, 150, .38);
     }
     .meters {
-      font-size: clamp(46px, 16vw, 86px);
+      font-size: clamp(42px, 13vw, 76px);
       font-weight: 1000;
       line-height: .9;
     }
     .hud-label {
-      font-size: 15px;
+      font-size: clamp(13px, 3.2vw, 15px);
       font-weight: 900;
       opacity: .96;
     }
@@ -174,7 +183,7 @@ export function renderCollectionGameHtml(): string {
     .obstacle {
       position: absolute;
       left: 50%;
-      top: 32%;
+      top: var(--obstacle-top);
       translate: -50% -50%;
       display: grid;
       justify-items: center;
@@ -184,9 +193,25 @@ export function renderCollectionGameHtml(): string {
       filter: drop-shadow(0 18px 20px rgba(35, 93, 146, .28));
     }
     .obstacle-emoji {
-      font-size: clamp(90px, 28vw, 156px);
+      min-width: min(72vw, 330px);
+      min-height: clamp(92px, 21dvh, 172px);
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: center;
+      gap: .12em;
+      white-space: nowrap;
+      font-size: clamp(76px, 24vw, 148px);
       line-height: 1;
       animation: obstacle-bob 1.9s ease-in-out infinite;
+    }
+    .obstacle-emoji.combo {
+      font-size: clamp(62px, 18vw, 118px);
+    }
+    .obstacle-emoji span {
+      display: inline-block;
+      line-height: 1;
     }
     @keyframes obstacle-bob {
       0%, 100% { translate: 0 0; }
@@ -211,7 +236,7 @@ export function renderCollectionGameHtml(): string {
     .rocket-wrap {
       position: absolute;
       left: 50%;
-      bottom: 8%;
+      bottom: var(--rocket-bottom);
       translate: -50% 0;
       width: 126px;
       height: 226px;
@@ -318,42 +343,78 @@ export function renderCollectionGameHtml(): string {
     .controls {
       position: absolute;
       left: 50%;
-      bottom: calc(env(safe-area-inset-bottom) + 20px);
+      bottom: var(--status-bottom);
       translate: -50% 0;
       width: min(430px, 92vw);
       display: grid;
       justify-items: center;
-      gap: 10px;
+      gap: 8px;
       z-index: 8;
     }
-    .mic {
-      width: min(150px, 38vw);
-      height: min(150px, 38vw);
-      min-height: 94px;
-      min-width: 94px;
-      border-radius: 50%;
+    .voice-action {
+      min-height: 48px;
+      border-radius: 999px;
+      padding: 10px 18px;
       background: rgba(255,255,255,.94);
       color: #184069;
-      font-size: clamp(44px, 12vw, 64px);
-      box-shadow: 0 10px 0 rgba(37,101,156,.16), 0 18px 26px rgba(30,82,130,.24);
+      font-size: 17px;
+      font-weight: 950;
+      box-shadow: 0 8px 0 rgba(37,101,156,.13), 0 14px 24px rgba(30,82,130,.20);
+    }
+    .voice-action.hidden {
+      display: none;
+    }
+    .listening-indicator {
+      min-height: 28px;
       display: grid;
       place-items: center;
+      opacity: .92;
     }
-    .mic.listening {
-      animation: mic-pulse .72s ease-in-out infinite;
+    .voice-waves {
+      display: inline-grid;
+      grid-auto-flow: column;
+      align-items: end;
+      gap: 4px;
+      height: 22px;
     }
-    @keyframes mic-pulse {
-      0%, 100% { scale: 1; box-shadow: 0 0 0 0 rgba(255,255,255,.48), 0 10px 0 rgba(37,101,156,.16); }
-      50% { scale: 1.08; box-shadow: 0 0 0 20px rgba(255,255,255,.12), 0 10px 0 rgba(37,101,156,.16); }
+    .voice-waves i {
+      width: 5px;
+      height: 9px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.9);
+      animation: voice-wave .62s ease-in-out infinite alternate;
+    }
+    .voice-waves i:nth-child(2) { animation-delay: .1s; height: 16px; }
+    .voice-waves i:nth-child(3) { animation-delay: .2s; height: 12px; }
+    @keyframes voice-wave {
+      from { scale: 1 .55; opacity: .45; }
+      to { scale: 1 1.18; opacity: 1; }
     }
     .status {
       min-height: 32px;
-      padding: 8px 14px;
-      border-radius: 999px;
+      max-width: min(380px, 88vw);
+      padding: 8px 15px;
+      border-radius: 18px;
       background: rgba(14, 77, 137, .34);
       font-size: 16px;
       font-weight: 900;
+      line-height: 1.35;
       text-shadow: 0 3px 8px rgba(20,74,120,.36);
+    }
+    .bottom-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+    }
+    .mini-action {
+      min-height: 36px;
+      border-radius: 999px;
+      padding: 7px 12px;
+      background: rgba(16, 70, 124, .30);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
     }
     .spinner {
       display: inline-block;
@@ -404,10 +465,14 @@ export function renderCollectionGameHtml(): string {
     .danger { background: rgba(121, 20, 44, .38); }
     .tiny { font-size: 14px; opacity: .9; }
     @media (max-height: 720px) {
-      .rocket-wrap { scale: .84; bottom: 5%; }
-      .obstacle { top: 30%; }
-      .controls { bottom: calc(env(safe-area-inset-bottom) + 12px); }
-      .mic { width: 96px; height: 96px; font-size: 42px; }
+      :root {
+        --rocket-bottom: calc(var(--safe-bottom) + 78px);
+        --status-bottom: calc(var(--safe-bottom) + 8px);
+      }
+      .rocket-wrap { scale: .82; }
+      .obstacle { top: clamp(150px, 30dvh, 230px); }
+      .controls { bottom: calc(var(--safe-bottom) + 10px); }
+      .status { font-size: 14px; }
     }
   </style>
 </head>
@@ -436,6 +501,10 @@ export function renderCollectionGameHtml(): string {
     let speechTimer = null;
     let activeTimerId = null;
     let autoListenTimer = null;
+    let latestInterimTranscript = '';
+    let latestAlternatives = [];
+    let latestConfidence = undefined;
+    let exitFinishSent = false;
     let roundClosed = false;
     let requestBusy = false;
     let finishBusy = false;
@@ -448,6 +517,20 @@ export function renderCollectionGameHtml(): string {
     }
     function emoji(value) {
       return escapeHtml(value || '❓');
+    }
+    function graphemes(value) {
+      const raw = String(value || '❓').trim() || '❓';
+      try {
+        if (Intl && Intl.Segmenter) {
+          return Array.from(new Intl.Segmenter('de', { granularity: 'grapheme' }).segment(raw), item => item.segment).filter(part => part.trim());
+        }
+      } catch {}
+      return Array.from(raw).filter(part => part.trim());
+    }
+    function obstacleEmojiMarkup(value) {
+      const parts = graphemes(value);
+      const comboClass = parts.length > 1 ? ' combo' : '';
+      return '<div class="obstacle-emoji' + comboClass + '">' + parts.map(part => '<span>' + emoji(part) + '</span>').join('') + '</div>';
     }
     async function api(path, options) {
       const res = await fetch(path, options);
@@ -483,6 +566,7 @@ export function renderCollectionGameHtml(): string {
       isGameOver = false;
       isChecking = false;
       isRestarting = false;
+      exitFinishSent = false;
       setGameState('ready');
       const totalWords = state.totalWords || state.totalQuestions || 0;
       app.innerHTML = '<section class="screen"><div class="panel">' +
@@ -519,11 +603,12 @@ export function renderCollectionGameHtml(): string {
       const attemptsLeft = question.attemptsLeft ?? 3;
       app.innerHTML = '<section class="flight">' +
         '<div class="hud"><div class="meters">' + state.heightMeters + '</div><div class="hud-label">meters above the ground</div><div class="hud-label">التقدم: ' + (completedWords + 1) + ' / ' + totalWords + ' · المنجزة: ' + completedWords + ' · محاولات: ' + attemptsLeft + '</div><div class="timer"><div class="timer-fill" id="timerFill"></div></div></div>' +
-        '<div class="obstacle" id="obstacle"><div class="obstacle-emoji">' + emoji(question.visualEmoji) + '</div></div>' +
+        '<div class="obstacle" id="obstacle">' + obstacleEmojiMarkup(question.visualEmoji) + '</div>' +
         rocketMarkup() +
-        '<div class="controls"><button class="mic" id="micBtn" aria-label="انطق الكلمة">🎙</button><div class="status" id="status">' + escapeHtml(message) + '</div><div class="tiny">المايك يعمل تلقائياً بعد التفعيل · de-DE</div></div>' +
+        '<div class="controls"><div class="listening-indicator" id="listeningIndicator" aria-hidden="true"></div><div class="status" id="status">' + escapeHtml(message) + '</div><div class="bottom-actions"><button class="voice-action hidden" id="micRecoverBtn">🎙 فعّل المايكروفون</button><button class="mini-action" id="leaveBtn">حفظ وخروج</button></div><div class="tiny">المايك يعمل تلقائياً بعد التفعيل · de-DE</div></div>' +
         '</section>';
-      document.getElementById('micBtn').onclick = enableMicrophoneAndListen;
+      document.getElementById('micRecoverBtn').onclick = enableMicrophoneAndListen;
+      document.getElementById('leaveBtn').onclick = leaveGame;
       startQuestionTimer(question.timeLimit || 10);
       if (autoStart || microphoneEnabled) scheduleAutoListen(420);
     }
@@ -557,23 +642,48 @@ export function renderCollectionGameHtml(): string {
     function listen() {
       if (isListening || requestBusy || isChecking || roundClosed || isGameOver || isRestarting || !state.currentQuestion) return;
       if (!isSpeechSupported()) return renderError('متصفحك لا يدعم التعرف على الصوت. افتح اللعبة في Chrome أو Safari حديث.');
+      stopListening();
+      setGameState('preparing');
+      latestInterimTranscript = '';
+      latestAlternatives = [];
+      latestConfidence = undefined;
       setGameState('listening');
       isListening = true;
       setStatus('أسمعك...');
       document.getElementById('rocket')?.classList.add('launch');
-      document.getElementById('micBtn')?.classList.add('listening');
+      renderVoiceWaves(true);
+      setRecoveryButton(false);
       activeRecognition = new Recognition();
       activeRecognition.lang = 'de-DE';
       activeRecognition.continuous = false;
-      activeRecognition.interimResults = false;
+      activeRecognition.interimResults = true;
       if ('maxAlternatives' in activeRecognition) activeRecognition.maxAlternatives = 5;
       activeRecognition.onresult = event => {
-        const result = event.results && event.results[0];
-        const alternatives = result ? Array.from(result).map(item => item.transcript).filter(Boolean) : [];
-        const transcript = alternatives[0] || '';
-        stopListening();
-        if (!transcript) return noSpeech('no_speech');
-        submitSpeech(transcript, alternatives, 'speech');
+        let finalTranscript = '';
+        let finalAlternatives = [];
+        let finalConfidence = undefined;
+        let interimBest = '';
+        for (let index = event.resultIndex || 0; index < event.results.length; index += 1) {
+          const result = event.results[index];
+          const alternatives = Array.from(result).map(item => item.transcript).filter(Boolean);
+          if (result.isFinal) {
+            finalAlternatives = alternatives;
+            finalTranscript = alternatives[0] || '';
+            finalConfidence = typeof result[0]?.confidence === 'number' ? result[0].confidence : undefined;
+          } else if (alternatives[0]) {
+            interimBest = alternatives[0];
+          }
+        }
+        if (interimBest) {
+          latestInterimTranscript = interimBest;
+          setStatus('سمعت: ' + escapeHtml(interimBest));
+        }
+        if (finalTranscript || finalAlternatives.length > 0) {
+          latestAlternatives = finalAlternatives;
+          latestConfidence = finalConfidence;
+          stopListening();
+          submitSpeech(finalTranscript, finalAlternatives, 'speech', finalConfidence, latestInterimTranscript);
+        }
       };
       activeRecognition.onerror = event => {
         stopListening();
@@ -588,7 +698,11 @@ export function renderCollectionGameHtml(): string {
       activeRecognition.onend = () => {
         if (isListening) {
           stopListening();
-          noSpeech('no_speech');
+          if (latestInterimTranscript) {
+            submitSpeech('', latestAlternatives, 'speech', latestConfidence, latestInterimTranscript);
+          } else {
+            noSpeech('no_speech');
+          }
         }
       };
       try {
@@ -612,7 +726,8 @@ export function renderCollectionGameHtml(): string {
       isListening = false;
       clearTimeout(speechTimer);
       speechTimer = null;
-      document.getElementById('micBtn')?.classList.remove('listening');
+      renderVoiceWaves(false);
+      try { activeRecognition && activeRecognition.abort && activeRecognition.abort(); } catch {}
       try { activeRecognition && activeRecognition.stop(); } catch {}
       activeRecognition = null;
     }
@@ -624,7 +739,7 @@ export function renderCollectionGameHtml(): string {
       activeTimerId = null;
       autoListenTimer = null;
     }
-    async function submitSpeech(transcript, alternatives, reason = 'speech') {
+    async function submitSpeech(transcript, alternatives, reason = 'speech', confidence, interimTranscript = '') {
       if (requestBusy || roundClosed || !state.currentQuestion) return;
       requestBusy = true;
       isChecking = true;
@@ -633,11 +748,12 @@ export function renderCollectionGameHtml(): string {
       stopListening();
       setGameState('checking');
       setStatus('<span class="spinner"></span> أتحقق...');
+      const previousAttemptsLeft = state.currentQuestion.attemptsLeft ?? 3;
       try {
         const result = await api('/game/api/answer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, questionIndex: state.currentQuestion.questionIndex, transcript, alternatives, reason })
+          body: JSON.stringify({ token, questionIndex: state.currentQuestion.questionIndex, transcript, alternatives, reason, confidence, interimTranscript })
         });
         state = result;
         isChecking = false;
@@ -658,7 +774,8 @@ export function renderCollectionGameHtml(): string {
           requestBusy = false;
           roundClosed = false;
           currentQuestionIndex = state.currentQuestion.questionIndex;
-          applyPartialWrong(result.attemptsLeft);
+          const technicalRetry = (reason === 'no_speech' || reason === 'speech_error') && result.attemptsLeft >= previousAttemptsLeft;
+          applyPartialWrong(result.attemptsLeft, technicalRetry);
           startQuestionTimer(state.currentQuestion.timeLimit || 8);
           scheduleAutoListen(700);
           return;
@@ -668,20 +785,22 @@ export function renderCollectionGameHtml(): string {
         renderError('تعذر تسجيل النطق. افتح اللعبة مرة ثانية من البوت.');
       }
     }
-    function applyPartialWrong(attemptsLeft) {
-      app.classList.add('shake-screen');
+    function applyPartialWrong(attemptsLeft, technicalRetry = false) {
+      if (!technicalRetry) app.classList.add('shake-screen');
       const rocket = document.getElementById('rocket');
       const obstacle = document.getElementById('obstacle');
       rocket?.classList.remove('drop-back');
       obstacle?.classList.remove('collision');
       void rocket?.offsetWidth;
-      rocket?.classList.add('drop-back');
-      obstacle?.classList.add('collision');
+      if (!technicalRetry) {
+        rocket?.classList.add('drop-back');
+        obstacle?.classList.add('collision');
+      }
       const totalWords = state.totalWords || state.totalQuestions || 0;
       const completedWords = state.completedWords ?? state.correctCount ?? 0;
       const label = document.querySelectorAll('.hud .hud-label')[1];
       if (label) label.textContent = 'التقدم: ' + (completedWords + 1) + ' / ' + totalWords + ' · المنجزة: ' + completedWords + ' · محاولات: ' + attemptsLeft;
-      setStatus('غلط، حاول مرة ثانية — باقي ' + attemptsLeft);
+      setStatus(technicalRetry ? 'ما سمعتك بوضوح، أسمعك مرة ثانية...' : 'حاول مرة ثانية — باقي ' + attemptsLeft);
       setTimeout(() => {
         app.classList.remove('shake-screen');
         rocket?.classList.remove('drop-back');
@@ -709,6 +828,7 @@ export function renderCollectionGameHtml(): string {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token })
         });
+        exitFinishSent = true;
         state.failedQuestion ? renderGameOver() : renderWin();
       } catch {
         renderError('تعذر إنهاء الجولة حالياً.');
@@ -726,13 +846,16 @@ export function renderCollectionGameHtml(): string {
         '<h1>خسرت بسبب</h1>' +
         '<div class="result-emoji">' + emoji(failed.failedVisualEmoji) + '</div>' +
         '<div class="answer-line"><strong class="correct-word">' + escapeHtml(failed.correctAnswer) + '</strong><button class="sound" id="speakBtn" aria-label="استمع للنطق الصحيح">🔊</button></div>' +
+        '<button class="secondary" id="speakTextBtn">🔊 اسمع النطق الصحيح</button>' +
         '<p class="sub">وصلت إلى ' + state.heightMeters + ' متر</p>' +
         '<p class="notice">أنجزت ' + completedWords + ' من ' + totalWords + ' · XP: +' + (state.xpGained || 0) + '</p>' +
         '<button class="primary" id="restartBtn">إعادة اللعب</button>' +
-        '<button class="secondary" onclick="history.back()">رجوع للبوت</button>' +
+        '<button class="secondary" id="leaveResultBtn">رجوع للبوت</button>' +
         '</div></section>';
       document.getElementById('speakBtn')?.addEventListener('click', () => speakGerman(failed.correctPronunciationText || failed.correctAnswer));
+      document.getElementById('speakTextBtn')?.addEventListener('click', () => speakGerman(failed.correctPronunciationText || failed.correctAnswer));
       document.getElementById('restartBtn')?.addEventListener('click', restartGame);
+      document.getElementById('leaveResultBtn')?.addEventListener('click', leaveGame);
     }
     function renderWin() {
       setGameState('finished');
@@ -745,9 +868,10 @@ export function renderCollectionGameHtml(): string {
         '<p class="sub">أكملت كل كلمات المجموعة</p>' +
         '<p class="notice">✅ ' + completedWords + ' / ' + totalWords + ' · الارتفاع: ' + state.heightMeters + ' متر · XP: +' + (state.xpGained || 0) + '</p>' +
         '<button class="primary" id="restartBtn">إعادة اللعب</button>' +
-        '<button class="secondary" onclick="history.back()">رجوع للبوت</button>' +
+        '<button class="secondary" id="leaveResultBtn">رجوع للبوت</button>' +
         '</div></section>';
       document.getElementById('restartBtn')?.addEventListener('click', restartGame);
+      document.getElementById('leaveResultBtn')?.addEventListener('click', leaveGame);
     }
     async function restartGame() {
       if (restartBusy) return;
@@ -801,9 +925,77 @@ export function renderCollectionGameHtml(): string {
     if ('speechSynthesis' in window && window.speechSynthesis.onvoiceschanged !== undefined) {
       window.speechSynthesis.onvoiceschanged = () => getGermanVoice();
     }
+    function finishPayload() {
+      return JSON.stringify({ token });
+    }
+    async function finishOnExit(waitForResponse) {
+      if (!token || isRestarting) return state;
+      stopListening();
+      clearTimers();
+      setGameState('leaving');
+      if (exitFinishSent || state?.xpAwarded) return state;
+      if (waitForResponse) {
+        state = await api('/game/api/finish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: finishPayload()
+        });
+        exitFinishSent = true;
+        return state;
+      }
+      exitFinishSent = true;
+      const payload = finishPayload();
+      try {
+        if (navigator.sendBeacon) {
+          const blob = new Blob([payload], { type: 'application/json' });
+          if (navigator.sendBeacon('/game/api/finish', blob)) return state;
+        }
+      } catch {}
+      try {
+        fetch('/game/api/finish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+          keepalive: true
+        }).catch(() => {});
+      } catch {}
+      return state;
+    }
+    async function leaveGame() {
+      if (finishBusy || isRestarting) return;
+      finishBusy = true;
+      try {
+        const saved = await finishOnExit(true);
+        renderExitSaved(saved?.xpGained || 0);
+      } catch {
+        renderExitSaved(state?.xpGained || 0);
+      } finally {
+        finishBusy = false;
+      }
+    }
+    function renderExitSaved(xpGained) {
+      app.innerHTML = '<section class="screen"><div class="panel">' +
+        '<div class="result-emoji">✅</div>' +
+        '<h1>تم حفظ تقدمك</h1>' +
+        '<p class="notice">ربحت ' + Number(xpGained || 0) + ' XP.</p>' +
+        '<button class="primary" onclick="history.back()">رجوع للبوت</button>' +
+        '<button class="secondary" id="restartBtn">إعادة اللعب</button>' +
+        '</div></section>';
+      document.getElementById('restartBtn')?.addEventListener('click', restartGame);
+    }
     function setStatus(message) {
       const status = document.getElementById('status');
       if (status) status.innerHTML = message;
+    }
+    function renderVoiceWaves(active) {
+      const indicator = document.getElementById('listeningIndicator');
+      if (!indicator) return;
+      indicator.innerHTML = active ? '<span class="voice-waves"><i></i><i></i><i></i></span>' : '';
+    }
+    function setRecoveryButton(visible) {
+      const button = document.getElementById('micRecoverBtn');
+      if (!button) return;
+      button.classList.toggle('hidden', !visible);
     }
     function showMicrophoneRecovery(message) {
       setGameState('obstacle');
@@ -812,12 +1004,8 @@ export function renderCollectionGameHtml(): string {
       isChecking = false;
       roundClosed = false;
       setStatus(escapeHtml(message));
-      const mic = document.getElementById('micBtn');
-      if (mic) {
-        mic.textContent = '🎙';
-        mic.classList.remove('listening');
-        mic.onclick = enableMicrophoneAndListen;
-      }
+      renderVoiceWaves(false);
+      setRecoveryButton(true);
     }
     function renderError(message) {
       setGameState('error');
@@ -832,16 +1020,17 @@ export function renderCollectionGameHtml(): string {
     }
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
-        stopListening();
-        clearTimers();
+        finishOnExit(false);
       } else if (microphoneEnabled && gameState === 'obstacle' && !requestBusy && !roundClosed && !isGameOver) {
         if (!activeTimerId && state.currentQuestion) startQuestionTimer(state.currentQuestion.timeLimit || 10);
         scheduleAutoListen(500);
       }
     });
     window.addEventListener('pagehide', () => {
-      stopListening();
-      clearTimers();
+      finishOnExit(false);
+    });
+    window.addEventListener('beforeunload', () => {
+      finishOnExit(false);
     });
     window.addEventListener('pageshow', () => {
       if (microphoneEnabled && gameState === 'obstacle' && !requestBusy && !roundClosed && !isGameOver) {

@@ -5,8 +5,9 @@ import { addXp, getTotalXp } from './xpLevels';
 import { getRequiredVisualForWord, type GameVisual } from './gameVisualService';
 
 export const GAME_QUESTION_LIMIT = 100;
-export const GAME_UI_VERSION = 'speech-rocket-emoji-v2';
+export const GAME_UI_VERSION = 'speech-rocket-v4';
 export const GAME_MAX_ATTEMPTS = 3;
+const GAME_NO_SPEECH_GRACE_COUNT = 1;
 const GAME_SESSION_TTL_MINUTES = 30;
 
 export interface PlayableCollection {
@@ -27,8 +28,11 @@ export interface GameQuestion {
     answered?: boolean;
     isCorrect?: boolean;
     attemptsMade?: number;
+    noSpeechCount?: number;
     transcript?: string;
+    interimTranscript?: string;
     alternatives?: string[];
+    confidence?: number;
     answerReason?: string;
 }
 
@@ -239,7 +243,9 @@ export async function answerGameQuestion(
     questionIndex: number,
     transcript: string,
     alternatives: string[] = [],
-    answerReason = 'speech'
+    answerReason = 'speech',
+    confidence?: number,
+    interimTranscript = ''
 ): Promise<PublicGameState & { correct: boolean; tryAgain?: boolean; attemptsLeft?: number; correctAnswer?: string }> {
     const session = await requireValidSession(db, token);
     if (session.finished === 1) {
@@ -253,14 +259,32 @@ export async function answerGameQuestion(
     const question = data.questions[data.currentIndex];
     if (!question) throw new Error('question_not_found');
 
-    const spokenAnswers = [transcript, ...alternatives].filter(Boolean);
+    const spokenAnswers = [transcript, ...alternatives, interimTranscript].map(normalizeRawTranscript).filter(Boolean);
+    const safeReason = answerReason.slice(0, 40);
+    const isNoSpeech = spokenAnswers.length === 0 && (safeReason === 'no_speech' || safeReason === 'speech_error');
     const correct = spokenAnswers.some(answer => isAcceptedGermanAnswer(answer, question.correctAnswer));
+    question.answerReason = safeReason;
+    question.confidence = normalizeConfidence(confidence);
+    question.interimTranscript = interimTranscript.slice(0, 120);
+    if (isNoSpeech) {
+        question.noSpeechCount = (question.noSpeechCount ?? 0) + 1;
+        if (question.noSpeechCount <= GAME_NO_SPEECH_GRACE_COUNT) {
+            await updateSessionData(db, session.token_hash, data, 0, session.xp_awarded);
+            const updated: GameSessionRecord = { ...session, session_data: JSON.stringify(data), finished: 0 };
+            return {
+                ...toPublicState(updated),
+                correct: false,
+                tryAgain: true,
+                attemptsLeft: Math.max(0, GAME_MAX_ATTEMPTS - (question.attemptsMade ?? 0)),
+            };
+        }
+    }
     question.attemptsMade = Math.min(GAME_MAX_ATTEMPTS, (question.attemptsMade ?? 0) + 1);
     data.attemptsByWord[String(question.wordId)] = question.attemptsMade;
     question.transcript = transcript;
     question.alternatives = alternatives.slice(0, 3);
-    question.answerReason = answerReason.slice(0, 40);
     question.isCorrect = correct;
+    if (correct) question.noSpeechCount = 0;
     if (correct) {
         question.answered = true;
         data.correctCount += 1;
@@ -512,10 +536,20 @@ async function updateSessionData(db: D1Database, tokenHash: string, data: GameSe
 }
 
 export function isAcceptedGermanAnswer(answer: string, correctAnswer: string): boolean {
-    const normalizedAnswer = normalizeGermanSpeechAnswer(answer);
+    const normalizedAnswer = normalizeSpeechTranscript(answer);
     const normalizedCorrect = normalizeGermanSpeechAnswer(correctAnswer);
-    const correctWithoutArticle = stripGermanArticle(normalizedCorrect);
-    return normalizedAnswer === normalizedCorrect || normalizedAnswer === correctWithoutArticle;
+    const answerWithoutArticle = removeGermanArticle(normalizedAnswer);
+    const correctWithoutArticle = removeGermanArticle(normalizedCorrect);
+    const accepted = new Set([
+        normalizedCorrect,
+        correctWithoutArticle,
+        ...safeSpeechVariants(correctWithoutArticle),
+    ]);
+    return accepted.has(normalizedAnswer) || accepted.has(answerWithoutArticle);
+}
+
+export function normalizeSpeechTranscript(answer: string): string {
+    return normalizeGermanSpeechAnswer(answer);
 }
 
 export function normalizeGermanSpeechAnswer(answer: string): string {
@@ -527,11 +561,28 @@ export function normalizeGermanSpeechAnswer(answer: string): string {
         .replace(/ä/g, 'ae')
         .replace(/ö/g, 'oe')
         .replace(/ü/g, 'ue')
-        .replace(/ß/g, 'ss');
+        .replace(/ß/g, 'ss')
+        .trim();
 }
 
-function stripGermanArticle(value: string): string {
+export function removeGermanArticle(value: string): string {
     return value.replace(/^(der|die|das)\s+/i, '').trim();
+}
+
+function normalizeRawTranscript(value: string): string {
+    return String(value ?? '').trim().slice(0, 120);
+}
+
+function normalizeConfidence(value: number | undefined): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+    return Math.max(0, Math.min(1, value));
+}
+
+function safeSpeechVariants(value: string): string[] {
+    if (!value || value.length < 4) return [];
+    const variants: string[] = [];
+    if (value.endsWith('e')) variants.push(`${value}n`);
+    return variants;
 }
 
 function heightGainForCorrect(correctCount: number, streak: number): number {
