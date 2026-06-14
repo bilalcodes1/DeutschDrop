@@ -2,12 +2,12 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { Env, User, Word } from '../models';
 import { queryAll, queryOne, run } from '../db/queries';
 import { addXp, getTotalXp } from './xpLevels';
-import { getRequiredVisualForWord, type GameVisual } from './gameVisualService';
+import { getVisualForWord, getRequiredVisualForWord, type GameVisual } from './gameVisualService';
 import { pickWinnerByScoreAndDuration } from '../repositories/challengeRepository';
 import { displayUserName, sendTelegramMessage } from './notifications';
 
 export const GAME_QUESTION_LIMIT = 100;
-export const GAME_UI_VERSION = 'speech-rocket-v4';
+export const GAME_UI_VERSION = 'underwater-worm-v1';
 export const GAME_MAX_ATTEMPTS = 3;
 const GAME_NO_SPEECH_GRACE_COUNT = 1;
 const GAME_SESSION_TTL_MINUTES = 30;
@@ -30,6 +30,7 @@ export interface GameQuestion {
     questionIndex: number;
     wordId: number;
     visual: GameVisual;
+    arabicMeaning: string;
     correctAnswer: string;
     answered?: boolean;
     isCorrect?: boolean;
@@ -113,6 +114,7 @@ export interface GameChallengeRecord {
 export interface PublicGameQuestion {
     questionIndex: number;
     visualEmoji: string;
+    arabicMeaning: string;
     attemptsLeft: number;
     timeLimit: number;
     timeLimitSeconds: number;
@@ -140,6 +142,7 @@ export interface PublicGameState {
     currentQuestion: PublicGameQuestion | null;
     failedQuestion?: {
         failedVisualEmoji: string;
+        failedArabicMeaning: string;
         correctAnswer: string;
         correctPronunciationText: string;
         heightMeters: number;
@@ -291,9 +294,6 @@ export async function createGameSession(db: D1Database, userId: number, collecti
     const words = await getCollectionWordsForGame(db, userId, collectionId, GAME_QUESTION_LIMIT);
     if (words.length === 0) throw new Error('collection_empty');
 
-    const missingVisuals = await findMissingVisualsForCollection(db, userId, collectionId, GAME_QUESTION_LIMIT);
-    if (missingVisuals[0]) throw new MissingGameVisualError(missingVisuals[0], collectionId);
-
     return createGameSessionFromWords(db, userId, collection, words);
 }
 
@@ -377,8 +377,6 @@ export async function createGameChallenge(
         : await getCollectionWordsForGameByCollectionOwner(db, collection.owner_user_id, collectionId, GAME_QUESTION_LIMIT);
     const selected = capGameWords(shuffle(words));
     if (selected.length === 0) throw new Error('collection_empty');
-    await assertWordsHaveVisuals(db, selected, collection.id);
-
     const result = await run(
         db,
         `INSERT INTO game_challenges (
@@ -421,12 +419,10 @@ export async function startGameChallengeForUser(
     const wordIds = parseWordIds(challenge.word_ids_json);
     const words = await getWordsByIdsForGame(db, wordIds);
     if (words.length === 0) throw new Error('collection_empty');
-    await assertWordsHaveVisuals(db, words, challenge.collection_id ?? 0);
-
     const collection: PlayableCollection = {
         id: challenge.collection_id ?? 0,
         owner_user_id: role === 'creator' ? challenge.creator_user_id : challenge.opponent_user_id,
-        title: challenge.collection_title ?? 'تحدي الصور والكلمات',
+        title: challenge.collection_title ?? 'تحدي دودة البحر',
         description: null,
         visibility: 'private',
         owner_name: null,
@@ -825,12 +821,12 @@ async function requireValidSession(db: D1Database, token: string): Promise<GameS
 async function buildQuestions(db: D1Database, words: Word[]): Promise<GameQuestion[]> {
     const questions: GameQuestion[] = [];
     for (const [index, word] of words.entries()) {
-        const visual = await getRequiredVisualForWord(db, word);
-        if (!visual) throw new MissingGameVisualError(word, 0);
+        const visual = await getVisualForWord(db, word);
         questions.push({
             questionIndex: index,
             wordId: word.word_id,
             visual,
+            arabicMeaning: word.arabic,
             correctAnswer: word.german,
         });
     }
@@ -867,6 +863,7 @@ function toPublicState(session: GameSessionRecord): PublicGameState {
         failedQuestion: data.failedQuestion
             ? {
                 failedVisualEmoji: data.failedQuestion.visual.value,
+                failedArabicMeaning: data.failedQuestion.arabicMeaning ?? 'المعنى',
                 correctAnswer: data.failedQuestion.correctAnswer,
                 correctPronunciationText: data.failedQuestion.correctAnswer,
                 heightMeters: data.heightMeters,
@@ -880,6 +877,7 @@ function publicQuestion(question: GameQuestion): PublicGameQuestion {
     return {
         questionIndex: question.questionIndex,
         visualEmoji: question.visual.value,
+        arabicMeaning: question.arabicMeaning ?? 'المعنى',
         attemptsLeft: Math.max(0, GAME_MAX_ATTEMPTS - (question.attemptsMade ?? 0)),
         timeLimit,
         timeLimitSeconds: timeLimit,
@@ -1011,9 +1009,15 @@ async function announceGameChallengeResult(db: D1Database, env: Env, challenge: 
             ? displayUserName(creator)
             : displayUserName(opponent)
         : null;
-    const result = `⚔️ نتيجة تحدي الصور والكلمات #${challenge.challenge_id}\n\n` +
+    const resultReason = challenge.winner_user_id
+        ? challenge.creator_score === challenge.opponent_score
+            ? 'الوقت حسم النتيجة'
+            : 'الفائز بالنقاط'
+        : 'تعادل';
+    const result = `⚔️ نتيجة تحدي دودة البحر #${challenge.challenge_id}\n\n` +
         `${displayUserName(creator)}: ${challenge.creator_score} نقطة | ${challenge.creator_completed_words}/${challenge.question_count} | ${formatMs(challenge.creator_duration_ms)} | +${challenge.creator_xp_gained} XP\n` +
         `${displayUserName(opponent)}: ${challenge.opponent_score} نقطة | ${challenge.opponent_completed_words}/${challenge.question_count} | ${formatMs(challenge.opponent_duration_ms)} | +${challenge.opponent_xp_gained} XP\n\n` +
+        `${resultReason}\n` +
         (winner ? `🏆 الفائز: ${winner}` : '🤝 النتيجة تعادل');
     await sendTelegramMessage(env, creator.telegram_id, result).catch(() => {});
     await sendTelegramMessage(env, opponent.telegram_id, result).catch(() => {});
@@ -1022,7 +1026,7 @@ async function announceGameChallengeResult(db: D1Database, env: Env, challenge: 
 async function notifyGameChallengeWaiting(db: D1Database, env: Env, userId: number): Promise<void> {
     const user = await queryOne<Pick<User, 'telegram_id'>>(db, 'SELECT telegram_id FROM users WHERE user_id = ?', [userId]);
     if (!user) return;
-    await sendTelegramMessage(env, user.telegram_id, '✅ انتهيت من تحدي الصور والكلمات.\nبانتظار الطرف الآخر.').catch(() => {});
+    await sendTelegramMessage(env, user.telegram_id, '✅ انتهيت من تحدي دودة البحر.\nبانتظار الطرف الآخر.').catch(() => {});
 }
 
 function formatMs(value: number | null): string {

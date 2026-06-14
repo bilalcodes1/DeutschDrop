@@ -8,11 +8,9 @@ import {
     createGameSession,
     GAME_UI_VERSION,
     type GameChallengeSourceType,
-    MissingGameVisualError,
     countOwnGameCollections,
     countOpponentPublicGameCollections,
     countPlayableGameCollections,
-    findMissingVisualsForCollection,
     getOpponentPublicGameCollections,
     getPlayableGameCollections,
     startGameChallengeForUser,
@@ -180,7 +178,7 @@ export async function showGameCollections(ctx: BotContext, userId: number, page:
     if (ownTotal === 0) {
         await replaceWithText(
             ctx,
-            '🎮 لعبة الصور والكلمات\n\nما عندك مجموعة كلمات حتى تبدأ اللعبة. سوّي مجموعة كلمات وأضف كلمات، بعدها ترجع تلعب 🚀',
+            '🫧 لعبة دودة البحر والكلمات\n\nما عندك مجموعة كلمات حتى تبدأ اللعبة. سوّي مجموعة كلمات وأضف كلمات، بعدها ترجع تلعب.',
             new InlineKeyboard()
                 .text('➕ إنشاء مجموعة', 'collections:create').row()
                 .text('🏠 الرئيسية', 'menu_main')
@@ -192,7 +190,7 @@ export async function showGameCollections(ctx: BotContext, userId: number, page:
     if (total === 0) {
         await replaceWithText(
             ctx,
-            '🎮 لعبة الصور والكلمات\n\nمجموعاتك موجودة، لكن تحتاج تضيف كلمات حتى تبدأ اللعبة.',
+            '🫧 لعبة دودة البحر والكلمات\n\nمجموعاتك موجودة، لكن تحتاج تضيف كلمات حتى تبدأ اللعبة.',
             new InlineKeyboard()
                 .text('📚 مجموعاتي', 'collections:mine:page:1').row()
                 .text('🏠 الرئيسية', 'menu_main')
@@ -209,7 +207,7 @@ export async function showGameCollections(ctx: BotContext, userId: number, page:
         (safePage - 1) * GAME_COLLECTION_PAGE_SIZE
     );
 
-    const text = `🚀 العب وحدك\n\nاختر مجموعة من مجموعاتك حتى تبدأ لعبة الصور والكلمات.\n\nالصفحة: ${safePage} / ${totalPages}`;
+    const text = `🫧 العب وحدك\n\nاختر مجموعة من مجموعاتك حتى تبدأ لعبة دودة البحر والكلمات.\n\nالصفحة: ${safePage} / ${totalPages}`;
     const keyboard = new InlineKeyboard();
     for (const collection of collections) {
         keyboard.text(`📚 ${collection.title} — ${collection.word_count} كلمة`, `game:start:${collection.id}`).row();
@@ -224,9 +222,9 @@ export async function showGameCollections(ctx: BotContext, userId: number, page:
 async function showGameMenu(ctx: BotContext): Promise<void> {
     await replaceWithText(
         ctx,
-        '🎮 لعبة الصور والكلمات\n\nاختر طريقة اللعب:',
+        '🫧 لعبة دودة البحر والكلمات\n\nاختر طريقة اللعب:',
         new InlineKeyboard()
-            .text('🚀 العب وحدك', 'game:solo').row()
+            .text('🫧 العب وحدك', 'game:solo').row()
             .text('⚔️ تحدي شخص', 'game_challenge:users:page:1').row()
             .text('🏠 الرئيسية', 'menu_main')
     );
@@ -264,7 +262,7 @@ async function showGameChallengeUsers(ctx: BotContext, currentUserId: number, pa
         .text('🏠 الرئيسية', 'menu_main');
     const text = visible.length === 0
         ? '⚔️ تحدي شخص\n\nلا يوجد مستخدم مناسب للتحدي حالياً.'
-        : `⚔️ تحدي شخص\n\nاختر مستخدم حتى ترسل له تحدي لعبة الصور والكلمات.${safeQuery ? `\n\nبحث: ${safeQuery}` : ''}`;
+        : `⚔️ تحدي شخص\n\nاختر مستخدم حتى ترسل له تحدي لعبة دودة البحر والكلمات.${safeQuery ? `\n\nبحث: ${safeQuery}` : ''}`;
     await replaceWithText(ctx, text, keyboard);
 }
 
@@ -330,18 +328,13 @@ async function createGameChallengeFromSelection(
         await sendTelegramMessage(
             ctx.env,
             challenge.opponent.telegram_id,
-            `⚔️ ${displayUserName(creator ?? { name: 'مستخدم', display_name: 'مستخدم' })} تحداك في لعبة الصور والكلمات\n\nالمجموعة: ${challenge.collection.title}\nعدد الكلمات: ${challenge.totalQuestions}`,
-            { inline_keyboard: [[{ text: '🚀 ابدأ التحدي', callback_data: opponentStart }, { text: '❌ رفض', callback_data: 'game:menu' }]] }
+            `⚔️ ${displayUserName(creator ?? { name: 'مستخدم', display_name: 'مستخدم' })} تحداك في لعبة دودة البحر والكلمات\n\nالمجموعة: ${challenge.collection.title}\nعدد الكلمات: ${challenge.totalQuestions}`,
+            { inline_keyboard: [[{ text: '🫧 ابدأ التحدي', callback_data: opponentStart }, { text: '❌ رفض', callback_data: 'game:menu' }]] }
         ).catch(() => {});
         await replaceWithText(ctx, `تم إرسال التحدي إلى ${displayUserName(challenge.opponent)}.\n\nتقدر تبدأ دورك الآن.`, new InlineKeyboard()
-            .text('🚀 ابدأ التحدي', creatorStart).row()
+            .text('🫧 ابدأ التحدي', creatorStart).row()
             .text('🏠 الرئيسية', 'menu_main'));
-    } catch (error) {
-        if (error instanceof MissingGameVisualError) {
-            await saveBotSession<WordVisualEditSession>(ctx.db, userId, 'word_visual_edit', { wordId: error.word.word_id, collectionId }, 30);
-            await replaceWithText(ctx, `هذه الكلمة تحتاج إيموجي حتى تدخل تحدي اللعبة:\n\n🇩🇪 ${error.word.german}\n🇮🇶 ${error.word.arabic}\n\nأرسل إيموجي واحد أو إيموجيين.`, backHomeKeyboard(`game_challenge:source:${sourceType}:${opponentUserId}`));
-            return;
-        }
+    } catch {
         await replaceWithText(ctx, 'تعذر إنشاء تحدي اللعبة حالياً. تأكد من أن المجموعة متاحة وفيها كلمات.', backHomeKeyboard(`game_challenge:opponent:${opponentUserId}`));
     }
 }
@@ -350,7 +343,7 @@ async function openGameChallenge(ctx: BotContext, userId: number, challengeId: n
     try {
         const session = await startGameChallengeForUser(ctx.db, challengeId, userId);
         const url = `${publicBaseUrl(ctx)}/game?token=${encodeURIComponent(session.token)}&v=${encodeURIComponent(GAME_UI_VERSION)}`;
-        await replaceWithText(ctx, `⚔️ تحدي الصور والكلمات #${challengeId}\n\nالمجموعة: ${session.collectionTitle}\nعدد الكلمات: ${session.totalQuestions}\n\nافتح اللعبة بالمتصفح، والنتيجة تُحسب عند الخروج أو انتهاء الجولة.`, new InlineKeyboard()
+        await replaceWithText(ctx, `⚔️ تحدي دودة البحر #${challengeId}\n\nالمجموعة: ${session.collectionTitle}\nعدد الكلمات: ${session.totalQuestions}\n\nافتح اللعبة بالمتصفح، والنتيجة تُحسب عند الخروج أو انتهاء الجولة.`, new InlineKeyboard()
             .url('🌐 فتح التحدي بالمتصفح', url).row()
             .text('🏠 الرئيسية', 'menu_main'));
     } catch {
@@ -364,31 +357,13 @@ export async function startGameForCollection(ctx: BotContext, userId: number, co
         const url = `${publicBaseUrl(ctx)}/game?token=${encodeURIComponent(session.token)}&v=${encodeURIComponent(GAME_UI_VERSION)}`;
         await replaceWithText(
             ctx,
-            `🎮 تحدي الصور والكلمات\n\nالمجموعة:\n${session.collection.title}\n\nاللعبة ستستخدم كلمات هذه المجموعة.\nعدد الكلمات: ${session.totalQuestions}\n\nافتح اللعبة في Safari أو Chrome حتى يعمل المايكروفون والصوت بشكل صحيح.`,
+            `🫧 لعبة دودة البحر والكلمات\n\nالمجموعة:\n${session.collection.title}\n\nاللعبة ستستخدم كلمات هذه المجموعة.\nعدد الكلمات: ${session.totalQuestions}\n\nافتح اللعبة في Safari أو Chrome حتى يعمل المايكروفون والصوت بشكل صحيح.`,
             new InlineKeyboard()
                 .url('🌐 فتح اللعبة بالمتصفح', url).row()
                 .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
                 .text('🏠 الرئيسية', 'menu_main')
         );
     } catch (error) {
-        if (error instanceof MissingGameVisualError) {
-            await saveBotSession<WordVisualEditSession>(
-                ctx.db,
-                userId,
-                'word_visual_edit',
-                { wordId: error.word.word_id, collectionId },
-                30
-            );
-            await replaceWithText(
-                ctx,
-                `🎨 بعض كلمات هذه المجموعة تحتاج إيموجي حتى تبدأ اللعبة.\n\nالكلمة:\n🇩🇪 ${error.word.german}\n\nالمعنى:\n🇮🇶 ${error.word.arabic}\n\nأرسل إيموجي واحد أو إيموجيين يوضحون المعنى.\n\nالصور والروابط غير مقبولة.`,
-                new InlineKeyboard()
-                    .text('❌ إلغاء', `word_visual_cancel:${error.word.word_id}`).row()
-                    .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
-                    .text('🏠 الرئيسية', 'menu_main')
-            );
-            return;
-        }
         const message = error instanceof Error ? error.message : 'unknown';
         if (message === 'collection_empty') {
             await replaceWithText(ctx, 'هذه المجموعة فارغة. أضف كلمات أولاً.', backHomeKeyboard(`collection:view:${collectionId}:page:1`));
@@ -420,41 +395,6 @@ async function handleManualVisualText(ctx: BotContext, userId: number, wordId: n
     }
 
     await upsertManualVisual(ctx.db, wordId, visual);
-    if (collectionId) {
-        const missing = await findMissingVisualsForCollection(ctx.db, userId, collectionId);
-        const nextMissing = missing.find(item => item.word_id !== wordId);
-        if (nextMissing) {
-            await saveBotSession<WordVisualEditSession>(
-                ctx.db,
-                userId,
-                'word_visual_edit',
-                { wordId: nextMissing.word_id, collectionId },
-                30
-            );
-            await ctx.reply(
-                `تم حفظ الإيموجي ✅\n\nباقي كلمة تحتاج إيموجي:\n\n🇩🇪 ${nextMissing.german}\n🇮🇶 ${nextMissing.arabic}\n\nأرسل إيموجي واحد أو إيموجيين يوضحون المعنى.`,
-                {
-                    reply_markup: new InlineKeyboard()
-                        .text('❌ إلغاء', `word_visual_cancel:${nextMissing.word_id}`).row()
-                        .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
-                        .text('🏠 الرئيسية', 'menu_main'),
-                }
-            );
-            return;
-        }
-
-        await deleteBotSession(ctx.db, userId, 'word_visual_edit');
-        await ctx.reply(
-            'تم حفظ كل الإيموجيات المطلوبة ✅\n\nتقدر تبدأ اللعبة الآن.',
-            {
-                reply_markup: new InlineKeyboard()
-                    .text('🚀 ابدأ اللعبة الآن', `game:start_collection:${collectionId}`).row()
-                    .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
-                    .text('🏠 الرئيسية', 'menu_main'),
-            }
-        );
-        return;
-    }
     await deleteBotSession(ctx.db, userId, 'word_visual_edit');
     await showWordDetailPanel(ctx, wordId, 'تم حفظ الرمز لهذه الكلمة ✅');
 }

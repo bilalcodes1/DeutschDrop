@@ -2703,11 +2703,11 @@ test('collection game is visible from main menu and collection pages', () => {
     const botSource = fs.readFileSync(new URL('../src/bot/bot.ts', import.meta.url), 'utf8');
     const gameSource = fs.readFileSync(new URL('../src/commands/game.ts', import.meta.url), 'utf8');
 
-    assert.match(menuSource, /🎮 لعبة الصور والكلمات/);
+    assert.match(menuSource, /🫧 لعبة دودة البحر/);
     assert.match(menuSource, /game:menu/);
     assert.match(botSource, /registerGameCommand\(bot\);\s*registerAddWordCommand\(bot\);/s);
     assert.match(gameSource, /bot\.callbackQuery\('game:menu'/);
-    assert.match(gameSource, /🚀 العب وحدك/);
+    assert.match(gameSource, /🫧 العب وحدك/);
     assert.match(gameSource, /⚔️ تحدي شخص/);
     assert.match(gameSource, /showGameCollections\(ctx, user\.user_id, 1\)/);
     assert.match(gameSource, /game:collections:page:/);
@@ -2717,7 +2717,7 @@ test('collection game is visible from main menu and collection pages', () => {
     assert.match(gameSource, /Safari أو Chrome/);
     assert.doesNotMatch(gameSource, /\.webApp\(/);
 
-    assert.match(sharingSource, /🎮 العب بهذه المجموعة/);
+    assert.match(sharingSource, /🫧 العب بهذه المجموعة/);
     assert.match(sharingSource, /game:start_collection:\$\{collectionId\}/);
     assert.match(sharingSource, /collection_challenge_count_\$\{collectionId\}/);
     assert.match(sharingSource, /share_collection:\$\{collectionId\}/);
@@ -2754,7 +2754,7 @@ test('collection game sessions are token scoped and collection permission checke
     assert.doesNotMatch(serviceSource, /slice\(0, GAME_QUESTION_LIMIT\)/);
 });
 
-test('collection speech rocket routes reject missing token and never trust client score', () => {
+test('collection underwater worm routes reject missing token and never trust client score', () => {
     const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
     const routeSource = fs.readFileSync(new URL('../src/game/routes.ts', import.meta.url), 'utf8');
     const htmlSource = fs.readFileSync(new URL('../src/game/html.ts', import.meta.url), 'utf8');
@@ -2788,16 +2788,21 @@ test('collection speech rocket routes reject missing token and never trust clien
     assert.match(htmlSource, /requestBusy/);
     assert.match(htmlSource, /finishBusy/);
     assert.match(htmlSource, /gameState/);
-    assert.match(htmlSource, /\.sky/);
-    assert.match(htmlSource, /\.cloud/);
-    assert.match(htmlSource, /\.particle/);
-    assert.match(htmlSource, /\.rocket-wrap/);
-    assert.match(htmlSource, /\.flame/);
-    assert.match(htmlSource, /\.rocket-wrap\.boost/);
-    assert.match(htmlSource, /\.explosion/);
-    assert.match(htmlSource, /\.collision/);
-    assert.match(htmlSource, /\.shake-screen/);
-    assert.match(htmlSource, /game-over|خسرت بسبب/);
+    assert.match(htmlSource, /Underwater Worm Speaking Game/);
+    assert.match(htmlSource, /\.underwater/);
+    assert.match(htmlSource, /\.bubble-dot/);
+    assert.match(htmlSource, /\.seaweed/);
+    assert.match(htmlSource, /\.coral/);
+    assert.match(htmlSource, /\.meaning-bubble/);
+    assert.match(htmlSource, /\.meaning-text/);
+    assert.match(htmlSource, /\.worm/);
+    assert.match(htmlSource, /\.worm-munch/);
+    assert.match(htmlSource, /\.worm-retreat/);
+    assert.match(htmlSource, /\.bubble-pop/);
+    assert.match(htmlSource, /\.bubble-shake/);
+    assert.match(htmlSource, /\.screen-shake/);
+    assert.match(htmlSource, /game-over|انتهت المحاولة/);
+    assert.doesNotMatch(htmlSource, /rocket-wrap|flame|meters above the ground|altitude/i);
     assert.match(htmlSource, /SpeechRecognition|webkitSpeechRecognition/);
     assert.match(htmlSource, /🎙 تفعيل المايكروفون وابدأ/);
     assert.match(htmlSource, /microphoneEnabled = true/);
@@ -2806,6 +2811,10 @@ test('collection speech rocket routes reject missing token and never trust clien
     assert.match(htmlSource, /voice-action hidden/);
     assert.match(htmlSource, /setRecoveryButton\(true\)/);
     assert.match(htmlSource, /voice-waves/);
+    assert.match(htmlSource, /يستمع بالألمانية/);
+    assert.match(htmlSource, /قل الكلمة المناسبة للمعنى/);
+    assert.match(htmlSource, /meaning\(question\.arabicMeaning\)/);
+    assert.doesNotMatch(htmlSource, /meaning\(question\.correctAnswer\)|escapeHtml\(question\.correctAnswer\)/);
     assert.doesNotMatch(htmlSource, /id="micBtn"|\.mic\s*\{/);
     assert.match(htmlSource, /activeRecognition\.lang = 'de-DE'/);
     assert.match(htmlSource, /if \(activeRecognition\.lang !== 'de-DE'\) activeRecognition\.lang = 'de-DE'/);
@@ -2838,20 +2847,23 @@ test('collection speech rocket routes reject missing token and never trust clien
     assert.match(htmlSource, /activeTimerId/);
     assert.doesNotMatch(htmlSource, /navigator\.language/);
     assert.match(htmlSource, /🎙/);
-    assert.match(htmlSource, /التقدم:/);
+    assert.match(htmlSource, /المجموعة/);
     assert.match(htmlSource, /\(completedWords \+ 1\) \+ ' \/ ' \+ totalWords/);
     assert.doesNotMatch(htmlSource, /totalWords \+ ' \/ ' \+ \(completedWords \+ 1\)/);
-    assert.match(htmlSource, /محاولات:/);
+    assert.match(htmlSource, /المحاولات/);
     assert.match(htmlSource, /timer-fill/);
     assert.match(htmlSource, /حاول مرة ثانية/);
     assert.match(htmlSource, /ما سمعتك بوضوح/);
-    assert.match(htmlSource, /drop-back/);
-    assert.match(htmlSource, /obstacle-emoji' \+ comboClass/);
-    assert.match(htmlSource, /white-space: nowrap/);
+    assert.match(htmlSource, /worm-retreat/);
+    assert.match(htmlSource, /bubble-shake/);
+    assert.match(htmlSource, /bubble-pop/);
+    assert.match(htmlSource, /overflow-wrap: anywhere/);
     assert.match(htmlSource, /safe-area-inset-top/);
     assert.match(htmlSource, /100dvh/);
-    assert.match(htmlSource, /أنجزت ' \+ completedWords \+ ' من ' \+ totalWords/);
-    assert.match(htmlSource, /أكملت كل كلمات المجموعة/);
+    assert.match(htmlSource, /clamp\(/);
+    assert.match(htmlSource, /prefers-reduced-motion/);
+    assert.match(htmlSource, /الكلمات المكتملة: ' \+ completedWords \+ ' \/ ' \+ totalWords/);
+    assert.match(htmlSource, /أكلت كل الفقاعات/);
     assert.match(htmlSource, /🔊 اسمع النطق الصحيح/);
     assert.match(htmlSource, /speechSynthesis/);
     assert.match(htmlSource, /utterance\.lang = 'de-DE'/);
@@ -2869,6 +2881,8 @@ test('collection speech rocket routes reject missing token and never trust clien
     assert.match(serviceSource, /gameOver = true/);
     assert.match(serviceSource, /currentQuestion/);
     assert.match(serviceSource, /visualEmoji: question\.visual\.value/);
+    assert.match(serviceSource, /arabicMeaning: question\.arabicMeaning/);
+    assert.match(serviceSource, /failedArabicMeaning: data\.failedQuestion\.arabicMeaning/);
     assert.match(serviceSource, /GAME_MAX_ATTEMPTS/);
     assert.match(serviceSource, /question\.attemptsMade/);
     assert.match(serviceSource, /GAME_MAX_ATTEMPTS - question\.attemptsMade/);
@@ -2892,7 +2906,7 @@ test('collection speech rocket routes reject missing token and never trust clien
     assert.match(serviceSource, /correctAnswer: data\.failedQuestion\.correctAnswer/);
     assert.doesNotMatch(serviceSource, /choices/);
     assert.equal(GAME_MAX_ATTEMPTS, 3);
-    assert.equal(GAME_UI_VERSION, 'speech-rocket-v4');
+    assert.equal(GAME_UI_VERSION, 'underwater-worm-v1');
     assert.equal(normalizeSpeechTranscript('  DIE   Ente! '), 'die ente');
     assert.equal(removeGermanArticle('die ente'), 'ente');
     assert.equal(isAcceptedGermanAnswer('Ente', 'die Ente'), true);
@@ -2906,7 +2920,7 @@ test('collection speech rocket routes reject missing token and never trust clien
     assert.equal(isAcceptedGermanAnswer('Katze', 'der Tiger'), false);
 });
 
-test('collection speech rocket visual resolution requires clear visuals and manual validation is safe', () => {
+test('collection game visual cache remains safe but is not required to start', () => {
     const visualSource = fs.readFileSync(new URL('../src/services/gameVisualService.ts', import.meta.url), 'utf8');
     const wordPanelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
     const gameSource = fs.readFileSync(new URL('../src/commands/game.ts', import.meta.url), 'utf8');
@@ -2944,11 +2958,10 @@ test('collection speech rocket visual resolution requires clear visuals and manu
     assert.match(visualSource, /isClearGameVisual/);
     assert.match(wordPanelSource, /🎨 تعديل الإيموجي/);
     assert.match(gameSource, /saveBotSession<WordVisualEditSession>\(ctx\.db, user\.user_id, 'word_visual_edit'/);
-    assert.match(gameSource, /بعض كلمات هذه المجموعة تحتاج إيموجي حتى تبدأ اللعبة/);
-    assert.match(gameSource, /الصور والروابط غير مقبولة/);
-    assert.match(gameSource, /🚀 ابدأ اللعبة الآن/);
+    assert.doesNotMatch(gameSource, /تحتاج إيموجي حتى تبدأ اللعبة|تحتاج إيموجي حتى تدخل تحدي اللعبة/);
     assert.match(gameSource, /validateManualVisual\(text\)/);
     assert.match(gameSource, /upsertManualVisual\(ctx\.db, wordId, visual\)/);
+    assert.doesNotMatch(gameSource, /MissingGameVisualError/);
 });
 
 test('collection game finish awards capped XP once through addXp', () => {
@@ -3012,7 +3025,7 @@ test('game challenge UI source selection and privacy are wired', () => {
     assert.match(gameSource, /لا توجد مجموعات متاحة لهذا المستخدم/);
     assert.match(gameSource, /createGameChallenge\(ctx\.db, userId, opponentUserId, sourceType, collectionId\)/);
     assert.match(gameSource, /sendTelegramMessage/);
-    assert.match(gameSource, /🚀 ابدأ التحدي/);
+    assert.match(gameSource, /🫧 ابدأ التحدي/);
     assert.match(gameSource, /startGameChallengeForUser/);
 
     assert.match(serviceSource, /export type GameChallengeSourceType = 'mine' \| 'opponent' \| 'mixed'/);
@@ -3045,7 +3058,9 @@ test('game challenge finish stores results and uses faster tie breaker', () => {
     assert.match(serviceSource, /winner_user_id/);
     assert.match(serviceSource, /pickWinnerByScoreAndDuration/);
     assert.match(serviceSource, /بانتظار الطرف الآخر/);
-    assert.match(serviceSource, /نتيجة تحدي الصور والكلمات/);
+    assert.match(serviceSource, /نتيجة تحدي دودة البحر/);
+    assert.match(serviceSource, /الوقت حسم النتيجة/);
+    assert.match(serviceSource, /الفائز بالنقاط/);
     assert.match(serviceSource, /status != 'completed'/);
 
     assert.match(challengeRepoSource, /export function pickWinnerByScoreAndDuration/);

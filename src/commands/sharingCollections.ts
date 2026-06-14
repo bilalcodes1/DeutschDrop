@@ -1208,7 +1208,7 @@ async function showCollection(ctx: BotContext, userId: number, collectionId: num
         words.map((word, index) => `${index + 1}. 🇩🇪 ${word.german}\n   🇮🇶 ${word.arabic}`).join('\n\n');
     const keyboard = new InlineKeyboard();
     if (isOwner) {
-        keyboard.text('🎮 العب بهذه المجموعة', `game:start_collection:${collectionId}`).row();
+        keyboard.text('🫧 العب بهذه المجموعة', `game:start_collection:${collectionId}`).row();
         if (total > 0) {
             keyboard.text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row();
         }

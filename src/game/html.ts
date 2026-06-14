@@ -4,23 +4,28 @@ export function renderCollectionGameHtml(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>تحدي الصور والكلمات</title>
+  <title>Underwater Worm Speaking Game</title>
   <style>
     :root {
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
-      --hud-top: calc(var(--safe-top) + clamp(10px, 2.5vh, 22px));
-      --obstacle-top: clamp(176px, 31dvh, 292px);
-      --rocket-bottom: calc(var(--safe-bottom) + clamp(92px, 14dvh, 158px));
-      --status-bottom: calc(var(--safe-bottom) + clamp(18px, 4dvh, 48px));
+      --ink: #063a5d;
+      --deep: #075a8c;
+      --water: #18a4d8;
+      --water-light: #76ddff;
+      --foam: rgba(255,255,255,.88);
       --panel-width: min(520px, 92vw);
+      --hud-top: calc(var(--safe-top) + clamp(10px, 2.2dvh, 22px));
+      --controls-bottom: calc(var(--safe-bottom) + clamp(16px, 3.2dvh, 38px));
+      --bubble-size: clamp(178px, 47vw, 270px);
+      --worm-scale: clamp(.82, 2.4vw, 1.08);
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
     body {
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: #fff;
-      background: #55b4f5;
+      background: #0d96c4;
       overscroll-behavior: none;
       touch-action: manipulation;
     }
@@ -30,101 +35,135 @@ export function renderCollectionGameHtml(): string {
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
     }
-    .sky {
+    .underwater {
       position: fixed;
       inset: 0;
       overflow: hidden;
       background:
-        radial-gradient(circle at 12% 18%, rgba(255,255,255,.18) 0 1px, transparent 2px),
-        radial-gradient(circle at 78% 16%, rgba(255,255,255,.18) 0 1px, transparent 2px),
-        radial-gradient(circle at 50% 108%, rgba(255,255,255,.28), transparent 20%),
-        linear-gradient(180deg, #58b6f7 0%, #53b2f3 45%, #66c1ff 100%);
+        radial-gradient(circle at 50% -12%, rgba(255,255,255,.44), transparent 28%),
+        radial-gradient(circle at 88% 20%, rgba(157,239,255,.18), transparent 22%),
+        linear-gradient(180deg, #6bdcff 0%, #1ea9d9 42%, #0873a8 100%);
     }
-    .particle {
-      position: absolute;
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: rgba(255,255,255,.46);
-      animation: particle-float linear infinite;
-    }
-    .particle.p1 { left: 14%; top: 18%; animation-duration: 8s; }
-    .particle.p2 { left: 75%; top: 42%; animation-duration: 11s; animation-delay: -4s; }
-    .particle.p3 { left: 35%; top: 72%; animation-duration: 9s; animation-delay: -2s; }
-    @keyframes particle-float {
-      0% { translate: 0 16px; opacity: .2; }
-      50% { opacity: .7; }
-      100% { translate: 0 -34px; opacity: .05; }
-    }
-    .cloud {
-      position: absolute;
-      width: 170px;
-      height: 58px;
-      opacity: .8;
-      filter: blur(.2px) drop-shadow(0 8px 8px rgba(45, 115, 172, .12));
-      animation: cloud-drift linear infinite;
-    }
-    .cloud::before,
-    .cloud::after,
-    .cloud span {
+    .underwater::before {
       content: "";
       position: absolute;
-      background: rgba(255,255,255,.88);
-      border-radius: 999px;
+      inset: -8% -18% auto;
+      height: 55dvh;
+      background:
+        linear-gradient(112deg, transparent 0 15%, rgba(255,255,255,.20) 16% 18%, transparent 20% 100%),
+        linear-gradient(78deg, transparent 0 28%, rgba(255,255,255,.13) 29% 31%, transparent 33% 100%),
+        linear-gradient(96deg, transparent 0 58%, rgba(255,255,255,.16) 59% 61%, transparent 63% 100%);
+      opacity: .72;
+      transform-origin: top center;
+      animation: ray-sway 8s ease-in-out infinite alternate;
     }
-    .cloud::before { width: 86px; height: 48px; left: 28px; top: 5px; }
-    .cloud::after { width: 58px; height: 38px; left: 82px; top: 16px; }
-    .cloud span { width: 105px; height: 34px; left: 6px; top: 24px; }
-    .cloud.c1 { left: -180px; top: 9%; animation-duration: 34s; }
-    .cloud.c2 { left: -220px; top: 30%; transform: scale(.72); animation-duration: 42s; animation-delay: -13s; }
-    .cloud.c3 { left: -260px; top: 64%; transform: scale(1.15); animation-duration: 52s; animation-delay: -24s; }
-    .cloud.c4 { left: -180px; top: 83%; transform: scale(.55); animation-duration: 37s; animation-delay: -5s; }
-    @keyframes cloud-drift {
-      from { translate: -20vw 0; }
-      to { translate: 135vw 0; }
+    @keyframes ray-sway {
+      from { transform: translateX(-2%) skewX(-4deg); }
+      to { transform: translateX(3%) skewX(4deg); }
+    }
+    .bubble-dot {
+      position: absolute;
+      width: var(--size, 12px);
+      height: var(--size, 12px);
+      left: var(--left, 50%);
+      bottom: -40px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.54);
+      background: rgba(255,255,255,.16);
+      box-shadow: inset 5px 6px 8px rgba(255,255,255,.28);
+      animation: bubble-rise var(--duration, 9s) linear infinite;
+      animation-delay: var(--delay, 0s);
+    }
+    @keyframes bubble-rise {
+      0% { translate: 0 0; opacity: 0; }
+      12% { opacity: .78; }
+      100% { translate: var(--drift, 18px) -112dvh; opacity: 0; }
+    }
+    .seaweed {
+      position: absolute;
+      bottom: calc(var(--safe-bottom) - 10px);
+      width: 36px;
+      height: 140px;
+      border-radius: 70% 70% 12px 12px;
+      background: linear-gradient(180deg, #48d879, #0a8a65);
+      transform-origin: bottom center;
+      opacity: .76;
+      animation: weed-sway 3.6s ease-in-out infinite alternate;
+    }
+    .seaweed.w1 { left: 7%; height: 118px; rotate: -8deg; }
+    .seaweed.w2 { right: 10%; height: 152px; animation-delay: -1.2s; }
+    .seaweed.w3 { left: 28%; width: 24px; height: 86px; animation-delay: -.7s; opacity: .48; }
+    @keyframes weed-sway {
+      from { transform: skewX(-5deg); }
+      to { transform: skewX(7deg); }
+    }
+    .coral {
+      position: absolute;
+      bottom: calc(var(--safe-bottom) + 4px);
+      right: 24%;
+      width: 82px;
+      height: 46px;
+      border-radius: 42px 42px 12px 12px;
+      background:
+        radial-gradient(circle at 22% 28%, #ff9bb5 0 13px, transparent 14px),
+        radial-gradient(circle at 54% 12%, #ff7899 0 14px, transparent 15px),
+        radial-gradient(circle at 78% 34%, #ffb05d 0 12px, transparent 13px);
+      opacity: .76;
     }
     .app {
       position: relative;
       width: 100vw;
       height: 100dvh;
       overflow: hidden;
-      padding: var(--safe-top) 18px var(--safe-bottom);
+      padding: var(--safe-top) 16px var(--safe-bottom);
     }
     .screen {
       min-height: 100dvh;
       display: grid;
       place-items: center;
       text-align: center;
-      text-shadow: 0 4px 12px rgba(20, 74, 120, .42);
+      text-shadow: 0 4px 14px rgba(3, 47, 86, .42);
     }
     .panel {
       width: var(--panel-width);
       display: grid;
       justify-items: center;
-      gap: 18px;
-      transform: translateY(-2vh);
+      gap: 16px;
+      transform: translateY(-1.5dvh);
     }
-    h1 { margin: 0; font-size: clamp(38px, 10vw, 64px); line-height: 1.05; letter-spacing: 0; }
-    .sub { margin: 0; font-size: clamp(17px, 4.4vw, 23px); font-weight: 900; opacity: .98; line-height: 1.45; }
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 8.8vw, 58px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+    .sub {
+      margin: 0;
+      font-size: clamp(16px, 4.2vw, 22px);
+      font-weight: 900;
+      line-height: 1.5;
+    }
     .notice {
       margin: 0;
-      padding: 11px 16px;
-      border-radius: 18px;
-      background: rgba(17, 73, 126, .28);
+      padding: 12px 16px;
+      border: 1px solid rgba(255,255,255,.24);
+      border-radius: 20px;
+      background: rgba(3, 71, 112, .32);
       font-size: 15px;
       font-weight: 850;
-      line-height: 1.55;
-      max-width: 390px;
+      line-height: 1.6;
+      max-width: 410px;
+      backdrop-filter: blur(8px);
     }
     .primary {
       min-width: min(330px, 84vw);
-      min-height: 66px;
+      min-height: 64px;
       border-radius: 999px;
       padding: 12px 24px;
-      color: #16385e;
-      background: rgba(255,255,255,.95);
-      box-shadow: 0 8px 0 rgba(37, 101, 156, .18), 0 14px 28px rgba(22, 78, 130, .22);
-      font-size: clamp(22px, 6vw, 32px);
+      color: var(--ink);
+      background: rgba(255,255,255,.96);
+      box-shadow: 0 8px 0 rgba(5, 74, 111, .18), 0 14px 28px rgba(3, 48, 83, .22);
+      font-size: clamp(21px, 5.5vw, 30px);
       font-weight: 950;
     }
     .secondary {
@@ -132,13 +171,13 @@ export function renderCollectionGameHtml(): string {
       border-radius: 999px;
       padding: 10px 18px;
       color: #fff;
-      background: rgba(16, 70, 124, .36);
+      background: rgba(2, 61, 100, .38);
       font-size: 17px;
       font-weight: 900;
     }
-    .flight {
+    .game {
       position: relative;
-      width: min(540px, 100vw);
+      width: min(560px, 100vw);
       height: 100dvh;
       margin: 0 auto;
       overflow: hidden;
@@ -148,258 +187,234 @@ export function renderCollectionGameHtml(): string {
       top: var(--hud-top);
       left: 50%;
       translate: -50% 0;
-      width: min(480px, 92vw);
+      width: min(520px, 94vw);
       display: grid;
-      justify-items: center;
-      gap: 6px;
-      z-index: 7;
-      pointer-events: none;
-      text-shadow: 0 4px 10px rgba(21, 88, 150, .38);
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      z-index: 8;
+      text-shadow: none;
+      direction: rtl;
     }
-    .meters {
-      font-size: clamp(42px, 13vw, 76px);
+    .hud-pill {
+      min-height: 46px;
+      display: grid;
+      place-items: center;
+      gap: 1px;
+      padding: 6px 8px;
+      border: 1px solid rgba(255,255,255,.23);
+      border-radius: 18px;
+      background: rgba(4, 76, 117, .30);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.20), 0 8px 18px rgba(4, 57, 91, .14);
+      backdrop-filter: blur(8px);
+    }
+    .hud-value {
+      font-size: clamp(16px, 4.6vw, 22px);
       font-weight: 1000;
-      line-height: .9;
+      line-height: 1;
     }
     .hud-label {
-      font-size: clamp(13px, 3.2vw, 15px);
-      font-weight: 900;
-      opacity: .96;
+      font-size: 11px;
+      font-weight: 850;
+      opacity: .86;
+      white-space: nowrap;
+    }
+    .listening-chip {
+      grid-column: span 1;
+    }
+    .listening-chip.active .hud-value {
+      color: #bffff8;
     }
     .timer {
-      width: min(260px, 54vw);
-      height: 8px;
+      position: absolute;
+      top: calc(var(--hud-top) + 58px);
+      left: 50%;
+      translate: -50% 0;
+      width: min(330px, 72vw);
+      height: 7px;
       border-radius: 999px;
-      background: rgba(255,255,255,.28);
+      background: rgba(255,255,255,.25);
       overflow: hidden;
+      z-index: 8;
     }
     .timer-fill {
       height: 100%;
       width: 100%;
       border-radius: inherit;
-      background: rgba(255,255,255,.92);
+      background: linear-gradient(90deg, #a9fff5, #ffffff);
       transform-origin: right center;
     }
-    .obstacle {
+    .playfield {
       position: absolute;
-      left: 50%;
-      top: var(--obstacle-top);
-      translate: -50% -50%;
-      display: grid;
-      justify-items: center;
-      gap: 8px;
-      z-index: 5;
-      transition: top .56s ease, scale .24s ease, opacity .24s ease;
-      filter: drop-shadow(0 18px 20px rgba(35, 93, 146, .28));
-    }
-    .obstacle-emoji {
-      min-width: min(72vw, 330px);
-      min-height: clamp(92px, 21dvh, 172px);
-      display: flex;
-      flex-direction: row;
-      flex-wrap: nowrap;
-      align-items: center;
-      justify-content: center;
-      gap: .12em;
-      white-space: nowrap;
-      font-size: clamp(76px, 24vw, 148px);
-      line-height: 1;
-      animation: obstacle-bob 1.9s ease-in-out infinite;
-    }
-    .obstacle-emoji.combo {
-      font-size: clamp(62px, 18vw, 118px);
-    }
-    .obstacle-emoji span {
-      display: inline-block;
-      line-height: 1;
-    }
-    @keyframes obstacle-bob {
-      0%, 100% { translate: 0 0; }
-      50% { translate: 0 -10px; }
-    }
-    .obstacle.explosion {
-      animation: pop-explosion .42s ease-out forwards;
-    }
-    @keyframes pop-explosion {
-      0% { opacity: 1; scale: 1; rotate: 0deg; }
-      45% { opacity: 1; scale: 1.45; rotate: 10deg; filter: drop-shadow(0 0 30px rgba(255,255,255,.85)); }
-      100% { opacity: 0; scale: .12; rotate: -30deg; }
-    }
-    .obstacle.collision {
-      animation: collision-shake .34s linear 3;
-    }
-    @keyframes collision-shake {
-      0%,100% { translate: -50% -50%; }
-      25% { translate: calc(-50% - 14px) calc(-50% + 4px); }
-      75% { translate: calc(-50% + 14px) calc(-50% - 4px); }
-    }
-    .rocket-wrap {
-      position: absolute;
-      left: 50%;
-      bottom: var(--rocket-bottom);
-      translate: -50% 0;
-      width: 126px;
-      height: 226px;
+      inset: calc(var(--safe-top) + 92px) 0 calc(var(--safe-bottom) + 112px);
       z-index: 4;
-      transition: bottom .62s cubic-bezier(.18,.82,.2,1), rotate .2s ease, scale .2s ease;
-      filter: drop-shadow(0 22px 22px rgba(28, 85, 138, .32));
     }
-    .rocket-wrap.launch { animation: rocket-float 1.25s ease-in-out infinite; }
-    .rocket-wrap.boost { animation: rocket-boost .48s ease-out; }
-    .rocket-wrap.drop-back { animation: rocket-drop-back .46s ease-out; }
-    .rocket-wrap.collision { rotate: -16deg; scale: .94; animation: rocket-hit .36s linear 2; }
-    @keyframes rocket-float {
-      0%, 100% { transform: translateY(0) rotate(-1deg); }
-      50% { transform: translateY(-12px) rotate(1.5deg); }
-    }
-    @keyframes rocket-hit {
-      0%,100% { translate: -50% 0; }
-      35% { translate: calc(-50% - 16px) 8px; }
-      70% { translate: calc(-50% + 12px) -4px; }
-    }
-    @keyframes rocket-boost {
-      0% { transform: translateY(0) scale(1); }
-      45% { transform: translateY(-34px) scale(1.08); }
-      100% { transform: translateY(0) scale(1); }
-    }
-    @keyframes rocket-drop-back {
-      0% { transform: translateY(0) scale(1); }
-      50% { transform: translateY(28px) scale(.96); }
-      100% { transform: translateY(0) scale(1); }
-    }
-    .rocket-body {
+    .meaning-bubble {
       position: absolute;
-      left: 50%;
-      top: 8px;
-      translate: -50% 0;
-      width: 78px;
-      height: 158px;
-      border-radius: 48% 48% 42% 42%;
-      background: linear-gradient(90deg, #d7ecff 0%, #fff 32%, #eef8ff 62%, #9fd4ff 100%);
-      border: 4px solid rgba(52, 119, 176, .55);
+      top: clamp(82px, 17dvh, 150px);
+      right: clamp(18px, 7vw, 54px);
+      width: var(--bubble-size);
+      min-height: var(--bubble-size);
+      display: grid;
+      place-items: center;
+      padding: clamp(20px, 5vw, 34px);
+      border-radius: 50%;
+      color: #06466d;
+      background:
+        radial-gradient(circle at 34% 24%, rgba(255,255,255,.98) 0 9%, transparent 10%),
+        radial-gradient(circle at 52% 48%, rgba(255,255,255,.94), rgba(206,250,255,.74) 58%, rgba(123,224,246,.45) 100%);
+      border: 2px solid rgba(255,255,255,.64);
+      box-shadow:
+        inset 14px 18px 28px rgba(255,255,255,.42),
+        inset -18px -20px 34px rgba(34, 155, 190, .28),
+        0 24px 44px rgba(4, 61, 95, .22);
+      text-shadow: none;
+      animation: bubble-float 2.8s ease-in-out infinite;
     }
-    .rocket-body::before {
+    .meaning-bubble::after {
       content: "";
       position: absolute;
-      left: 50%;
-      top: -34px;
-      translate: -50% 0;
-      width: 0;
-      height: 0;
-      border-left: 38px solid transparent;
-      border-right: 38px solid transparent;
-      border-bottom: 54px solid #ff563e;
-      filter: drop-shadow(0 3px 0 rgba(161,49,37,.34));
-    }
-    .window {
-      position: absolute;
-      left: 50%;
-      top: 50px;
-      translate: -50% 0;
-      width: 40px;
-      height: 40px;
+      right: 17%;
+      top: 16%;
+      width: 18%;
+      height: 9%;
       border-radius: 50%;
-      background: radial-gradient(circle at 36% 34%, #84d6ff 0 26%, #1b78bf 28% 70%, #124e93 72%);
-      border: 5px solid #7cbff2;
+      background: rgba(255,255,255,.78);
+      rotate: -28deg;
+      filter: blur(.2px);
     }
-    .stripe {
+    .meaning-text {
+      max-width: 100%;
+      font-size: clamp(25px, 7vw, 42px);
+      font-weight: 1000;
+      line-height: 1.16;
+      overflow-wrap: anywhere;
+    }
+    @keyframes bubble-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+    .meaning-bubble.bubble-pop {
+      animation: bubble-pop .5s ease-out forwards;
+    }
+    @keyframes bubble-pop {
+      0% { opacity: 1; transform: scale(1); }
+      48% { opacity: 1; transform: scale(1.08); filter: brightness(1.1); }
+      100% { opacity: 0; transform: scale(.18); }
+    }
+    .meaning-bubble.bubble-shake {
+      animation: bubble-shake .34s linear 3;
+      background:
+        radial-gradient(circle at 34% 24%, rgba(255,255,255,.98) 0 9%, transparent 10%),
+        radial-gradient(circle at 52% 48%, rgba(255,255,255,.94), rgba(255,213,220,.80) 58%, rgba(255,115,132,.44) 100%);
+    }
+    @keyframes bubble-shake {
+      0%, 100% { transform: translate(0, 0); }
+      25% { transform: translate(-13px, 4px); }
+      75% { transform: translate(13px, -3px); }
+    }
+    .pop-particles {
       position: absolute;
-      left: 50%;
-      bottom: 26px;
-      translate: -50% 0;
-      width: 20px;
-      height: 42px;
-      border-radius: 8px;
-      background: #e8503f;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
     }
-    .fin {
+    .pop-particles.active {
+      opacity: 1;
+    }
+    .pop-particles i {
       position: absolute;
-      bottom: 44px;
-      width: 36px;
-      height: 68px;
-      background: #e84837;
-      border: 4px solid rgba(52,119,176,.45);
-      z-index: -1;
+      left: 52%;
+      top: 46%;
+      width: 13px;
+      height: 13px;
+      border: 2px solid rgba(255,255,255,.84);
+      border-radius: 50%;
+      animation: pop-particle .62s ease-out forwards;
+      transform: rotate(var(--angle)) translateX(0);
     }
-    .fin.left { left: 8px; transform: skewY(-25deg); border-radius: 10px 4px 18px 10px; }
-    .fin.right { right: 8px; transform: skewY(25deg); border-radius: 4px 10px 10px 18px; }
-    .flame {
+    @keyframes pop-particle {
+      to {
+        opacity: 0;
+        transform: rotate(var(--angle)) translateX(var(--distance)) scale(.5);
+      }
+    }
+    .worm {
       position: absolute;
-      left: 50%;
-      bottom: -18px;
-      translate: -50% 0;
-      width: 40px;
-      height: 72px;
-      border-radius: 0 0 50% 50%;
-      background: linear-gradient(180deg, #ffeb3b 0%, #ff9d1c 42%, #ff4a1c 72%, transparent 100%);
-      transform-origin: top center;
-      animation: flame-flicker .16s ease-in-out infinite alternate;
-      z-index: -2;
+      left: clamp(18px, 8vw, 62px);
+      top: clamp(245px, 43dvh, 390px);
+      width: clamp(190px, 52vw, 300px);
+      height: 112px;
+      transform: scale(var(--worm-scale));
+      transform-origin: 28% 60%;
+      filter: drop-shadow(0 22px 24px rgba(0, 47, 76, .24));
+      animation: worm-swim 2.1s ease-in-out infinite;
     }
-    @keyframes flame-flicker {
-      from { scale: .86 1; opacity: .88; }
-      to { scale: 1.08 1.16; opacity: 1; }
+    @keyframes worm-swim {
+      0%, 100% { translate: 0 0; rotate: -2deg; }
+      50% { translate: 0 -9px; rotate: 2deg; }
+    }
+    .worm.worm-munch {
+      animation: worm-munch .58s ease-out;
+    }
+    @keyframes worm-munch {
+      0% { transform: scale(var(--worm-scale)) translateX(0); }
+      45% { transform: scale(calc(var(--worm-scale) * 1.05)) translateX(42px); }
+      100% { transform: scale(var(--worm-scale)) translateX(0); }
+    }
+    .worm.worm-retreat {
+      animation: worm-retreat .48s ease-out;
+    }
+    @keyframes worm-retreat {
+      0% { transform: scale(var(--worm-scale)) translateX(0); }
+      48% { transform: scale(calc(var(--worm-scale) * .96)) translateX(-28px) rotate(-7deg); }
+      100% { transform: scale(var(--worm-scale)) translateX(0); }
+    }
+    .worm-svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
     }
     .controls {
       position: absolute;
       left: 50%;
-      bottom: var(--status-bottom);
+      bottom: var(--controls-bottom);
       translate: -50% 0;
-      width: min(430px, 92vw);
+      width: min(440px, 92vw);
       display: grid;
       justify-items: center;
       gap: 8px;
-      z-index: 8;
+      z-index: 9;
     }
     .voice-action {
       min-height: 48px;
       border-radius: 999px;
       padding: 10px 18px;
-      background: rgba(255,255,255,.94);
-      color: #184069;
+      background: rgba(255,255,255,.95);
+      color: var(--ink);
       font-size: 17px;
       font-weight: 950;
-      box-shadow: 0 8px 0 rgba(37,101,156,.13), 0 14px 24px rgba(30,82,130,.20);
+      box-shadow: 0 8px 0 rgba(4,73,111,.14), 0 14px 24px rgba(3,55,87,.18);
     }
     .voice-action.hidden {
       display: none;
     }
-    .listening-indicator {
-      min-height: 28px;
-      display: grid;
-      place-items: center;
-      opacity: .92;
-    }
-    .voice-waves {
-      display: inline-grid;
-      grid-auto-flow: column;
-      align-items: end;
-      gap: 4px;
-      height: 22px;
-    }
-    .voice-waves i {
-      width: 5px;
-      height: 9px;
-      border-radius: 999px;
-      background: rgba(255,255,255,.9);
-      animation: voice-wave .62s ease-in-out infinite alternate;
-    }
-    .voice-waves i:nth-child(2) { animation-delay: .1s; height: 16px; }
-    .voice-waves i:nth-child(3) { animation-delay: .2s; height: 12px; }
-    @keyframes voice-wave {
-      from { scale: 1 .55; opacity: .45; }
-      to { scale: 1 1.18; opacity: 1; }
-    }
     .status {
-      min-height: 32px;
-      max-width: min(380px, 88vw);
+      min-height: 34px;
+      max-width: min(390px, 90vw);
       padding: 8px 15px;
       border-radius: 18px;
-      background: rgba(14, 77, 137, .34);
+      background: rgba(3, 65, 106, .34);
+      border: 1px solid rgba(255,255,255,.18);
       font-size: 16px;
       font-weight: 900;
-      line-height: 1.35;
-      text-shadow: 0 3px 8px rgba(20,74,120,.36);
+      line-height: 1.4;
+      text-shadow: 0 3px 8px rgba(3,45,78,.34);
+      backdrop-filter: blur(8px);
+    }
+    .hint {
+      font-size: 13px;
+      font-weight: 850;
+      opacity: .92;
     }
     .bottom-actions {
       display: flex;
@@ -411,10 +426,32 @@ export function renderCollectionGameHtml(): string {
       min-height: 36px;
       border-radius: 999px;
       padding: 7px 12px;
-      background: rgba(16, 70, 124, .30);
+      background: rgba(3, 59, 95, .34);
       color: #fff;
       font-size: 13px;
       font-weight: 900;
+    }
+    .voice-waves {
+      display: inline-grid;
+      grid-auto-flow: column;
+      align-items: end;
+      gap: 3px;
+      height: 18px;
+      margin-inline-start: 4px;
+      vertical-align: -2px;
+    }
+    .voice-waves i {
+      width: 4px;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(190,255,248,.95);
+      animation: voice-wave .62s ease-in-out infinite alternate;
+    }
+    .voice-waves i:nth-child(2) { animation-delay: .1s; height: 15px; }
+    .voice-waves i:nth-child(3) { animation-delay: .2s; height: 11px; }
+    @keyframes voice-wave {
+      from { scale: 1 .55; opacity: .45; }
+      to { scale: 1 1.18; opacity: 1; }
     }
     .spinner {
       display: inline-block;
@@ -428,16 +465,17 @@ export function renderCollectionGameHtml(): string {
       margin-inline-end: 6px;
     }
     @keyframes spin { to { rotate: 360deg; } }
-    .shake-screen { animation: screen-shake .36s linear 2; }
+    .screen-shake { animation: screen-shake .36s linear 2; }
     @keyframes screen-shake {
       0%,100% { transform: translate(0,0); }
       25% { transform: translate(-5px,3px); }
       75% { transform: translate(5px,-3px); }
     }
-    .result-emoji {
-      font-size: clamp(96px, 30vw, 170px);
-      line-height: 1;
-      filter: drop-shadow(0 18px 20px rgba(35, 93, 146, .28));
+    .result-worm {
+      width: min(330px, 78vw);
+      min-height: 112px;
+      display: grid;
+      place-items: center;
     }
     .answer-line {
       display: inline-grid;
@@ -447,44 +485,67 @@ export function renderCollectionGameHtml(): string {
       direction: ltr;
     }
     .correct-word {
-      font-size: clamp(40px, 11vw, 72px);
+      font-size: clamp(34px, 9.5vw, 62px);
       font-weight: 1000;
       line-height: 1;
     }
     .sound {
-      width: 64px;
-      height: 64px;
+      width: 62px;
+      height: 62px;
       border-radius: 50%;
       display: grid;
       place-items: center;
-      color: #21476b;
-      background: rgba(255,255,255,.92);
-      font-size: 28px;
-      box-shadow: 0 8px 18px rgba(31, 90, 143, .22);
+      color: #075079;
+      background: rgba(255,255,255,.93);
+      font-size: 27px;
+      box-shadow: 0 8px 18px rgba(3, 60, 98, .22);
     }
-    .danger { background: rgba(121, 20, 44, .38); }
-    .tiny { font-size: 14px; opacity: .9; }
+    .danger { background: rgba(117, 18, 45, .40); }
+    .small-bubble {
+      min-width: min(340px, 88vw);
+      padding: 18px 20px;
+      border-radius: 28px;
+      color: var(--ink);
+      background: rgba(223,252,255,.82);
+      border: 1px solid rgba(255,255,255,.66);
+      text-shadow: none;
+      font-size: clamp(22px, 6vw, 34px);
+      font-weight: 1000;
+      line-height: 1.25;
+    }
     @media (max-height: 720px) {
       :root {
-        --rocket-bottom: calc(var(--safe-bottom) + 78px);
-        --status-bottom: calc(var(--safe-bottom) + 8px);
+        --bubble-size: clamp(150px, 39vw, 220px);
+        --controls-bottom: calc(var(--safe-bottom) + 8px);
+        --worm-scale: .78;
       }
-      .rocket-wrap { scale: .82; }
-      .obstacle { top: clamp(150px, 30dvh, 230px); }
-      .controls { bottom: calc(var(--safe-bottom) + 10px); }
+      .playfield { inset: calc(var(--safe-top) + 78px) 0 calc(var(--safe-bottom) + 84px); }
+      .meaning-bubble { top: clamp(64px, 14dvh, 110px); }
+      .worm { top: clamp(205px, 40dvh, 320px); }
       .status { font-size: 14px; }
+      .hint { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+        scroll-behavior: auto !important;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="sky" aria-hidden="true">
-    <div class="particle p1"></div>
-    <div class="particle p2"></div>
-    <div class="particle p3"></div>
-    <div class="cloud c1"><span></span></div>
-    <div class="cloud c2"><span></span></div>
-    <div class="cloud c3"><span></span></div>
-    <div class="cloud c4"><span></span></div>
+  <div class="underwater" aria-hidden="true">
+    <span class="bubble-dot" style="--left:10%;--size:11px;--duration:8s;--delay:-2s;--drift:18px"></span>
+    <span class="bubble-dot" style="--left:24%;--size:18px;--duration:11s;--delay:-6s;--drift:-16px"></span>
+    <span class="bubble-dot" style="--left:42%;--size:9px;--duration:7s;--delay:-1s;--drift:10px"></span>
+    <span class="bubble-dot" style="--left:68%;--size:15px;--duration:10s;--delay:-4s;--drift:-22px"></span>
+    <span class="bubble-dot" style="--left:86%;--size:12px;--duration:9s;--delay:-3s;--drift:14px"></span>
+    <div class="seaweed w1"></div>
+    <div class="seaweed w2"></div>
+    <div class="seaweed w3"></div>
+    <div class="coral"></div>
   </div>
   <main class="app" id="app"></main>
   <script>
@@ -515,31 +576,17 @@ export function renderCollectionGameHtml(): string {
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'": '&#39;'}[c]));
     }
-    function emoji(value) {
-      return escapeHtml(value || '❓');
+    function isSpeechSupported() {
+      return Boolean(Recognition);
     }
-    function graphemes(value) {
-      const raw = String(value || '❓').trim() || '❓';
-      try {
-        if (Intl && Intl.Segmenter) {
-          return Array.from(new Intl.Segmenter('de', { granularity: 'grapheme' }).segment(raw), item => item.segment).filter(part => part.trim());
-        }
-      } catch {}
-      return Array.from(raw).filter(part => part.trim());
-    }
-    function obstacleEmojiMarkup(value) {
-      const parts = graphemes(value);
-      const comboClass = parts.length > 1 ? ' combo' : '';
-      return '<div class="obstacle-emoji' + comboClass + '">' + parts.map(part => '<span>' + emoji(part) + '</span>').join('') + '</div>';
+    function meaning(value) {
+      return escapeHtml(String(value || 'المعنى').trim() || 'المعنى');
     }
     async function api(path, options) {
       const res = await fetch(path, options);
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || 'request_failed');
       return json;
-    }
-    function isSpeechSupported() {
-      return Boolean(Recognition);
     }
     async function load() {
       if (!token) return renderError('رابط اللعبة غير صالح. افتح اللعبة من داخل البوت.');
@@ -550,15 +597,31 @@ export function renderCollectionGameHtml(): string {
         renderError(error.message === 'expired_token' ? 'انتهت صلاحية جلسة اللعبة. افتح لعبة جديدة من البوت.' : 'تعذر فتح اللعبة حالياً.');
       }
     }
-    function rocketMarkup() {
-      return '<div class="rocket-wrap launch" id="rocket">' +
-        '<div class="rocket-body"><div class="window"></div><div class="stripe"></div></div>' +
-        '<div class="fin left"></div><div class="fin right"></div><div class="flame"></div>' +
-        '</div>';
-    }
     function setGameState(next) {
       gameState = next;
       app.dataset.state = next;
+    }
+    function wormMarkup(extraClass = '', length = 0, crowned = false) {
+      const growth = Math.min(5, Math.max(0, Number(length || 0)));
+      const tailOffset = growth * 18;
+      const crown = crowned ? '<text x="202" y="-9" font-size="38" text-anchor="middle">👑</text>' : '';
+      return '<div class="worm ' + extraClass + '" id="worm" style="width: calc(clamp(190px, 52vw, 300px) + ' + (growth * 14) + 'px)">' +
+        '<svg class="worm-svg" viewBox="' + (-tailOffset) + ' -34 ' + (310 + tailOffset) + ' 156" role="img" aria-label="دودة بحرية">' +
+        '<defs><linearGradient id="wormGrad" x1="0" x2="1"><stop offset="0%" stop-color="#ffd66b"/><stop offset="45%" stop-color="#ff9cc9"/><stop offset="100%" stop-color="#8be7ff"/></linearGradient></defs>' +
+        '<g>' +
+        Array.from({ length: 4 + growth }, (_, i) => {
+          const x = 34 + i * 34 - tailOffset;
+          const y = 68 + Math.sin(i) * 9;
+          return '<circle cx="' + x + '" cy="' + y + '" r="31" fill="url(#wormGrad)" stroke="rgba(255,255,255,.48)" stroke-width="4"/>';
+        }).join('') +
+        '<ellipse cx="196" cy="58" rx="47" ry="41" fill="#ffb0d7" stroke="rgba(255,255,255,.55)" stroke-width="4"/>' +
+        '<circle cx="183" cy="47" r="6" fill="#073556"/><circle cx="209" cy="47" r="6" fill="#073556"/>' +
+        '<circle cx="181" cy="45" r="2" fill="#fff"/><circle cx="207" cy="45" r="2" fill="#fff"/>' +
+        '<path d="M184 69 Q197 78 211 69" fill="none" stroke="#7b3157" stroke-width="5" stroke-linecap="round"/>' +
+        '<path d="M214 33 Q244 16 251 48 Q231 44 214 58" fill="#8be7ff" stroke="rgba(255,255,255,.45)" stroke-width="3"/>' +
+        '<path d="M170 33 Q146 13 136 44 Q156 43 171 57" fill="#8be7ff" stroke="rgba(255,255,255,.45)" stroke-width="3"/>' +
+        crown +
+        '</g></svg></div>';
     }
     function renderStart() {
       stopListening();
@@ -570,12 +633,12 @@ export function renderCollectionGameHtml(): string {
       setGameState('ready');
       const totalWords = state.totalWords || state.totalQuestions || 0;
       app.innerHTML = '<section class="screen"><div class="panel">' +
-        '<div class="result-emoji">🚀</div>' +
-        '<h1>تحدي الصور والكلمات</h1>' +
+        '<div class="result-worm">' + wormMarkup('', 1) + '</div>' +
+        '<h1>Underwater Worm Speaking Game</h1>' +
         '<p class="sub">' + escapeHtml(state.collectionTitle) + '</p>' +
         '<p class="sub">عدد الكلمات: ' + totalWords + '</p>' +
+        '<p class="notice">ستظهر فقاعة فيها المعنى العربي فقط. انطق الكلمة الألمانية حتى تأكل الدودة الفقاعة.</p>' +
         '<p class="notice">إذا المايكروفون لا يعمل، افتح الرابط في Safari أو Chrome.</p>' +
-        '<p class="sub">اللعبة ستستخدم كلمات هذه المجموعة. ماكو اختيارات؛ شوف الإيموجي وانطق بالألماني.</p>' +
         '<button class="primary" id="startBtn">🎙 تفعيل المايكروفون وابدأ</button>' +
         '</div></section>';
       document.getElementById('startBtn').onclick = () => {
@@ -584,28 +647,36 @@ export function renderCollectionGameHtml(): string {
           return;
         }
         microphoneEnabled = true;
-        renderFlight('انطق بالألماني', true);
+        renderPlay('انطق الكلمة الألمانية', true);
       };
     }
-    function renderFlight(message = 'انطق بالألماني', autoStart = false) {
+    function renderPlay(message = 'انطق الكلمة الألمانية', autoStart = false) {
       const question = state.currentQuestion;
       if (!question) return finish();
-      setGameState('obstacle');
+      setGameState('bubble');
       roundClosed = false;
       requestBusy = false;
       isChecking = false;
       isGameOver = false;
       currentQuestionIndex = question.questionIndex;
       clearTimers();
-      app.classList.remove('shake-screen');
+      app.classList.remove('screen-shake');
       const totalWords = state.totalWords || state.totalQuestions || 0;
       const completedWords = state.completedWords ?? state.correctCount ?? 0;
       const attemptsLeft = question.attemptsLeft ?? 3;
-      app.innerHTML = '<section class="flight">' +
-        '<div class="hud"><div class="meters">' + state.heightMeters + '</div><div class="hud-label">meters above the ground</div><div class="hud-label">التقدم: ' + (completedWords + 1) + ' / ' + totalWords + ' · المنجزة: ' + completedWords + ' · محاولات: ' + attemptsLeft + '</div><div class="timer"><div class="timer-fill" id="timerFill"></div></div></div>' +
-        '<div class="obstacle" id="obstacle">' + obstacleEmojiMarkup(question.visualEmoji) + '</div>' +
-        rocketMarkup() +
-        '<div class="controls"><div class="listening-indicator" id="listeningIndicator" aria-hidden="true"></div><div class="status" id="status">' + escapeHtml(message) + '</div><div class="bottom-actions"><button class="voice-action hidden" id="micRecoverBtn">🎙 فعّل المايكروفون</button><button class="mini-action" id="leaveBtn">حفظ وخروج</button></div><div class="tiny">المايك يعمل تلقائياً بعد التفعيل · de-DE</div></div>' +
+      app.innerHTML = '<section class="game">' +
+        '<div class="hud">' +
+        '<div class="hud-pill"><div class="hud-value">⭐ ' + state.score + '</div><div class="hud-label">النقاط</div></div>' +
+        '<div class="hud-pill"><div class="hud-value">🐚 ' + (completedWords + 1) + ' / ' + totalWords + '</div><div class="hud-label">المجموعة</div></div>' +
+        '<div class="hud-pill"><div class="hud-value">❤️ ' + attemptsLeft + '</div><div class="hud-label">المحاولات</div></div>' +
+        '<div class="hud-pill listening-chip" id="listenChip"><div class="hud-value">🎙 de-DE</div><div class="hud-label">يستمع بالألمانية</div></div>' +
+        '</div>' +
+        '<div class="timer"><div class="timer-fill" id="timerFill"></div></div>' +
+        '<div class="playfield">' +
+        '<div class="meaning-bubble" id="meaningBubble"><div class="meaning-text">' + meaning(question.arabicMeaning) + '</div><div class="pop-particles" id="popParticles">' + Array.from({ length: 8 }, (_, i) => '<i style="--angle:' + (i * 45) + 'deg;--distance:' + (52 + i * 5) + 'px"></i>').join('') + '</div></div>' +
+        wormMarkup('', completedWords) +
+        '</div>' +
+        '<div class="controls"><div class="status" id="status">' + escapeHtml(message) + '</div><div class="bottom-actions"><button class="voice-action hidden" id="micRecoverBtn">🎙 فعّل المايكروفون</button><button class="mini-action" id="leaveBtn">حفظ وخروج</button></div><div class="hint">قل الكلمة المناسبة للمعنى · يستمع بالألمانية <span id="listeningIndicator" aria-hidden="true"></span></div></div>' +
         '</section>';
       document.getElementById('micRecoverBtn').onclick = enableMicrophoneAndListen;
       document.getElementById('leaveBtn').onclick = leaveGame;
@@ -631,12 +702,12 @@ export function renderCollectionGameHtml(): string {
     }
     function enableMicrophoneAndListen() {
       microphoneEnabled = true;
-      if (!activeTimerId && state.currentQuestion && gameState === 'obstacle') startQuestionTimer(state.currentQuestion.timeLimit || 10);
+      if (!activeTimerId && state.currentQuestion && gameState === 'bubble') startQuestionTimer(state.currentQuestion.timeLimit || 10);
       listen();
     }
     function scheduleAutoListen(delay = 500) {
       clearTimeout(autoListenTimer);
-      if (!microphoneEnabled || isGameOver || isRestarting || gameState !== 'obstacle') return;
+      if (!microphoneEnabled || isGameOver || isRestarting || gameState !== 'bubble') return;
       autoListenTimer = setTimeout(() => listen(), delay);
     }
     function listen() {
@@ -649,8 +720,8 @@ export function renderCollectionGameHtml(): string {
       latestConfidence = undefined;
       setGameState('listening');
       isListening = true;
-      setStatus('أسمعك...');
-      document.getElementById('rocket')?.classList.add('launch');
+      setStatus('يستمع بالألمانية...');
+      document.getElementById('listenChip')?.classList.add('active');
       renderVoiceWaves(true);
       setRecoveryButton(false);
       activeRecognition = new Recognition();
@@ -727,6 +798,7 @@ export function renderCollectionGameHtml(): string {
       clearTimeout(speechTimer);
       speechTimer = null;
       renderVoiceWaves(false);
+      document.getElementById('listenChip')?.classList.remove('active');
       try { activeRecognition && activeRecognition.abort && activeRecognition.abort(); } catch {}
       try { activeRecognition && activeRecognition.stop(); } catch {}
       activeRecognition = null;
@@ -759,18 +831,15 @@ export function renderCollectionGameHtml(): string {
         isChecking = false;
         if (result.correct) {
           setGameState('correct');
-          const obstacle = document.getElementById('obstacle');
-          obstacle?.classList.add('explosion');
-          const rocket = document.getElementById('rocket');
-          if (rocket) {
-            rocket.classList.add('boost');
-            rocket.style.bottom = Math.min(74, 8 + state.correctCount * 8) + '%';
-          }
-          setTimeout(() => result.finished ? finish() : renderFlight('صح! الصاروخ صعد 🚀'), 680);
+          document.getElementById('meaningBubble')?.classList.add('bubble-pop');
+          document.getElementById('popParticles')?.classList.add('active');
+          document.getElementById('worm')?.classList.add('worm-munch');
+          setStatus('صحيح! +' + Math.max(1, Math.min(4, state.correctCount)) + ' XP');
+          setTimeout(() => result.finished ? finish() : renderPlay('صحيح! فقاعة جديدة 🫧'), 680);
           return;
         }
         if (result.tryAgain && state.currentQuestion) {
-          setGameState('obstacle');
+          setGameState('bubble');
           requestBusy = false;
           roundClosed = false;
           currentQuestionIndex = state.currentQuestion.questionIndex;
@@ -780,41 +849,39 @@ export function renderCollectionGameHtml(): string {
           scheduleAutoListen(700);
           return;
         }
-        crashAndFinish();
+        failAndFinish();
       } catch {
         renderError('تعذر تسجيل النطق. افتح اللعبة مرة ثانية من البوت.');
       }
     }
     function applyPartialWrong(attemptsLeft, technicalRetry = false) {
-      if (!technicalRetry) app.classList.add('shake-screen');
-      const rocket = document.getElementById('rocket');
-      const obstacle = document.getElementById('obstacle');
-      rocket?.classList.remove('drop-back');
-      obstacle?.classList.remove('collision');
-      void rocket?.offsetWidth;
+      if (!technicalRetry) app.classList.add('screen-shake');
+      const worm = document.getElementById('worm');
+      const bubble = document.getElementById('meaningBubble');
+      worm?.classList.remove('worm-retreat');
+      bubble?.classList.remove('bubble-shake');
+      void worm?.offsetWidth;
       if (!technicalRetry) {
-        rocket?.classList.add('drop-back');
-        obstacle?.classList.add('collision');
+        worm?.classList.add('worm-retreat');
+        bubble?.classList.add('bubble-shake');
       }
-      const totalWords = state.totalWords || state.totalQuestions || 0;
-      const completedWords = state.completedWords ?? state.correctCount ?? 0;
-      const label = document.querySelectorAll('.hud .hud-label')[1];
-      if (label) label.textContent = 'التقدم: ' + (completedWords + 1) + ' / ' + totalWords + ' · المنجزة: ' + completedWords + ' · محاولات: ' + attemptsLeft;
-      setStatus(technicalRetry ? 'ما سمعتك بوضوح، أسمعك مرة ثانية...' : 'حاول مرة ثانية — باقي ' + attemptsLeft);
+      const attempts = document.querySelectorAll('.hud .hud-value')[2];
+      if (attempts) attempts.textContent = '❤️ ' + attemptsLeft;
+      setStatus(technicalRetry ? 'ما سمعتك بوضوح، أسمعك مرة ثانية...' : 'حاول مرة ثانية — باقي ' + attemptsLeft + ' محاولات');
       setTimeout(() => {
-        app.classList.remove('shake-screen');
-        rocket?.classList.remove('drop-back');
-        obstacle?.classList.remove('collision');
-      }, 460);
+        app.classList.remove('screen-shake');
+        worm?.classList.remove('worm-retreat');
+        bubble?.classList.remove('bubble-shake');
+      }, 520);
     }
-    function crashAndFinish() {
+    function failAndFinish() {
       setGameState('gameOver');
       isGameOver = true;
       stopListening();
       clearTimers();
-      document.getElementById('obstacle')?.classList.add('collision');
-      document.getElementById('rocket')?.classList.add('collision');
-      app.classList.add('shake-screen');
+      document.getElementById('meaningBubble')?.classList.add('bubble-shake');
+      document.getElementById('worm')?.classList.add('worm-retreat');
+      app.classList.add('screen-shake');
       setTimeout(() => finish(), 760);
     }
     async function finish() {
@@ -843,14 +910,15 @@ export function renderCollectionGameHtml(): string {
       const totalWords = state.totalWords || state.totalQuestions || 0;
       const completedWords = state.completedWords ?? state.correctCount ?? 0;
       app.innerHTML = '<section class="screen game-over"><div class="panel">' +
-        '<h1>خسرت بسبب</h1>' +
-        '<div class="result-emoji">' + emoji(failed.failedVisualEmoji) + '</div>' +
+        '<div class="result-worm">' + wormMarkup('worm-retreat', Math.max(0, completedWords - 1)) + '</div>' +
+        '<h1>انتهت المحاولة</h1>' +
+        '<p class="sub">للأسف، فقدت هذه الكلمة.</p>' +
+        '<div class="small-bubble">🫧 ' + meaning(failed.failedArabicMeaning) + '</div>' +
         '<div class="answer-line"><strong class="correct-word">' + escapeHtml(failed.correctAnswer) + '</strong><button class="sound" id="speakBtn" aria-label="استمع للنطق الصحيح">🔊</button></div>' +
         '<button class="secondary" id="speakTextBtn">🔊 اسمع النطق الصحيح</button>' +
-        '<p class="sub">وصلت إلى ' + state.heightMeters + ' متر</p>' +
-        '<p class="notice">أنجزت ' + completedWords + ' من ' + totalWords + ' · XP: +' + (state.xpGained || 0) + '</p>' +
-        '<button class="primary" id="restartBtn">إعادة اللعب</button>' +
-        '<button class="secondary" id="leaveResultBtn">رجوع للبوت</button>' +
+        '<p class="notice">الكلمات المكتملة: ' + completedWords + ' / ' + totalWords + '<br>النقاط المكتسبة: ' + state.score + '<br>XP المكتسب: +' + (state.xpGained || 0) + '</p>' +
+        '<button class="primary" id="restartBtn">إعادة المحاولة</button>' +
+        '<button class="secondary" id="leaveResultBtn">العودة إلى البوت</button>' +
         '</div></section>';
       document.getElementById('speakBtn')?.addEventListener('click', () => speakGerman(failed.correctPronunciationText || failed.correctAnswer));
       document.getElementById('speakTextBtn')?.addEventListener('click', () => speakGerman(failed.correctPronunciationText || failed.correctAnswer));
@@ -863,12 +931,12 @@ export function renderCollectionGameHtml(): string {
       const totalWords = state.totalWords || state.totalQuestions || 0;
       const completedWords = state.completedWords ?? state.correctCount ?? 0;
       app.innerHTML = '<section class="screen"><div class="panel">' +
-        '<div class="result-emoji">🏆</div>' +
-        '<h1>ممتاز 🚀</h1>' +
-        '<p class="sub">أكملت كل كلمات المجموعة</p>' +
-        '<p class="notice">✅ ' + completedWords + ' / ' + totalWords + ' · الارتفاع: ' + state.heightMeters + ' متر · XP: +' + (state.xpGained || 0) + '</p>' +
-        '<button class="primary" id="restartBtn">إعادة اللعب</button>' +
-        '<button class="secondary" id="leaveResultBtn">رجوع للبوت</button>' +
+        '<div class="result-worm">' + wormMarkup('', 5, true) + '</div>' +
+        '<h1>ممتاز! أكلت كل الفقاعات</h1>' +
+        '<p class="sub">الدودة خلصت مجموعة الكلمات بنجاح.</p>' +
+        '<p class="notice">أكملت: ' + completedWords + ' / ' + totalWords + '<br>النقاط: ' + state.score + '<br>XP: +' + (state.xpGained || 0) + '</p>' +
+        '<button class="primary" id="restartBtn">العب مرة ثانية</button>' +
+        '<button class="secondary" id="leaveResultBtn">العودة إلى البوت</button>' +
         '</div></section>';
       document.getElementById('restartBtn')?.addEventListener('click', restartGame);
       document.getElementById('leaveResultBtn')?.addEventListener('click', leaveGame);
@@ -882,8 +950,8 @@ export function renderCollectionGameHtml(): string {
       clearTimers();
       stopListening();
       app.innerHTML = '<section class="screen"><div class="panel">' +
-        '<div class="result-emoji">🚀</div><h1>جولة جديدة...</h1>' +
-        '<p class="notice"><span class="spinner"></span> أجهز صاروخ جديد</p>' +
+        '<div class="result-worm">' + wormMarkup('', 1) + '</div><h1>جولة جديدة...</h1>' +
+        '<p class="notice"><span class="spinner"></span> أجهز فقاعات جديدة</p>' +
         '</div></section>';
       try {
         const next = await api('/game/api/restart', {
@@ -975,11 +1043,11 @@ export function renderCollectionGameHtml(): string {
     }
     function renderExitSaved(xpGained) {
       app.innerHTML = '<section class="screen"><div class="panel">' +
-        '<div class="result-emoji">✅</div>' +
+        '<div class="result-worm">' + wormMarkup('', 2) + '</div>' +
         '<h1>تم حفظ تقدمك</h1>' +
         '<p class="notice">ربحت ' + Number(xpGained || 0) + ' XP.</p>' +
-        '<button class="primary" onclick="history.back()">رجوع للبوت</button>' +
-        '<button class="secondary" id="restartBtn">إعادة اللعب</button>' +
+        '<button class="primary" onclick="history.back()">العودة إلى البوت</button>' +
+        '<button class="secondary" id="restartBtn">العب مرة ثانية</button>' +
         '</div></section>';
       document.getElementById('restartBtn')?.addEventListener('click', restartGame);
     }
@@ -998,7 +1066,7 @@ export function renderCollectionGameHtml(): string {
       button.classList.toggle('hidden', !visible);
     }
     function showMicrophoneRecovery(message) {
-      setGameState('obstacle');
+      setGameState('bubble');
       clearTimers();
       requestBusy = false;
       isChecking = false;
@@ -1012,16 +1080,16 @@ export function renderCollectionGameHtml(): string {
       clearTimers();
       stopListening();
       app.innerHTML = '<section class="screen"><div class="panel">' +
-        '<div class="result-emoji">🛰️</div><h1>تحدي الصور والكلمات</h1>' +
+        '<div class="result-worm">' + wormMarkup('worm-retreat', 0) + '</div><h1>Underwater Worm Speaking Game</h1>' +
         '<p class="notice danger">' + escapeHtml(message) + '</p>' +
         '<button class="primary" onclick="location.reload()">حاول مرة ثانية</button>' +
-        '<button class="secondary" onclick="history.back()">رجوع للبوت</button>' +
+        '<button class="secondary" onclick="history.back()">العودة إلى البوت</button>' +
         '</div></section>';
     }
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         finishOnExit(false);
-      } else if (microphoneEnabled && gameState === 'obstacle' && !requestBusy && !roundClosed && !isGameOver) {
+      } else if (microphoneEnabled && gameState === 'bubble' && !requestBusy && !roundClosed && !isGameOver) {
         if (!activeTimerId && state.currentQuestion) startQuestionTimer(state.currentQuestion.timeLimit || 10);
         scheduleAutoListen(500);
       }
@@ -1033,7 +1101,7 @@ export function renderCollectionGameHtml(): string {
       finishOnExit(false);
     });
     window.addEventListener('pageshow', () => {
-      if (microphoneEnabled && gameState === 'obstacle' && !requestBusy && !roundClosed && !isGameOver) {
+      if (microphoneEnabled && gameState === 'bubble' && !requestBusy && !roundClosed && !isGameOver) {
         if (!activeTimerId && state.currentQuestion) startQuestionTimer(state.currentQuestion.timeLimit || 10);
         scheduleAutoListen(500);
       }
