@@ -19,6 +19,8 @@ export function renderCollectionGameHtml(): string {
       --controls-bottom: calc(var(--safe-bottom) + clamp(16px, 3.2dvh, 38px));
       --bubble-size: clamp(178px, 47vw, 270px);
       --worm-scale: clamp(.82, 2.4vw, 1.08);
+      --play-top: calc(var(--safe-top) + clamp(92px, 12dvh, 124px));
+      --play-bottom: calc(var(--safe-bottom) + clamp(118px, 17dvh, 158px));
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
@@ -40,9 +42,10 @@ export function renderCollectionGameHtml(): string {
       inset: 0;
       overflow: hidden;
       background:
-        radial-gradient(circle at 50% -12%, rgba(255,255,255,.44), transparent 28%),
-        radial-gradient(circle at 88% 20%, rgba(157,239,255,.18), transparent 22%),
-        linear-gradient(180deg, #6bdcff 0%, #1ea9d9 42%, #0873a8 100%);
+        radial-gradient(circle at 50% -12%, rgba(255,255,255,.50), transparent 28%),
+        radial-gradient(circle at 88% 20%, rgba(157,239,255,.20), transparent 22%),
+        radial-gradient(circle at 15% 78%, rgba(68, 224, 202, .18), transparent 26%),
+        linear-gradient(180deg, #78e0ff 0%, #20acd9 38%, #0870a4 100%);
     }
     .underwater::before {
       content: "";
@@ -57,9 +60,24 @@ export function renderCollectionGameHtml(): string {
       transform-origin: top center;
       animation: ray-sway 8s ease-in-out infinite alternate;
     }
+    .underwater::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent),
+        radial-gradient(circle at 52% 58%, rgba(255,255,255,.08), transparent 36%);
+      opacity: .38;
+      mix-blend-mode: screen;
+      animation: water-current 9s ease-in-out infinite alternate;
+    }
     @keyframes ray-sway {
       from { transform: translateX(-2%) skewX(-4deg); }
       to { transform: translateX(3%) skewX(4deg); }
+    }
+    @keyframes water-current {
+      from { transform: translate3d(-4%, -1%, 0) scale(1.02); }
+      to { transform: translate3d(4%, 1%, 0) scale(1.06); }
     }
     .bubble-dot {
       position: absolute;
@@ -71,6 +89,7 @@ export function renderCollectionGameHtml(): string {
       border: 2px solid rgba(255,255,255,.54);
       background: rgba(255,255,255,.16);
       box-shadow: inset 5px 6px 8px rgba(255,255,255,.28);
+      will-change: transform, opacity;
       animation: bubble-rise var(--duration, 9s) linear infinite;
       animation-delay: var(--delay, 0s);
     }
@@ -88,8 +107,23 @@ export function renderCollectionGameHtml(): string {
       background: linear-gradient(180deg, #48d879, #0a8a65);
       transform-origin: bottom center;
       opacity: .76;
+      will-change: transform;
       animation: weed-sway 3.6s ease-in-out infinite alternate;
     }
+    .seaweed::before,
+    .seaweed::after {
+      content: "";
+      position: absolute;
+      bottom: 10px;
+      width: 20px;
+      height: 92px;
+      border-radius: 80% 80% 12px 12px;
+      background: linear-gradient(180deg, #6bf09b, #07845f);
+      opacity: .68;
+      transform-origin: bottom center;
+    }
+    .seaweed::before { left: -18px; rotate: -18deg; }
+    .seaweed::after { right: -17px; rotate: 19deg; }
     .seaweed.w1 { left: 7%; height: 118px; rotate: -8deg; }
     .seaweed.w2 { right: 10%; height: 152px; animation-delay: -1.2s; }
     .seaweed.w3 { left: 28%; width: 24px; height: 86px; animation-delay: -.7s; opacity: .48; }
@@ -109,6 +143,33 @@ export function renderCollectionGameHtml(): string {
         radial-gradient(circle at 54% 12%, #ff7899 0 14px, transparent 15px),
         radial-gradient(circle at 78% 34%, #ffb05d 0 12px, transparent 13px);
       opacity: .76;
+    }
+    .fish {
+      position: absolute;
+      top: var(--top, 50%);
+      left: -90px;
+      width: var(--w, 54px);
+      height: calc(var(--w, 54px) * .42);
+      border-radius: 55% 45% 45% 55%;
+      background: rgba(210, 250, 255, .28);
+      filter: blur(.15px);
+      opacity: .42;
+      animation: fish-swim var(--speed, 18s) linear infinite;
+      animation-delay: var(--delay, 0s);
+    }
+    .fish::after {
+      content: "";
+      position: absolute;
+      left: -13px;
+      top: 50%;
+      translate: 0 -50%;
+      border-top: 9px solid transparent;
+      border-bottom: 9px solid transparent;
+      border-right: 16px solid rgba(210, 250, 255, .26);
+    }
+    @keyframes fish-swim {
+      from { transform: translate3d(-12vw, 0, 0); }
+      to { transform: translate3d(126vw, -2dvh, 0); }
     }
     .app {
       position: relative;
@@ -245,8 +306,9 @@ export function renderCollectionGameHtml(): string {
     }
     .playfield {
       position: absolute;
-      inset: calc(var(--safe-top) + 92px) 0 calc(var(--safe-bottom) + 112px);
+      inset: var(--play-top) 0 var(--play-bottom);
       z-index: 4;
+      pointer-events: none;
     }
     .meaning-bubble {
       position: absolute;
@@ -268,6 +330,8 @@ export function renderCollectionGameHtml(): string {
         inset -18px -20px 34px rgba(34, 155, 190, .28),
         0 24px 44px rgba(4, 61, 95, .22);
       text-shadow: none;
+      transform-origin: 48% 52%;
+      will-change: transform, opacity, filter;
       animation: bubble-float 2.8s ease-in-out infinite;
     }
     .meaning-bubble::after {
@@ -289,17 +353,62 @@ export function renderCollectionGameHtml(): string {
       line-height: 1.16;
       overflow-wrap: anywhere;
     }
+    .visual-row {
+      position: absolute;
+      left: 50%;
+      bottom: -20px;
+      translate: -50% 0;
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-width: 74px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      color: #054364;
+      background: rgba(232, 255, 255, .66);
+      border: 1px solid rgba(255,255,255,.58);
+      box-shadow: 0 10px 22px rgba(4, 59, 91, .13);
+      font-size: clamp(22px, 6vw, 34px);
+      line-height: 1;
+      text-shadow: none;
+      white-space: nowrap;
+    }
+    .visual-row span {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
     @keyframes bubble-float {
       0%, 100% { transform: translateY(0); }
       50% { transform: translateY(-10px); }
     }
+    .meaning-bubble.bubble-spawn {
+      animation: bubble-spawn .42s ease-out, bubble-float 2.8s ease-in-out .42s infinite;
+    }
+    @keyframes bubble-spawn {
+      from { opacity: 0; transform: translateY(16px) scale(.82); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
     .meaning-bubble.bubble-pop {
-      animation: bubble-pop .5s ease-out forwards;
+      animation: bubble-pop .62s ease-out forwards;
+    }
+    .meaning-bubble.bubble-bite {
+      animation: bubble-bite .42s ease-in-out forwards;
     }
     @keyframes bubble-pop {
       0% { opacity: 1; transform: scale(1); }
-      48% { opacity: 1; transform: scale(1.08); filter: brightness(1.1); }
-      100% { opacity: 0; transform: scale(.18); }
+      36% { opacity: 1; transform: scale(1.08) rotate(-2deg); filter: brightness(1.1); }
+      64% { opacity: .82; transform: scale(.78) translateX(-18px); clip-path: circle(44% at 44% 52%); }
+      100% { opacity: 0; transform: scale(.14) translateX(-38px); clip-path: circle(12% at 34% 52%); }
+    }
+    @keyframes bubble-bite {
+      0%, 100% { transform: scale(1); }
+      35% { transform: scale(1.035) rotate(2deg); }
+      70% { transform: scale(.96) translateX(-10px); }
     }
     .meaning-bubble.bubble-shake {
       animation: bubble-shake .34s linear 3;
@@ -332,11 +441,29 @@ export function renderCollectionGameHtml(): string {
       animation: pop-particle .62s ease-out forwards;
       transform: rotate(var(--angle)) translateX(0);
     }
+    .success-sparkle {
+      position: absolute;
+      left: 54%;
+      top: 44%;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.98);
+      box-shadow: 0 0 12px rgba(255,255,255,.9);
+      opacity: 0;
+      animation: sparkle-pop .7s ease-out forwards;
+      animation-delay: var(--delay, 0s);
+    }
     @keyframes pop-particle {
       to {
         opacity: 0;
         transform: rotate(var(--angle)) translateX(var(--distance)) scale(.5);
       }
+    }
+    @keyframes sparkle-pop {
+      0% { opacity: 0; transform: translate(0,0) scale(.4); }
+      28% { opacity: 1; }
+      100% { opacity: 0; transform: translate(var(--x), var(--y)) scale(1.3); }
     }
     .worm {
       position: absolute;
@@ -347,19 +474,34 @@ export function renderCollectionGameHtml(): string {
       transform: scale(var(--worm-scale));
       transform-origin: 28% 60%;
       filter: drop-shadow(0 22px 24px rgba(0, 47, 76, .24));
-      animation: worm-swim 2.1s ease-in-out infinite;
+      will-change: transform, translate, rotate;
+      animation: worm-swim 2.1s ease-in-out infinite, worm-breathe 3.4s ease-in-out infinite;
     }
     @keyframes worm-swim {
       0%, 100% { translate: 0 0; rotate: -2deg; }
       50% { translate: 0 -9px; rotate: 2deg; }
     }
-    .worm.worm-munch {
-      animation: worm-munch .58s ease-out;
+    @keyframes worm-breathe {
+      0%, 100% { filter: drop-shadow(0 22px 24px rgba(0, 47, 76, .24)); }
+      50% { filter: drop-shadow(0 26px 28px rgba(0, 47, 76, .19)); }
     }
-    @keyframes worm-munch {
+    .worm.worm-chomp {
+      animation: worm-chomp .82s cubic-bezier(.18,.88,.22,1.04) forwards;
+    }
+    .worm.worm-grow {
+      animation: worm-chomp .82s cubic-bezier(.18,.88,.22,1.04) forwards, worm-grow .92s ease-out forwards;
+    }
+    @keyframes worm-chomp {
       0% { transform: scale(var(--worm-scale)) translateX(0); }
-      45% { transform: scale(calc(var(--worm-scale) * 1.05)) translateX(42px); }
+      38% { transform: scale(calc(var(--worm-scale) * 1.05)) translateX(clamp(58px, 20vw, 118px)); }
+      54% { transform: scale(calc(var(--worm-scale) * 1.08)) translateX(clamp(70px, 23vw, 136px)); }
+      78% { transform: scale(calc(var(--worm-scale) * 1.04)) translateX(clamp(24px, 10vw, 58px)); }
       100% { transform: scale(var(--worm-scale)) translateX(0); }
+    }
+    @keyframes worm-grow {
+      0%, 58% { filter: drop-shadow(0 22px 24px rgba(0, 47, 76, .24)); }
+      72% { filter: drop-shadow(0 26px 30px rgba(220, 255, 255, .34)); }
+      100% { filter: drop-shadow(0 22px 24px rgba(0, 47, 76, .24)); }
     }
     .worm.worm-retreat {
       animation: worm-retreat .48s ease-out;
@@ -373,6 +515,62 @@ export function renderCollectionGameHtml(): string {
       width: 100%;
       height: 100%;
       overflow: visible;
+    }
+    .worm-segment {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: segment-wiggle 1.65s ease-in-out infinite;
+      animation-delay: calc(var(--i, 0) * -90ms);
+    }
+    @keyframes segment-wiggle {
+      0%, 100% { transform: translateY(0) scale(1); }
+      50% { transform: translateY(calc(var(--wave, 1) * -5px)) scale(1.025); }
+    }
+    .worm-tail {
+      transform-box: fill-box;
+      transform-origin: right center;
+      animation: tail-wave 1.1s ease-in-out infinite;
+    }
+    @keyframes tail-wave {
+      0%, 100% { transform: rotate(-7deg); }
+      50% { transform: rotate(11deg); }
+    }
+    .worm-eye {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: worm-blink 4.2s ease-in-out infinite;
+    }
+    @keyframes worm-blink {
+      0%, 92%, 100% { transform: scaleY(1); }
+      95% { transform: scaleY(.12); }
+    }
+    .worm-mouth {
+      transition: d .2s ease;
+    }
+    .worm.worm-chomp .worm-mouth {
+      stroke-width: 9;
+    }
+    .worm.worm-happy .worm-mouth {
+      stroke: #7b3157;
+    }
+    .worm.worm-confused .worm-mouth {
+      d: path("M184 72 Q197 64 211 72");
+    }
+    .score-pulse {
+      animation: score-pulse .52s ease-out;
+    }
+    @keyframes score-pulse {
+      0% { transform: scale(1); }
+      48% { transform: scale(1.13); color: #dffff9; }
+      100% { transform: scale(1); }
+    }
+    .attempts-hit {
+      animation: attempts-hit .48s ease-out;
+    }
+    @keyframes attempts-hit {
+      0% { transform: scale(1); }
+      45% { transform: scale(1.18); color: #ffd6df; }
+      100% { transform: scale(1); }
     }
     .controls {
       position: absolute;
@@ -513,17 +711,54 @@ export function renderCollectionGameHtml(): string {
       font-weight: 1000;
       line-height: 1.25;
     }
+    .summary-grid {
+      width: min(390px, 90vw);
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .summary-card {
+      min-height: 70px;
+      display: grid;
+      place-items: center;
+      gap: 4px;
+      padding: 10px 8px;
+      border-radius: 18px;
+      background: rgba(224, 252, 255, .20);
+      border: 1px solid rgba(255,255,255,.24);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.16);
+      backdrop-filter: blur(8px);
+    }
+    .summary-card strong {
+      font-size: clamp(18px, 5vw, 25px);
+      line-height: 1;
+    }
+    .summary-card span {
+      font-size: 12px;
+      font-weight: 850;
+      opacity: .9;
+    }
     @media (max-height: 720px) {
       :root {
-        --bubble-size: clamp(150px, 39vw, 220px);
-        --controls-bottom: calc(var(--safe-bottom) + 8px);
+        --bubble-size: clamp(142px, 38vw, 210px);
+        --controls-bottom: calc(var(--safe-bottom) + 6px);
         --worm-scale: .78;
+        --play-top: calc(var(--safe-top) + 78px);
+        --play-bottom: calc(var(--safe-bottom) + 92px);
       }
-      .playfield { inset: calc(var(--safe-top) + 78px) 0 calc(var(--safe-bottom) + 84px); }
       .meaning-bubble { top: clamp(64px, 14dvh, 110px); }
       .worm { top: clamp(205px, 40dvh, 320px); }
       .status { font-size: 14px; }
       .hint { display: none; }
+    }
+    @media (max-width: 390px) {
+      .hud { gap: 5px; width: 96vw; }
+      .hud-pill { min-height: 42px; padding: 5px 4px; border-radius: 15px; }
+      .hud-value { font-size: clamp(14px, 4vw, 18px); }
+      .hud-label { font-size: 9px; }
+      .meaning-bubble { right: 12px; }
+      .worm { left: 8px; }
+      .summary-grid { grid-template-columns: 1fr; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
@@ -542,6 +777,10 @@ export function renderCollectionGameHtml(): string {
     <span class="bubble-dot" style="--left:42%;--size:9px;--duration:7s;--delay:-1s;--drift:10px"></span>
     <span class="bubble-dot" style="--left:68%;--size:15px;--duration:10s;--delay:-4s;--drift:-22px"></span>
     <span class="bubble-dot" style="--left:86%;--size:12px;--duration:9s;--delay:-3s;--drift:14px"></span>
+    <span class="bubble-dot" style="--left:56%;--size:7px;--duration:6s;--delay:-5s;--drift:20px"></span>
+    <span class="bubble-dot" style="--left:73%;--size:22px;--duration:13s;--delay:-8s;--drift:-18px"></span>
+    <span class="fish" style="--top:24%;--w:46px;--speed:19s;--delay:-7s"></span>
+    <span class="fish" style="--top:62%;--w:34px;--speed:24s;--delay:-13s"></span>
     <div class="seaweed w1"></div>
     <div class="seaweed w2"></div>
     <div class="seaweed w3"></div>
@@ -572,6 +811,11 @@ export function renderCollectionGameHtml(): string {
     let restartBusy = false;
     let gameState = 'loading';
     let currentQuestionIndex = -1;
+    let audioCtx = null;
+    let masterGain = null;
+    let ambientOsc = null;
+    let ambientLfo = null;
+    let lastListenCueAt = 0;
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'": '&#39;'}[c]));
@@ -581,6 +825,129 @@ export function renderCollectionGameHtml(): string {
     }
     function meaning(value) {
       return escapeHtml(String(value || 'المعنى').trim() || 'المعنى');
+    }
+    function graphemes(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return [];
+      try {
+        if (Intl && Intl.Segmenter) {
+          return Array.from(new Intl.Segmenter('de', { granularity: 'grapheme' }).segment(raw), item => item.segment).filter(part => part.trim());
+        }
+      } catch {}
+      return Array.from(raw).filter(part => part.trim());
+    }
+    function visualMarkup(value) {
+      const parts = graphemes(value).slice(0, 3);
+      if (parts.length === 0) return '';
+      return '<div class="visual-row" aria-hidden="true">' + parts.map(part => '<span>' + escapeHtml(part) + '</span>').join('') + '</div>';
+    }
+    function initAudio() {
+      if (audioCtx) return;
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      audioCtx = new AudioContext();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = 0.035;
+      masterGain.connect(audioCtx.destination);
+      startAmbientWater();
+    }
+    function resumeAudio() {
+      try {
+        initAudio();
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      } catch {}
+    }
+    function startAmbientWater() {
+      if (!audioCtx || !masterGain || ambientOsc) return;
+      ambientOsc = audioCtx.createOscillator();
+      ambientLfo = audioCtx.createOscillator();
+      const ambientGain = audioCtx.createGain();
+      const lfoGain = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 320;
+      ambientOsc.type = 'sine';
+      ambientOsc.frequency.value = 96;
+      ambientLfo.type = 'sine';
+      ambientLfo.frequency.value = 0.08;
+      ambientGain.gain.value = 0.009;
+      lfoGain.gain.value = 0.004;
+      ambientLfo.connect(lfoGain);
+      lfoGain.connect(ambientGain.gain);
+      ambientOsc.connect(filter);
+      filter.connect(ambientGain);
+      ambientGain.connect(masterGain);
+      ambientOsc.start();
+      ambientLfo.start();
+    }
+    function playTone(freq, duration, gain = 0.04, type = 'sine', delay = 0) {
+      if (!audioCtx || !masterGain) return;
+      const now = audioCtx.currentTime + delay;
+      const osc = audioCtx.createOscillator();
+      const env = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(40, freq * 0.72), now + duration);
+      filter.type = 'lowpass';
+      filter.frequency.value = 1400;
+      env.gain.setValueAtTime(0.0001, now);
+      env.gain.exponentialRampToValueAtTime(gain, now + 0.018);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.connect(filter);
+      filter.connect(env);
+      env.connect(masterGain);
+      osc.start(now);
+      osc.stop(now + duration + 0.04);
+    }
+    function playNoise(duration, gain = 0.025, delay = 0) {
+      if (!audioCtx || !masterGain) return;
+      const now = audioCtx.currentTime + delay;
+      const buffer = audioCtx.createBuffer(1, Math.max(1, Math.floor(audioCtx.sampleRate * duration)), audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+      const source = audioCtx.createBufferSource();
+      const env = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+      source.buffer = buffer;
+      filter.type = 'bandpass';
+      filter.frequency.value = 620;
+      filter.Q.value = 0.9;
+      env.gain.setValueAtTime(gain, now);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      source.connect(filter);
+      filter.connect(env);
+      env.connect(masterGain);
+      source.start(now);
+    }
+    function playSound(kind) {
+      resumeAudio();
+      if (!audioCtx) return;
+      if (kind === 'listen') {
+        const now = Date.now();
+        if (now - lastListenCueAt < 2400) return;
+        lastListenCueAt = now;
+        playTone(520, .12, .018, 'sine');
+        playTone(780, .16, .012, 'sine', .05);
+      } else if (kind === 'correct') {
+        playNoise(.16, .035);
+        playTone(260, .11, .034, 'triangle', .02);
+        playTone(620, .15, .028, 'sine', .08);
+        playTone(920, .18, .020, 'sine', .16);
+      } else if (kind === 'wrong') {
+        playTone(230, .16, .030, 'triangle');
+        playTone(145, .22, .018, 'sine', .08);
+      } else if (kind === 'gameover') {
+        playTone(260, .22, .028, 'sine');
+        playTone(170, .32, .022, 'sine', .18);
+      } else if (kind === 'win') {
+        playTone(520, .12, .030, 'sine');
+        playTone(720, .12, .027, 'sine', .12);
+        playTone(980, .18, .024, 'sine', .24);
+        playNoise(.10, .018, .33);
+      } else if (kind === 'tap') {
+        playTone(640, .08, .012, 'sine');
+      }
     }
     async function api(path, options) {
       const res = await fetch(path, options);
@@ -609,15 +976,17 @@ export function renderCollectionGameHtml(): string {
         '<svg class="worm-svg" viewBox="' + (-tailOffset) + ' -34 ' + (310 + tailOffset) + ' 156" role="img" aria-label="دودة بحرية">' +
         '<defs><linearGradient id="wormGrad" x1="0" x2="1"><stop offset="0%" stop-color="#ffd66b"/><stop offset="45%" stop-color="#ff9cc9"/><stop offset="100%" stop-color="#8be7ff"/></linearGradient></defs>' +
         '<g>' +
+        '<path class="worm-tail" d="M' + (8 - tailOffset) + ' 68 Q' + (-22 - tailOffset) + ' 38 ' + (-38 - tailOffset) + ' 78 Q' + (-8 - tailOffset) + ' 80 ' + (14 - tailOffset) + ' 92 Z" fill="#8be7ff" stroke="rgba(255,255,255,.45)" stroke-width="3"/>' +
         Array.from({ length: 4 + growth }, (_, i) => {
           const x = 34 + i * 34 - tailOffset;
           const y = 68 + Math.sin(i) * 9;
-          return '<circle cx="' + x + '" cy="' + y + '" r="31" fill="url(#wormGrad)" stroke="rgba(255,255,255,.48)" stroke-width="4"/>';
+          const wave = i % 2 === 0 ? 1 : -1;
+          return '<circle class="worm-segment" style="--i:' + i + ';--wave:' + wave + '" cx="' + x + '" cy="' + y + '" r="31" fill="url(#wormGrad)" stroke="rgba(255,255,255,.48)" stroke-width="4"/>';
         }).join('') +
         '<ellipse cx="196" cy="58" rx="47" ry="41" fill="#ffb0d7" stroke="rgba(255,255,255,.55)" stroke-width="4"/>' +
-        '<circle cx="183" cy="47" r="6" fill="#073556"/><circle cx="209" cy="47" r="6" fill="#073556"/>' +
+        '<circle class="worm-eye" cx="183" cy="47" r="6" fill="#073556"/><circle class="worm-eye" cx="209" cy="47" r="6" fill="#073556"/>' +
         '<circle cx="181" cy="45" r="2" fill="#fff"/><circle cx="207" cy="45" r="2" fill="#fff"/>' +
-        '<path d="M184 69 Q197 78 211 69" fill="none" stroke="#7b3157" stroke-width="5" stroke-linecap="round"/>' +
+        '<path class="worm-mouth" d="M184 69 Q197 78 211 69" fill="none" stroke="#7b3157" stroke-width="5" stroke-linecap="round"/>' +
         '<path d="M214 33 Q244 16 251 48 Q231 44 214 58" fill="#8be7ff" stroke="rgba(255,255,255,.45)" stroke-width="3"/>' +
         '<path d="M170 33 Q146 13 136 44 Q156 43 171 57" fill="#8be7ff" stroke="rgba(255,255,255,.45)" stroke-width="3"/>' +
         crown +
@@ -646,6 +1015,8 @@ export function renderCollectionGameHtml(): string {
           renderError('متصفحك لا يدعم التعرف على الصوت. افتح اللعبة في Chrome أو Safari حديث.');
           return;
         }
+        resumeAudio();
+        playSound('tap');
         microphoneEnabled = true;
         renderPlay('انطق الكلمة الألمانية', true);
       };
@@ -666,14 +1037,14 @@ export function renderCollectionGameHtml(): string {
       const attemptsLeft = question.attemptsLeft ?? 3;
       app.innerHTML = '<section class="game">' +
         '<div class="hud">' +
-        '<div class="hud-pill"><div class="hud-value">⭐ ' + state.score + '</div><div class="hud-label">النقاط</div></div>' +
+        '<div class="hud-pill"><div class="hud-value" id="scoreValue">⭐ ' + state.score + '</div><div class="hud-label">النقاط</div></div>' +
         '<div class="hud-pill"><div class="hud-value">🐚 ' + (completedWords + 1) + ' / ' + totalWords + '</div><div class="hud-label">المجموعة</div></div>' +
-        '<div class="hud-pill"><div class="hud-value">❤️ ' + attemptsLeft + '</div><div class="hud-label">المحاولات</div></div>' +
+        '<div class="hud-pill"><div class="hud-value" id="attemptsValue">❤️ ' + attemptsLeft + '</div><div class="hud-label">المحاولات</div></div>' +
         '<div class="hud-pill listening-chip" id="listenChip"><div class="hud-value">🎙 de-DE</div><div class="hud-label">يستمع بالألمانية</div></div>' +
         '</div>' +
         '<div class="timer"><div class="timer-fill" id="timerFill"></div></div>' +
         '<div class="playfield">' +
-        '<div class="meaning-bubble" id="meaningBubble"><div class="meaning-text">' + meaning(question.arabicMeaning) + '</div><div class="pop-particles" id="popParticles">' + Array.from({ length: 8 }, (_, i) => '<i style="--angle:' + (i * 45) + 'deg;--distance:' + (52 + i * 5) + 'px"></i>').join('') + '</div></div>' +
+        '<div class="meaning-bubble bubble-spawn" id="meaningBubble"><div class="meaning-text">' + meaning(question.arabicMeaning) + '</div>' + visualMarkup(question.visualEmoji) + '<div class="pop-particles" id="popParticles">' + Array.from({ length: 8 }, (_, i) => '<i style="--angle:' + (i * 45) + 'deg;--distance:' + (52 + i * 5) + 'px"></i>').join('') + Array.from({ length: 5 }, (_, i) => '<b class="success-sparkle" style="--x:' + ((i - 2) * 24) + 'px;--y:' + (-28 - i * 8) + 'px;--delay:' + (i * .035) + 's"></b>').join('') + '</div></div>' +
         wormMarkup('', completedWords) +
         '</div>' +
         '<div class="controls"><div class="status" id="status">' + escapeHtml(message) + '</div><div class="bottom-actions"><button class="voice-action hidden" id="micRecoverBtn">🎙 فعّل المايكروفون</button><button class="mini-action" id="leaveBtn">حفظ وخروج</button></div><div class="hint">قل الكلمة المناسبة للمعنى · يستمع بالألمانية <span id="listeningIndicator" aria-hidden="true"></span></div></div>' +
@@ -721,6 +1092,7 @@ export function renderCollectionGameHtml(): string {
       setGameState('listening');
       isListening = true;
       setStatus('يستمع بالألمانية...');
+      playSound('listen');
       document.getElementById('listenChip')?.classList.add('active');
       renderVoiceWaves(true);
       setRecoveryButton(false);
@@ -831,11 +1203,14 @@ export function renderCollectionGameHtml(): string {
         isChecking = false;
         if (result.correct) {
           setGameState('correct');
-          document.getElementById('meaningBubble')?.classList.add('bubble-pop');
+          playSound('correct');
+          document.getElementById('meaningBubble')?.classList.add('bubble-bite');
           document.getElementById('popParticles')?.classList.add('active');
-          document.getElementById('worm')?.classList.add('worm-munch');
+          document.getElementById('worm')?.classList.add('worm-chomp', 'worm-grow', 'worm-happy');
+          document.getElementById('scoreValue')?.classList.add('score-pulse');
           setStatus('صحيح! +' + Math.max(1, Math.min(4, state.correctCount)) + ' XP');
-          setTimeout(() => result.finished ? finish() : renderPlay('صحيح! فقاعة جديدة 🫧'), 680);
+          setTimeout(() => document.getElementById('meaningBubble')?.classList.add('bubble-pop'), 260);
+          setTimeout(() => result.finished ? finish() : renderPlay('صحيح! فقاعة جديدة 🫧'), 900);
           return;
         }
         if (result.tryAgain && state.currentQuestion) {
@@ -856,22 +1231,25 @@ export function renderCollectionGameHtml(): string {
     }
     function applyPartialWrong(attemptsLeft, technicalRetry = false) {
       if (!technicalRetry) app.classList.add('screen-shake');
+      if (!technicalRetry) playSound('wrong');
       const worm = document.getElementById('worm');
       const bubble = document.getElementById('meaningBubble');
       worm?.classList.remove('worm-retreat');
       bubble?.classList.remove('bubble-shake');
       void worm?.offsetWidth;
       if (!technicalRetry) {
-        worm?.classList.add('worm-retreat');
+        worm?.classList.add('worm-retreat', 'worm-confused');
         bubble?.classList.add('bubble-shake');
       }
-      const attempts = document.querySelectorAll('.hud .hud-value')[2];
+      const attempts = document.getElementById('attemptsValue') || document.querySelectorAll('.hud .hud-value')[2];
       if (attempts) attempts.textContent = '❤️ ' + attemptsLeft;
+      attempts?.classList.add('attempts-hit');
       setStatus(technicalRetry ? 'ما سمعتك بوضوح، أسمعك مرة ثانية...' : 'حاول مرة ثانية — باقي ' + attemptsLeft + ' محاولات');
       setTimeout(() => {
         app.classList.remove('screen-shake');
-        worm?.classList.remove('worm-retreat');
+        worm?.classList.remove('worm-retreat', 'worm-confused');
         bubble?.classList.remove('bubble-shake');
+        attempts?.classList.remove('attempts-hit');
       }, 520);
     }
     function failAndFinish() {
@@ -879,8 +1257,9 @@ export function renderCollectionGameHtml(): string {
       isGameOver = true;
       stopListening();
       clearTimers();
+      playSound('gameover');
       document.getElementById('meaningBubble')?.classList.add('bubble-shake');
-      document.getElementById('worm')?.classList.add('worm-retreat');
+      document.getElementById('worm')?.classList.add('worm-retreat', 'worm-confused');
       app.classList.add('screen-shake');
       setTimeout(() => finish(), 760);
     }
@@ -916,25 +1295,26 @@ export function renderCollectionGameHtml(): string {
         '<div class="small-bubble">🫧 ' + meaning(failed.failedArabicMeaning) + '</div>' +
         '<div class="answer-line"><strong class="correct-word">' + escapeHtml(failed.correctAnswer) + '</strong><button class="sound" id="speakBtn" aria-label="استمع للنطق الصحيح">🔊</button></div>' +
         '<button class="secondary" id="speakTextBtn">🔊 اسمع النطق الصحيح</button>' +
-        '<p class="notice">الكلمات المكتملة: ' + completedWords + ' / ' + totalWords + '<br>النقاط المكتسبة: ' + state.score + '<br>XP المكتسب: +' + (state.xpGained || 0) + '</p>' +
+        '<div class="summary-grid"><div class="summary-card"><strong>' + completedWords + ' / ' + totalWords + '</strong><span>الكلمات المكتملة</span></div><div class="summary-card"><strong>' + state.score + '</strong><span>النقاط المكتسبة</span></div><div class="summary-card"><strong>+' + (state.xpGained || 0) + '</strong><span>XP المكتسب</span></div></div>' +
         '<button class="primary" id="restartBtn">إعادة المحاولة</button>' +
         '<button class="secondary" id="leaveResultBtn">العودة إلى البوت</button>' +
         '</div></section>';
-      document.getElementById('speakBtn')?.addEventListener('click', () => speakGerman(failed.correctPronunciationText || failed.correctAnswer));
-      document.getElementById('speakTextBtn')?.addEventListener('click', () => speakGerman(failed.correctPronunciationText || failed.correctAnswer));
+      document.getElementById('speakBtn')?.addEventListener('click', () => { playSound('tap'); speakGerman(failed.correctPronunciationText || failed.correctAnswer); });
+      document.getElementById('speakTextBtn')?.addEventListener('click', () => { playSound('tap'); speakGerman(failed.correctPronunciationText || failed.correctAnswer); });
       document.getElementById('restartBtn')?.addEventListener('click', restartGame);
       document.getElementById('leaveResultBtn')?.addEventListener('click', leaveGame);
     }
     function renderWin() {
       setGameState('finished');
       isGameOver = true;
+      playSound('win');
       const totalWords = state.totalWords || state.totalQuestions || 0;
       const completedWords = state.completedWords ?? state.correctCount ?? 0;
       app.innerHTML = '<section class="screen"><div class="panel">' +
         '<div class="result-worm">' + wormMarkup('', 5, true) + '</div>' +
         '<h1>ممتاز! أكلت كل الفقاعات</h1>' +
         '<p class="sub">الدودة خلصت مجموعة الكلمات بنجاح.</p>' +
-        '<p class="notice">أكملت: ' + completedWords + ' / ' + totalWords + '<br>النقاط: ' + state.score + '<br>XP: +' + (state.xpGained || 0) + '</p>' +
+        '<div class="summary-grid"><div class="summary-card"><strong>' + completedWords + ' / ' + totalWords + '</strong><span>أكملت</span></div><div class="summary-card"><strong>' + state.score + '</strong><span>النقاط</span></div><div class="summary-card"><strong>+' + (state.xpGained || 0) + '</strong><span>XP</span></div></div>' +
         '<button class="primary" id="restartBtn">العب مرة ثانية</button>' +
         '<button class="secondary" id="leaveResultBtn">العودة إلى البوت</button>' +
         '</div></section>';
