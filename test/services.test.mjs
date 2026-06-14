@@ -13,7 +13,7 @@ import { calculateDifficultyScore, shouldBeHard } from '../dist/services/adaptiv
 import { buildYouglishDirectUrl } from '../dist/services/youglish.js';
 import { normalizeArabicSearch, normalizeGermanSearch, rankWordSearchResults } from '../dist/services/wordSearch.js';
 import { resolveEmojiVisual, validateManualVisual } from '../dist/services/gameVisualService.js';
-import { calculateGameXp, GAME_QUESTION_LIMIT } from '../dist/services/gameSessionService.js';
+import { calculateGameXp, GAME_QUESTION_LIMIT, isAcceptedGermanAnswer } from '../dist/services/gameSessionService.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -2710,7 +2710,9 @@ test('collection game is visible from main menu and collection pages', () => {
     assert.match(gameSource, /showGameCollections\(ctx, user\.user_id, 1\)/);
     assert.match(gameSource, /game:collections:page:/);
     assert.match(gameSource, /createGameSession\(ctx\.db, userId, collectionId\)/);
-    assert.match(gameSource, /webApp\('🚀 افتح اللعبة', url\)/);
+    assert.match(gameSource, /url\('🌐 فتح اللعبة بالمتصفح', url\)/);
+    assert.match(gameSource, /Safari أو Chrome/);
+    assert.doesNotMatch(gameSource, /\.webApp\(/);
 
     assert.match(sharingSource, /🎮 العب بهذه المجموعة/);
     assert.match(sharingSource, /game:start_collection:\$\{collectionId\}/);
@@ -2742,10 +2744,12 @@ test('collection game sessions are token scoped and collection permission checke
     assert.match(serviceSource, /COALESCE\(u\.is_banned, 0\) = 0/);
     assert.match(serviceSource, /COALESCE\(u\.is_deleted, 0\) = 0/);
     assert.match(serviceSource, /ORDER BY i\.position ASC, i\.id ASC\s+LIMIT \?/);
+    assert.match(serviceSource, /findMissingVisualsForCollection/);
+    assert.match(serviceSource, /MissingGameVisualError/);
     assert.equal(GAME_QUESTION_LIMIT, 10);
 });
 
-test('collection game routes reject missing token and never trust client score', () => {
+test('collection speech rocket routes reject missing token and never trust client score', () => {
     const indexSource = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
     const routeSource = fs.readFileSync(new URL('../src/game/routes.ts', import.meta.url), 'utf8');
     const htmlSource = fs.readFileSync(new URL('../src/game/html.ts', import.meta.url), 'utf8');
@@ -2761,14 +2765,29 @@ test('collection game routes reject missing token and never trust client score',
     assert.doesNotMatch(routeSource, /searchParams\.get\(['"]user/i);
     assert.doesNotMatch(routeSource, /searchParams\.get\(['"]collection/i);
     assert.doesNotMatch(routeSource, /correct_count|score|xpGained.*body|body.*score/i);
+    assert.match(routeSource, /transcript/);
+    assert.match(routeSource, /alternatives/);
     assert.match(htmlSource, /api\('\/game\/api\/session\?token='/);
     assert.match(htmlSource, /api\('\/game\/api\/answer'/);
     assert.match(htmlSource, /api\('\/game\/api\/finish'/);
+    assert.match(htmlSource, /SpeechRecognition|webkitSpeechRecognition/);
+    assert.match(htmlSource, /recognition\.lang = 'de-DE'/);
+    assert.match(htmlSource, /maxAttempts = 2/);
+    assert.match(htmlSource, /🎙 انطق الكلمة/);
+    assert.match(htmlSource, /speechSynthesis/);
+    assert.match(htmlSource, /utterance\.lang = 'de-DE'/);
+    assert.doesNotMatch(htmlSource, /options\.map|data-answer|Telegram\.WebApp|web_app/i);
     assert.match(serviceSource, /answerGameQuestion/);
-    assert.match(serviceSource, /normalizeAnswer\(answer\) === normalizeAnswer\(question\.correctAnswer\)/);
+    assert.match(serviceSource, /isAcceptedGermanAnswer/);
+    assert.match(serviceSource, /gameOver = true/);
+    assert.match(serviceSource, /correctAnswer: data\.failedQuestion\.correctAnswer/);
+    assert.equal(isAcceptedGermanAnswer('Ente', 'die Ente'), true);
+    assert.equal(isAcceptedGermanAnswer('die Ente', 'die Ente'), true);
+    assert.equal(isAcceptedGermanAnswer('Tiger', 'der Tiger'), true);
+    assert.equal(isAcceptedGermanAnswer('Katze', 'der Tiger'), false);
 });
 
-test('collection game visual resolution always returns a visual and manual validation is safe', () => {
+test('collection speech rocket visual resolution requires clear visuals and manual validation is safe', () => {
     const visualSource = fs.readFileSync(new URL('../src/services/gameVisualService.ts', import.meta.url), 'utf8');
     const wordPanelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
     const gameSource = fs.readFileSync(new URL('../src/commands/game.ts', import.meta.url), 'utf8');
@@ -2785,8 +2804,13 @@ test('collection game visual resolution always returns a visual and manual valid
     assert.match(visualSource, /getPictogramByWordId\(db, word\.word_id\)/);
     assert.match(visualSource, /source === 'manual'/);
     assert.match(visualSource, /fallback_letter/);
+    assert.match(visualSource, /resolveOnlineEmojiProvider/);
+    assert.match(visualSource, /EmojiHub\/OpenMoji\/CLDR/);
+    assert.match(visualSource, /isClearGameVisual/);
     assert.match(wordPanelSource, /🎨 تعديل رمز اللعبة/);
     assert.match(gameSource, /saveBotSession<WordVisualEditSession>\(ctx\.db, user\.user_id, 'word_visual_edit'/);
+    assert.match(gameSource, /بعض الكلمات تحتاج إيموجي حتى تشتغل اللعبة/);
+    assert.match(gameSource, /🚀 ابدأ اللعبة الآن/);
     assert.match(gameSource, /validateManualVisual\(text\)/);
     assert.match(gameSource, /upsertManualVisual\(ctx\.db, wordId, visual\)/);
 });
@@ -2800,8 +2824,9 @@ test('collection game finish awards capped XP once through addXp', () => {
     assert.match(serviceSource, /reason: 'collection_game'/);
     assert.match(serviceSource, /sourceType: 'collection_game'/);
     assert.match(serviceSource, /allowDailyCap: true/);
-    assert.match(serviceSource, /metadata:[\s\S]*collection_id:[\s\S]*correct_count:[\s\S]*total_count:[\s\S]*game_session:/);
+    assert.match(serviceSource, /metadata:[\s\S]*collection_id:[\s\S]*correct_count:[\s\S]*total_count:[\s\S]*height_meters:[\s\S]*mode: 'speech_rocket'[\s\S]*game_session:/);
     assert.match(serviceSource, /WHERE token_hash = \? AND xp_awarded = 0/);
     assert.match(serviceSource, /if \(getChanges\(claimed\) > 0 && xpBase > 0\)/);
+    assert.match(serviceSource, /heightGainForCorrect/);
     assert.doesNotMatch(serviceSource, /allowDailyCap: false/);
 });

@@ -153,6 +153,15 @@ export async function getVisualForWord(db: D1Database, word: Word): Promise<Game
     return resolved;
 }
 
+export async function getRequiredVisualForWord(db: D1Database, word: Word): Promise<GameVisual | null> {
+    const visual = await getVisualForWord(db, word);
+    return isClearGameVisual(visual) ? visual : null;
+}
+
+export function isClearGameVisual(visual: GameVisual | null | undefined): visual is GameVisual {
+    return Boolean(visual && visual.type !== 'fallback' && visual.source !== 'fallback_letter' && visual.value.trim());
+}
+
 export function resolveEmojiVisual(german: string, arabic: string): GameVisual {
     const keys = normalizeGermanKeys(german);
     for (const key of keys) {
@@ -173,6 +182,12 @@ export function resolveEmojiVisual(german: string, arabic: string): GameVisual {
 
     const first = german.trim().replace(/^(der|die|das)\s+/i, '').charAt(0).toUpperCase() || '؟';
     return { type: 'fallback', value: `🔤 ${first}`, source: 'fallback_letter', confidence: 0.2 };
+}
+
+export async function resolveOnlineEmojiProvider(_german: string, _arabic: string): Promise<GameVisual | null> {
+    // Provider layer placeholder for no-key sources such as EmojiHub/OpenMoji/CLDR.
+    // It is intentionally not called during active gameplay; visuals are resolved before session creation and cached.
+    return null;
 }
 
 export function validateManualVisual(input: string): GameVisual | null {

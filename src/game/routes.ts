@@ -23,8 +23,14 @@ export async function handleGameRoute(request: Request, env: Env): Promise<Respo
 
     if (url.pathname === '/game/api/answer' && request.method === 'POST') {
         return jsonResult(async () => {
-            const body = await readJson<{ token?: string; questionIndex?: number; answer?: string }>(request);
-            return answerGameQuestion(env.DB, body.token ?? '', Number(body.questionIndex), String(body.answer ?? ''));
+            const body = await readJson<{ token?: string; questionIndex?: number; transcript?: string; alternatives?: string[] }>(request);
+            return answerGameQuestion(
+                env.DB,
+                body.token ?? '',
+                Number(body.questionIndex),
+                String(body.transcript ?? ''),
+                Array.isArray(body.alternatives) ? body.alternatives.map(String).slice(0, 3) : []
+            );
         });
     }
 

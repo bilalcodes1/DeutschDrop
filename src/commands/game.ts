@@ -5,6 +5,7 @@ import { deleteBotSession, getBotSession, saveBotSession } from '../repositories
 import { getWordById } from '../repositories/wordRepository';
 import {
     createGameSession,
+    MissingGameVisualError,
     countPlayableGameCollections,
     getPlayableGameCollections,
 } from '../services/gameSessionService';
@@ -15,6 +16,7 @@ const GAME_COLLECTION_PAGE_SIZE = 8;
 
 interface WordVisualEditSession {
     wordId: number;
+    collectionId?: number;
 }
 
 export function registerGameCommand(bot: Bot<BotContext>): void {
@@ -34,7 +36,7 @@ export function registerGameCommand(bot: Bot<BotContext>): void {
         const session = await getBotSession<WordVisualEditSession>(ctx.db, user.user_id, 'word_visual_edit');
         if (!session) return next();
 
-        await handleManualVisualText(ctx, user.user_id, session.data.wordId, ctx.message.text);
+        await handleManualVisualText(ctx, user.user_id, session.data.wordId, ctx.message.text, session.data.collectionId);
     });
 
     bot.callbackQuery('game:menu', async (ctx) => {
@@ -135,14 +137,31 @@ export async function startGameForCollection(ctx: BotContext, userId: number, co
         const url = `${publicBaseUrl(ctx)}/game?token=${encodeURIComponent(session.token)}`;
         await replaceWithText(
             ctx,
-            `🎮 تحدي الصور والكلمات\n\nالمجموعة:\n${session.collection.title}\n\nعدد الأسئلة: ${session.totalQuestions}\n\nافتح اللعبة وابدأ الجولة.`,
+            `🎮 تحدي الصور والكلمات\n\nالمجموعة:\n${session.collection.title}\n\nعدد الأسئلة: ${session.totalQuestions}\n\nافتح اللعبة في Safari أو Chrome حتى يعمل المايكروفون والصوت بشكل صحيح.`,
             new InlineKeyboard()
-                .webApp('🚀 افتح اللعبة', url).row()
-                .url('🔗 فتح كرابط', url).row()
+                .url('🌐 فتح اللعبة بالمتصفح', url).row()
                 .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
                 .text('🏠 الرئيسية', 'menu_main')
         );
     } catch (error) {
+        if (error instanceof MissingGameVisualError) {
+            await saveBotSession<WordVisualEditSession>(
+                ctx.db,
+                userId,
+                'word_visual_edit',
+                { wordId: error.word.word_id, collectionId },
+                30
+            );
+            await replaceWithText(
+                ctx,
+                `🎨 بعض الكلمات تحتاج إيموجي حتى تشتغل اللعبة.\n\n🇩🇪 ${error.word.german}\n🇮🇶 ${error.word.arabic}\n\nأرسل إيموجي أو إيموجيين أو رابط صورة HTTPS لهذه الكلمة.`,
+                new InlineKeyboard()
+                    .text('❌ إلغاء', `word_visual_cancel:${error.word.word_id}`).row()
+                    .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
+                    .text('🏠 الرئيسية', 'menu_main')
+            );
+            return;
+        }
         const message = error instanceof Error ? error.message : 'unknown';
         if (message === 'collection_empty') {
             await replaceWithText(ctx, 'هذه المجموعة فارغة. أضف كلمات أولاً.', backHomeKeyboard(`collection:view:${collectionId}:page:1`));
@@ -156,7 +175,7 @@ export async function startGameForCollection(ctx: BotContext, userId: number, co
     }
 }
 
-async function handleManualVisualText(ctx: BotContext, userId: number, wordId: number, text: string): Promise<void> {
+async function handleManualVisualText(ctx: BotContext, userId: number, wordId: number, text: string, collectionId?: number): Promise<void> {
     const word = await getWordById(ctx.db, wordId);
     if (!word || word.added_by !== userId) {
         await deleteBotSession(ctx.db, userId, 'word_visual_edit');
@@ -175,6 +194,18 @@ async function handleManualVisualText(ctx: BotContext, userId: number, wordId: n
 
     await upsertManualVisual(ctx.db, wordId, visual);
     await deleteBotSession(ctx.db, userId, 'word_visual_edit');
+    if (collectionId) {
+        await ctx.reply(
+            'تم حفظ الرمز لهذه الكلمة ✅\n\nتقدر تبدأ اللعبة الآن.',
+            {
+                reply_markup: new InlineKeyboard()
+                    .text('🚀 ابدأ اللعبة الآن', `game:start_collection:${collectionId}`).row()
+                    .text('⬅️ رجوع للمجموعة', `collection:view:${collectionId}:page:1`)
+                    .text('🏠 الرئيسية', 'menu_main'),
+            }
+        );
+        return;
+    }
     await showWordDetailPanel(ctx, wordId, 'تم حفظ الرمز لهذه الكلمة ✅');
 }
 

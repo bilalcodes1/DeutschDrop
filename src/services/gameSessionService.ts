@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { Word } from '../models';
 import { queryAll, queryOne, run } from '../db/queries';
 import { addXp, getTotalXp } from './xpLevels';
-import { getVisualForWord, type GameVisual } from './gameVisualService';
+import { getRequiredVisualForWord, type GameVisual } from './gameVisualService';
 
 export const GAME_QUESTION_LIMIT = 10;
 const GAME_SESSION_TTL_MINUTES = 30;
@@ -22,14 +22,16 @@ export interface GameQuestion {
     wordId: number;
     prompt: string;
     visual: GameVisual;
-    options: string[];
     correctAnswer: string;
     answered?: boolean;
     isCorrect?: boolean;
-    userAnswer?: string;
+    transcript?: string;
+    alternatives?: string[];
 }
 
 export interface GameSessionData {
+    mode: 'speech_rocket';
+    speechLang: 'de-DE';
     collectionTitle: string;
     totalQuestions: number;
     currentIndex: number;
@@ -37,9 +39,12 @@ export interface GameSessionData {
     wrongCount: number;
     streak: number;
     bestStreak: number;
+    heightMeters: number;
+    gameOver: boolean;
     questions: GameQuestion[];
     startedAt: string;
     finishedAt?: string;
+    failedQuestion?: GameQuestion;
     xpGained?: number;
 }
 
@@ -59,19 +64,36 @@ export interface PublicGameQuestion {
     wordId: number;
     prompt: string;
     visual: GameVisual;
-    options: string[];
 }
 
 export interface PublicGameState {
+    mode: 'speech_rocket';
+    speechLang: 'de-DE';
     collectionTitle: string;
     totalQuestions: number;
     currentIndex: number;
     correctCount: number;
     wrongCount: number;
+    heightMeters: number;
+    gameOver: boolean;
     finished: boolean;
     xpAwarded: boolean;
     xpGained: number;
     question: PublicGameQuestion | null;
+    failedQuestion?: {
+        visual: GameVisual;
+        correctAnswer: string;
+        heightMeters: number;
+    };
+}
+
+export class MissingGameVisualError extends Error {
+    constructor(
+        public readonly word: Pick<Word, 'word_id' | 'german' | 'arabic'>,
+        public readonly collectionId: number
+    ) {
+        super('missing_visual');
+    }
 }
 
 export async function countPlayableGameCollections(db: D1Database, userId: number): Promise<number> {
@@ -151,8 +173,13 @@ export async function createGameSession(db: D1Database, userId: number, collecti
     const words = await getCollectionWordsForGame(db, userId, collectionId, GAME_QUESTION_LIMIT);
     if (words.length === 0) throw new Error('collection_empty');
 
+    const missingVisuals = await findMissingVisualsForCollection(db, userId, collectionId, GAME_QUESTION_LIMIT);
+    if (missingVisuals[0]) throw new MissingGameVisualError(missingVisuals[0], collectionId);
+
     const questions = await buildQuestions(db, words);
     const data: GameSessionData = {
+        mode: 'speech_rocket',
+        speechLang: 'de-DE',
         collectionTitle: collection.title,
         totalQuestions: questions.length,
         currentIndex: 0,
@@ -160,6 +187,8 @@ export async function createGameSession(db: D1Database, userId: number, collecti
         wrongCount: 0,
         streak: 0,
         bestStreak: 0,
+        heightMeters: 0,
+        gameOver: false,
         questions,
         startedAt: new Date().toISOString(),
     };
@@ -181,11 +210,17 @@ export async function getPublicGameState(db: D1Database, token: string): Promise
     return toPublicState(session);
 }
 
-export async function answerGameQuestion(db: D1Database, token: string, questionIndex: number, answer: string): Promise<PublicGameState & { correct: boolean; correctAnswer: string }> {
+export async function answerGameQuestion(
+    db: D1Database,
+    token: string,
+    questionIndex: number,
+    transcript: string,
+    alternatives: string[] = []
+): Promise<PublicGameState & { correct: boolean; correctAnswer?: string }> {
     const session = await requireValidSession(db, token);
     if (session.finished === 1) {
         const state = toPublicState(session);
-        return { ...state, correct: false, correctAnswer: '' };
+        return { ...state, correct: false, correctAnswer: state.failedQuestion?.correctAnswer };
     }
 
     const data = parseSessionData(session);
@@ -193,26 +228,36 @@ export async function answerGameQuestion(db: D1Database, token: string, question
     const question = data.questions[data.currentIndex];
     if (!question) throw new Error('question_not_found');
 
-    const correct = normalizeAnswer(answer) === normalizeAnswer(question.correctAnswer);
+    const spokenAnswers = [transcript, ...alternatives].filter(Boolean);
+    const correct = spokenAnswers.some(answer => isAcceptedGermanAnswer(answer, question.correctAnswer));
     question.answered = true;
-    question.userAnswer = answer;
+    question.transcript = transcript;
+    question.alternatives = alternatives.slice(0, 3);
     question.isCorrect = correct;
     if (correct) {
         data.correctCount += 1;
         data.streak += 1;
         data.bestStreak = Math.max(data.bestStreak, data.streak);
+        data.heightMeters += heightGainForCorrect(data.correctCount, data.streak);
+        data.currentIndex += 1;
     } else {
         data.wrongCount += 1;
         data.streak = 0;
+        data.gameOver = true;
+        data.failedQuestion = question;
+        data.finishedAt = new Date().toISOString();
     }
-    data.currentIndex += 1;
 
-    const finished = data.currentIndex >= data.questions.length ? 1 : 0;
+    const finished = data.gameOver || data.currentIndex >= data.questions.length ? 1 : 0;
     if (finished) data.finishedAt = new Date().toISOString();
     await updateSessionData(db, session.token_hash, data, finished, session.xp_awarded);
 
     const updated: GameSessionRecord = { ...session, session_data: JSON.stringify(data), finished };
-    return { ...toPublicState(updated), correct, correctAnswer: question.correctAnswer };
+    return {
+        ...toPublicState(updated),
+        correct,
+        ...(correct ? {} : { correctAnswer: question.correctAnswer }),
+    };
 }
 
 export async function finishGameSession(db: D1Database, token: string): Promise<PublicGameState> {
@@ -246,6 +291,8 @@ export async function finishGameSession(db: D1Database, token: string): Promise<
                 collection_id: session.collection_id,
                 correct_count: data.correctCount,
                 total_count: data.totalQuestions,
+                height_meters: data.heightMeters,
+                mode: 'speech_rocket',
                 game_session: session.token_hash,
             },
             allowDailyCap: true,
@@ -279,6 +326,16 @@ export async function getCollectionWordsForGame(db: D1Database, userId: number, 
     );
 }
 
+export async function findMissingVisualsForCollection(db: D1Database, userId: number, collectionId: number, limit = GAME_QUESTION_LIMIT): Promise<Word[]> {
+    const words = await getCollectionWordsForGame(db, userId, collectionId, limit);
+    const missing: Word[] = [];
+    for (const word of words) {
+        const visual = await getRequiredVisualForWord(db, word);
+        if (!visual) missing.push(word);
+    }
+    return missing;
+}
+
 export function calculateGameXp(correctCount: number, bestStreak: number): number {
     return Math.min(20, Math.max(0, correctCount) + Math.floor(Math.max(0, bestStreak) / 3));
 }
@@ -299,42 +356,45 @@ async function requireValidSession(db: D1Database, token: string): Promise<GameS
 
 async function buildQuestions(db: D1Database, words: Word[]): Promise<GameQuestion[]> {
     const questionWords = words.slice(0, GAME_QUESTION_LIMIT);
-    const germanOptions = questionWords.map(word => word.german);
     const questions: GameQuestion[] = [];
     for (const [index, word] of questionWords.entries()) {
-        const options = buildOptions(word.german, germanOptions);
+        const visual = await getRequiredVisualForWord(db, word);
+        if (!visual) throw new MissingGameVisualError(word, 0);
         questions.push({
             questionIndex: index,
             wordId: word.word_id,
             prompt: word.arabic,
-            visual: await getVisualForWord(db, word),
-            options,
+            visual,
             correctAnswer: word.german,
         });
     }
     return questions;
 }
 
-function buildOptions(correct: string, allOptions: string[]): string[] {
-    const unique = Array.from(new Set([correct, ...allOptions.filter(option => option !== correct)]));
-    const selected = unique.slice(0, Math.min(4, unique.length));
-    const offset = Math.abs(hashString(correct)) % Math.max(1, selected.length);
-    return [...selected.slice(offset), ...selected.slice(0, offset)];
-}
-
 function toPublicState(session: GameSessionRecord): PublicGameState {
     const data = parseSessionData(session);
-    const question = session.finished === 1 ? null : data.questions[data.currentIndex] ?? null;
+    const question = session.finished === 1 || data.gameOver ? null : data.questions[data.currentIndex] ?? null;
     return {
+        mode: 'speech_rocket',
+        speechLang: 'de-DE',
         collectionTitle: data.collectionTitle,
         totalQuestions: data.totalQuestions,
         currentIndex: Math.min(data.currentIndex, data.totalQuestions),
         correctCount: data.correctCount,
         wrongCount: data.wrongCount,
-        finished: session.finished === 1 || data.currentIndex >= data.totalQuestions,
+        heightMeters: data.heightMeters,
+        gameOver: data.gameOver,
+        finished: session.finished === 1 || data.gameOver || data.currentIndex >= data.totalQuestions,
         xpAwarded: session.xp_awarded === 1,
         xpGained: data.xpGained ?? 0,
         question: question ? publicQuestion(question) : null,
+        failedQuestion: data.failedQuestion
+            ? {
+                visual: data.failedQuestion.visual,
+                correctAnswer: data.failedQuestion.correctAnswer,
+                heightMeters: data.heightMeters,
+            }
+            : undefined,
     };
 }
 
@@ -344,7 +404,6 @@ function publicQuestion(question: GameQuestion): PublicGameQuestion {
         wordId: question.wordId,
         prompt: question.prompt,
         visual: question.visual,
-        options: question.options,
     };
 }
 
@@ -360,8 +419,31 @@ async function updateSessionData(db: D1Database, tokenHash: string, data: GameSe
     );
 }
 
-function normalizeAnswer(answer: string): string {
-    return answer.trim().replace(/\s+/g, ' ').toLocaleLowerCase('de-DE');
+export function isAcceptedGermanAnswer(answer: string, correctAnswer: string): boolean {
+    const normalizedAnswer = normalizeGermanSpeechAnswer(answer);
+    const normalizedCorrect = normalizeGermanSpeechAnswer(correctAnswer);
+    const correctWithoutArticle = stripGermanArticle(normalizedCorrect);
+    return normalizedAnswer === normalizedCorrect || normalizedAnswer === correctWithoutArticle;
+}
+
+export function normalizeGermanSpeechAnswer(answer: string): string {
+    return answer
+        .trim()
+        .replace(/[!?.,;:،؟]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .toLocaleLowerCase('de-DE')
+        .replace(/ä/g, 'ae')
+        .replace(/ö/g, 'oe')
+        .replace(/ü/g, 'ue')
+        .replace(/ß/g, 'ss');
+}
+
+function stripGermanArticle(value: string): string {
+    return value.replace(/^(der|die|das)\s+/i, '').trim();
+}
+
+function heightGainForCorrect(correctCount: number, streak: number): number {
+    return 50 + Math.floor(correctCount / 3) * 10 + Math.floor(streak / 3) * 5;
 }
 
 function createToken(): string {
@@ -384,12 +466,4 @@ function base64Url(bytes: Uint8Array): string {
 
 function getChanges(result: { meta?: unknown }): number {
     return (result.meta as { changes?: number } | undefined)?.changes ?? 0;
-}
-
-function hashString(value: string): number {
-    let hash = 0;
-    for (let index = 0; index < value.length; index++) {
-        hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
-    }
-    return hash;
 }
