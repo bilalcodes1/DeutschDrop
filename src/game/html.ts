@@ -26,8 +26,26 @@ export function renderCollectionGameHtml(): string {
       inset: 0;
       overflow: hidden;
       background:
+        radial-gradient(circle at 12% 18%, rgba(255,255,255,.18) 0 1px, transparent 2px),
+        radial-gradient(circle at 78% 16%, rgba(255,255,255,.18) 0 1px, transparent 2px),
         radial-gradient(circle at 50% 108%, rgba(255,255,255,.28), transparent 20%),
         linear-gradient(180deg, #58b6f7 0%, #53b2f3 45%, #66c1ff 100%);
+    }
+    .particle {
+      position: absolute;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.46);
+      animation: particle-float linear infinite;
+    }
+    .particle.p1 { left: 14%; top: 18%; animation-duration: 8s; }
+    .particle.p2 { left: 75%; top: 42%; animation-duration: 11s; animation-delay: -4s; }
+    .particle.p3 { left: 35%; top: 72%; animation-duration: 9s; animation-delay: -2s; }
+    @keyframes particle-float {
+      0% { translate: 0 16px; opacity: .2; }
+      50% { opacity: .7; }
+      100% { translate: 0 -34px; opacity: .05; }
     }
     .cloud {
       position: absolute;
@@ -202,6 +220,7 @@ export function renderCollectionGameHtml(): string {
       filter: drop-shadow(0 22px 22px rgba(28, 85, 138, .32));
     }
     .rocket-wrap.launch { animation: rocket-float 1.25s ease-in-out infinite; }
+    .rocket-wrap.boost { animation: rocket-boost .48s ease-out; }
     .rocket-wrap.collision { rotate: -16deg; scale: .94; animation: rocket-hit .36s linear 2; }
     @keyframes rocket-float {
       0%, 100% { transform: translateY(0) rotate(-1deg); }
@@ -211,6 +230,11 @@ export function renderCollectionGameHtml(): string {
       0%,100% { translate: -50% 0; }
       35% { translate: calc(-50% - 16px) 8px; }
       70% { translate: calc(-50% + 12px) -4px; }
+    }
+    @keyframes rocket-boost {
+      0% { transform: translateY(0) scale(1); }
+      45% { transform: translateY(-34px) scale(1.08); }
+      100% { transform: translateY(0) scale(1); }
     }
     .rocket-body {
       position: absolute;
@@ -325,6 +349,18 @@ export function renderCollectionGameHtml(): string {
       font-weight: 900;
       text-shadow: 0 3px 8px rgba(20,74,120,.36);
     }
+    .spinner {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.45);
+      border-top-color: #fff;
+      animation: spin .7s linear infinite;
+      vertical-align: -4px;
+      margin-inline-end: 6px;
+    }
+    @keyframes spin { to { rotate: 360deg; } }
     .shake-screen { animation: screen-shake .36s linear 2; }
     @keyframes screen-shake {
       0%,100% { transform: translate(0,0); }
@@ -371,6 +407,9 @@ export function renderCollectionGameHtml(): string {
 </head>
 <body>
   <div class="sky" aria-hidden="true">
+    <div class="particle p1"></div>
+    <div class="particle p2"></div>
+    <div class="particle p3"></div>
     <div class="cloud c1"><span></span></div>
     <div class="cloud c2"><span></span></div>
     <div class="cloud c3"><span></span></div>
@@ -378,17 +417,19 @@ export function renderCollectionGameHtml(): string {
   </div>
   <main class="app" id="app"></main>
   <script>
-    const token = new URLSearchParams(location.search).get('token') || '';
+    let token = new URLSearchParams(location.search).get('token') || '';
     const app = document.getElementById('app');
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     let state = null;
     let recognition = null;
-    let attempts = 0;
     let listening = false;
     let speechTimer = null;
     let questionTimer = null;
     let roundClosed = false;
-    const maxAttempts = 2;
+    let requestBusy = false;
+    let finishBusy = false;
+    let restartBusy = false;
+    let gameState = 'loading';
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'": '&#39;'}[c]));
@@ -420,7 +461,12 @@ export function renderCollectionGameHtml(): string {
         '<div class="fin left"></div><div class="fin right"></div><div class="flame"></div>' +
         '</div>';
     }
+    function setGameState(next) {
+      gameState = next;
+      app.dataset.state = next;
+    }
     function renderStart() {
+      setGameState('ready');
       app.innerHTML = '<section class="screen"><div class="panel">' +
         '<div class="result-emoji">🚀</div>' +
         '<h1>تحدي الصور والكلمات</h1>' +
@@ -440,12 +486,13 @@ export function renderCollectionGameHtml(): string {
     function renderFlight(message = 'انطق الكلمة بالألماني') {
       const question = state.currentQuestion;
       if (!question) return finish();
-      attempts = 0;
+      setGameState('obstacle');
       roundClosed = false;
+      requestBusy = false;
       clearTimers();
       app.classList.remove('shake-screen');
       app.innerHTML = '<section class="flight">' +
-        '<div class="hud"><div class="meters">' + state.heightMeters + '</div><div class="hud-label">meters above the ground</div><div class="timer"><div class="timer-fill" id="timerFill"></div></div></div>' +
+        '<div class="hud"><div class="meters">' + state.heightMeters + '</div><div class="hud-label">meters above the ground · محاولات: ' + question.attemptsLeft + '</div><div class="timer"><div class="timer-fill" id="timerFill"></div></div></div>' +
         '<div class="obstacle" id="obstacle"><div class="obstacle-emoji">' + emoji(question.visualEmoji) + '</div></div>' +
         rocketMarkup() +
         '<div class="controls"><button class="mic" id="micBtn" aria-label="انطق الكلمة">🎙</button><div class="status" id="status">' + escapeHtml(message) + '</div><div class="tiny">محاولتان فقط · de-DE</div></div>' +
@@ -470,9 +517,9 @@ export function renderCollectionGameHtml(): string {
       }, seconds * 1000);
     }
     function listen() {
-      if (listening || roundClosed || !state.currentQuestion) return;
+      if (listening || requestBusy || roundClosed || !state.currentQuestion) return;
       if (!isSpeechSupported()) return renderError('متصفحك لا يدعم التعرف على الصوت. افتح اللعبة في Chrome أو Safari حديث.');
-      attempts += 1;
+      setGameState('listening');
       listening = true;
       setStatus('أسمعك...');
       document.getElementById('rocket')?.classList.add('launch');
@@ -481,7 +528,7 @@ export function renderCollectionGameHtml(): string {
       recognition.lang = 'de-DE';
       recognition.continuous = false;
       recognition.interimResults = false;
-      recognition.maxAlternatives = 3;
+      if ('maxAlternatives' in recognition) recognition.maxAlternatives = 5;
       recognition.onresult = event => {
         const result = event.results && event.results[0];
         const alternatives = result ? Array.from(result).map(item => item.transcript).filter(Boolean) : [];
@@ -505,6 +552,8 @@ export function renderCollectionGameHtml(): string {
         }
       };
       try {
+        recognition.lang = 'de-DE';
+        if (recognition.lang !== 'de-DE') recognition.lang = 'de-DE';
         recognition.start();
         speechTimer = setTimeout(() => {
           stopListening();
@@ -517,10 +566,6 @@ export function renderCollectionGameHtml(): string {
     }
     function noSpeech() {
       if (roundClosed) return;
-      if (attempts < maxAttempts) {
-        setStatus('ما سمعتك، حاول مرة ثانية');
-        return;
-      }
       submitSpeech('', []);
     }
     function stopListening() {
@@ -538,24 +583,38 @@ export function renderCollectionGameHtml(): string {
       questionTimer = null;
     }
     async function submitSpeech(transcript, alternatives) {
-      if (roundClosed || !state.currentQuestion) return;
+      if (requestBusy || roundClosed || !state.currentQuestion) return;
+      requestBusy = true;
       roundClosed = true;
       clearTimers();
       stopListening();
-      setStatus(transcript ? 'سمعت: ' + transcript : 'لم أسمع إجابة واضحة');
+      setGameState('checking');
+      setStatus('<span class="spinner"></span> أتحقق...');
       try {
         const result = await api('/game/api/answer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, questionIndex: state.currentQuestion.questionIndex, transcript, alternatives })
+          body: JSON.stringify({ token, questionIndex: state.currentQuestion.questionIndex, transcript, alternatives, reason: transcript ? 'speech' : 'timeout_or_no_speech' })
         });
         state = result;
         if (result.correct) {
+          setGameState('correct');
           const obstacle = document.getElementById('obstacle');
           obstacle?.classList.add('explosion');
           const rocket = document.getElementById('rocket');
-          if (rocket) rocket.style.bottom = Math.min(74, 8 + state.correctCount * 8) + '%';
+          if (rocket) {
+            rocket.classList.add('boost');
+            rocket.style.bottom = Math.min(74, 8 + state.correctCount * 8) + '%';
+          }
           setTimeout(() => result.finished ? finish() : renderFlight('صح! الصاروخ صعد 🚀'), 680);
+          return;
+        }
+        if (result.tryAgain && state.currentQuestion) {
+          setGameState('obstacle');
+          requestBusy = false;
+          roundClosed = false;
+          setStatus('ما سمعتك/مو واضحة. تأكد تنطق بالألماني. باقي محاولة: ' + result.attemptsLeft);
+          startQuestionTimer(state.currentQuestion.timeLimit || 8);
           return;
         }
         crashAndFinish();
@@ -564,12 +623,15 @@ export function renderCollectionGameHtml(): string {
       }
     }
     function crashAndFinish() {
+      setGameState('gameOver');
       document.getElementById('obstacle')?.classList.add('collision');
       document.getElementById('rocket')?.classList.add('collision');
       app.classList.add('shake-screen');
       setTimeout(() => finish(), 760);
     }
     async function finish() {
+      if (finishBusy) return;
+      finishBusy = true;
       clearTimers();
       try {
         state = await api('/game/api/finish', {
@@ -580,44 +642,91 @@ export function renderCollectionGameHtml(): string {
         state.failedQuestion ? renderGameOver() : renderWin();
       } catch {
         renderError('تعذر إنهاء الجولة حالياً.');
+      } finally {
+        finishBusy = false;
       }
     }
     function renderGameOver() {
+      setGameState('gameOver');
       const failed = state.failedQuestion;
-      app.innerHTML = '<section class="screen"><div class="panel">' +
+      app.innerHTML = '<section class="screen game-over"><div class="panel">' +
         '<h1>خسرت بسبب</h1>' +
         '<div class="result-emoji">' + emoji(failed.failedVisualEmoji) + '</div>' +
         '<div class="answer-line"><strong class="correct-word">' + escapeHtml(failed.correctAnswer) + '</strong><button class="sound" id="speakBtn" aria-label="استمع للنطق الصحيح">🔊</button></div>' +
         '<p class="sub">وصلت إلى ' + state.heightMeters + ' متر</p>' +
         '<p class="notice">✅ صحيح: ' + state.correctCount + ' · XP: +' + (state.xpGained || 0) + '</p>' +
-        '<button class="primary" onclick="location.reload()">إعادة اللعب</button>' +
+        '<button class="primary" id="restartBtn">إعادة اللعب</button>' +
         '<button class="secondary" onclick="history.back()">رجوع للبوت</button>' +
         '</div></section>';
       document.getElementById('speakBtn')?.addEventListener('click', () => speakGerman(failed.correctPronunciationText || failed.correctAnswer));
+      document.getElementById('restartBtn')?.addEventListener('click', restartGame);
     }
     function renderWin() {
+      setGameState('finished');
       app.innerHTML = '<section class="screen"><div class="panel">' +
         '<div class="result-emoji">🏆</div>' +
         '<h1>ممتاز 🚀</h1>' +
         '<p class="sub">أنهيت الجولة بنجاح</p>' +
         '<p class="notice">✅ صحيح: ' + state.correctCount + ' · الارتفاع: ' + state.heightMeters + ' متر · XP: +' + (state.xpGained || 0) + '</p>' +
-        '<button class="primary" onclick="location.reload()">إعادة اللعب</button>' +
+        '<button class="primary" id="restartBtn">إعادة اللعب</button>' +
         '<button class="secondary" onclick="history.back()">رجوع للبوت</button>' +
         '</div></section>';
+      document.getElementById('restartBtn')?.addEventListener('click', restartGame);
+    }
+    async function restartGame() {
+      if (restartBusy) return;
+      restartBusy = true;
+      setGameState('restarting');
+      clearTimers();
+      stopListening();
+      app.innerHTML = '<section class="screen"><div class="panel">' +
+        '<div class="result-emoji">🚀</div><h1>جولة جديدة...</h1>' +
+        '<p class="notice"><span class="spinner"></span> أجهز صاروخ جديد</p>' +
+        '</div></section>';
+      try {
+        const next = await api('/game/api/restart', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
+        token = next.token;
+        history.replaceState(null, '', next.gameUrl || ('/game?token=' + encodeURIComponent(token)));
+        state = await api('/game/api/session?token=' + encodeURIComponent(token));
+        renderStart();
+      } catch {
+        renderError('تعذر بدء جولة جديدة. افتح اللعبة من البوت مرة ثانية.');
+      } finally {
+        restartBusy = false;
+      }
     }
     function speakGerman(text) {
       if (!('speechSynthesis' in window)) return;
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'de-DE';
       utterance.rate = .86;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+      const voice = getGermanVoice();
+      if (voice) utterance.voice = voice;
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
     }
+    function getGermanVoice() {
+      if (!('speechSynthesis' in window)) return null;
+      const voices = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+      return voices.find(voice => String(voice.lang || '').toLowerCase().startsWith('de-de'))
+        || voices.find(voice => String(voice.lang || '').toLowerCase().startsWith('de'))
+        || null;
+    }
+    if ('speechSynthesis' in window && window.speechSynthesis.onvoiceschanged !== undefined) {
+      window.speechSynthesis.onvoiceschanged = () => getGermanVoice();
+    }
     function setStatus(message) {
       const status = document.getElementById('status');
-      if (status) status.textContent = message;
+      if (status) status.innerHTML = message;
     }
     function renderError(message) {
+      setGameState('error');
       clearTimers();
       app.innerHTML = '<section class="screen"><div class="panel">' +
         '<div class="result-emoji">🛰️</div><h1>تحدي الصور والكلمات</h1>' +

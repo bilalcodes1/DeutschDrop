@@ -5,6 +5,7 @@ import { deleteBotSession, getBotSession, saveBotSession } from '../repositories
 import { getWordById } from '../repositories/wordRepository';
 import {
     createGameSession,
+    GAME_UI_VERSION,
     MissingGameVisualError,
     countPlayableGameCollections,
     findMissingVisualsForCollection,
@@ -137,7 +138,7 @@ export async function showGameCollections(ctx: BotContext, userId: number, page:
 export async function startGameForCollection(ctx: BotContext, userId: number, collectionId: number): Promise<void> {
     try {
         const session = await createGameSession(ctx.db, userId, collectionId);
-        const url = `${publicBaseUrl(ctx)}/game?token=${encodeURIComponent(session.token)}`;
+        const url = `${publicBaseUrl(ctx)}/game?token=${encodeURIComponent(session.token)}&v=${encodeURIComponent(GAME_UI_VERSION)}`;
         await replaceWithText(
             ctx,
             `🎮 تحدي الصور والكلمات\n\nالمجموعة:\n${session.collection.title}\n\nعدد الأسئلة: ${session.totalQuestions}\n\nافتح اللعبة في Safari أو Chrome حتى يعمل المايكروفون والصوت بشكل صحيح.`,

@@ -5,6 +5,8 @@ import { addXp, getTotalXp } from './xpLevels';
 import { getRequiredVisualForWord, type GameVisual } from './gameVisualService';
 
 export const GAME_QUESTION_LIMIT = 10;
+export const GAME_UI_VERSION = 'speech-rocket-emoji-v2';
+export const GAME_MAX_ATTEMPTS = 2;
 const GAME_SESSION_TTL_MINUTES = 30;
 
 export interface PlayableCollection {
@@ -24,8 +26,10 @@ export interface GameQuestion {
     correctAnswer: string;
     answered?: boolean;
     isCorrect?: boolean;
+    attemptsMade?: number;
     transcript?: string;
     alternatives?: string[];
+    answerReason?: string;
 }
 
 export interface GameSessionData {
@@ -216,8 +220,9 @@ export async function answerGameQuestion(
     token: string,
     questionIndex: number,
     transcript: string,
-    alternatives: string[] = []
-): Promise<PublicGameState & { correct: boolean; correctAnswer?: string }> {
+    alternatives: string[] = [],
+    answerReason = 'speech'
+): Promise<PublicGameState & { correct: boolean; tryAgain?: boolean; attemptsLeft?: number; correctAnswer?: string }> {
     const session = await requireValidSession(db, token);
     if (session.finished === 1) {
         const state = toPublicState(session);
@@ -231,17 +236,32 @@ export async function answerGameQuestion(
 
     const spokenAnswers = [transcript, ...alternatives].filter(Boolean);
     const correct = spokenAnswers.some(answer => isAcceptedGermanAnswer(answer, question.correctAnswer));
-    question.answered = true;
+    question.attemptsMade = Math.min(GAME_MAX_ATTEMPTS, (question.attemptsMade ?? 0) + 1);
     question.transcript = transcript;
     question.alternatives = alternatives.slice(0, 3);
+    question.answerReason = answerReason.slice(0, 40);
     question.isCorrect = correct;
     if (correct) {
+        question.answered = true;
         data.correctCount += 1;
         data.streak += 1;
         data.bestStreak = Math.max(data.bestStreak, data.streak);
         data.heightMeters += heightGainForCorrect(data.correctCount, data.streak);
         data.currentIndex += 1;
     } else {
+        const attemptsLeft = Math.max(0, GAME_MAX_ATTEMPTS - question.attemptsMade);
+        if (attemptsLeft > 0) {
+            await updateSessionData(db, session.token_hash, data, 0, session.xp_awarded);
+            const updated: GameSessionRecord = { ...session, session_data: JSON.stringify(data), finished: 0 };
+            return {
+                ...toPublicState(updated),
+                correct: false,
+                tryAgain: true,
+                attemptsLeft,
+            };
+        }
+
+        question.answered = true;
         data.wrongCount += 1;
         data.streak = 0;
         data.gameOver = true;
@@ -259,6 +279,21 @@ export async function answerGameQuestion(
         correct,
         ...(correct ? {} : { correctAnswer: question.correctAnswer }),
     };
+}
+
+export async function restartGameSession(db: D1Database, token: string): Promise<{ token: string; totalQuestions: number }> {
+    const session = await requireValidSession(db, token);
+    const data = parseSessionData(session);
+    const isTerminal = session.finished === 1 || data.gameOver || data.currentIndex >= data.totalQuestions;
+    if (isTerminal && session.xp_awarded === 0) {
+        await finishGameSession(db, token);
+    } else if (!isTerminal && session.xp_awarded === 0) {
+        data.finishedAt = new Date().toISOString();
+        data.xpGained = 0;
+        await updateSessionData(db, session.token_hash, data, 1, 1);
+    }
+    const next = await createGameSession(db, session.user_id, session.collection_id);
+    return { token: next.token, totalQuestions: next.totalQuestions };
 }
 
 export async function finishGameSession(db: D1Database, token: string): Promise<PublicGameState> {
@@ -405,7 +440,7 @@ function publicQuestion(question: GameQuestion): PublicGameQuestion {
     return {
         questionIndex: question.questionIndex,
         visualEmoji: question.visual.value,
-        attemptsLeft: 2,
+        attemptsLeft: Math.max(0, GAME_MAX_ATTEMPTS - (question.attemptsMade ?? 0)),
         timeLimit: timeLimitForQuestion(question.questionIndex),
     };
 }

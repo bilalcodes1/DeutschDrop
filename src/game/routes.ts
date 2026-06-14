@@ -1,5 +1,5 @@
 import type { Env } from '../models';
-import { answerGameQuestion, finishGameSession, getPublicGameState } from '../services/gameSessionService';
+import { GAME_UI_VERSION, answerGameQuestion, finishGameSession, getPublicGameState, restartGameSession } from '../services/gameSessionService';
 import { renderCollectionGameHtml } from './html';
 
 export async function handleGameRoute(request: Request, env: Env): Promise<Response | null> {
@@ -23,13 +23,14 @@ export async function handleGameRoute(request: Request, env: Env): Promise<Respo
 
     if (url.pathname === '/game/api/answer' && request.method === 'POST') {
         return jsonResult(async () => {
-            const body = await readJson<{ token?: string; questionIndex?: number; transcript?: string; alternatives?: string[] }>(request);
+            const body = await readJson<{ token?: string; questionIndex?: number; transcript?: string; alternatives?: string[]; reason?: string }>(request);
             return answerGameQuestion(
                 env.DB,
                 body.token ?? '',
                 Number(body.questionIndex),
                 String(body.transcript ?? ''),
-                Array.isArray(body.alternatives) ? body.alternatives.map(String).slice(0, 3) : []
+                Array.isArray(body.alternatives) ? body.alternatives.map(String).slice(0, 5) : [],
+                String(body.reason ?? 'speech')
             );
         });
     }
@@ -38,6 +39,18 @@ export async function handleGameRoute(request: Request, env: Env): Promise<Respo
         return jsonResult(async () => {
             const body = await readJson<{ token?: string }>(request);
             return finishGameSession(env.DB, body.token ?? '');
+        });
+    }
+
+    if (url.pathname === '/game/api/restart' && request.method === 'POST') {
+        return jsonResult(async () => {
+            const body = await readJson<{ token?: string }>(request);
+            const next = await restartGameSession(env.DB, body.token ?? '');
+            return {
+                ok: true,
+                token: next.token,
+                gameUrl: `/game?token=${encodeURIComponent(next.token)}&v=${encodeURIComponent(GAME_UI_VERSION)}`,
+            };
         });
     }
 
