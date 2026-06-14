@@ -1223,7 +1223,6 @@ async function showCollection(ctx: BotContext, userId: number, collectionId: num
         if (total > 0) {
             keyboard.text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row();
         }
-        keyboard.text('🎮 العب بهذه المجموعة', `game:start_collection:${collectionId}`).row();
         keyboard.text('📥 نسخ المجموعة', `collection:copy_prompt:${collectionId}`).row()
             .text('📤 مشاركة المجموعة', `share_collection:${collectionId}`).row();
     }

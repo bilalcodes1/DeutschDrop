@@ -826,7 +826,7 @@ export function renderCollectionGameHtml(): string {
         state = await api('/game/api/finish', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token })
+          body: JSON.stringify({ token, reason: 'round_finished' })
         });
         exitFinishSent = true;
         state.failedQuestion ? renderGameOver() : renderWin();
@@ -925,8 +925,8 @@ export function renderCollectionGameHtml(): string {
     if ('speechSynthesis' in window && window.speechSynthesis.onvoiceschanged !== undefined) {
       window.speechSynthesis.onvoiceschanged = () => getGermanVoice();
     }
-    function finishPayload() {
-      return JSON.stringify({ token });
+    function finishPayload(reason = 'exit') {
+      return JSON.stringify({ token, reason });
     }
     async function finishOnExit(waitForResponse) {
       if (!token || isRestarting) return state;
@@ -938,13 +938,13 @@ export function renderCollectionGameHtml(): string {
         state = await api('/game/api/finish', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: finishPayload()
+          body: finishPayload('button_exit')
         });
         exitFinishSent = true;
         return state;
       }
       exitFinishSent = true;
-      const payload = finishPayload();
+      const payload = finishPayload('page_exit');
       try {
         if (navigator.sendBeacon) {
           const blob = new Blob([payload], { type: 'application/json' });

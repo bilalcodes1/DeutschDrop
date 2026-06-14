@@ -2707,6 +2707,8 @@ test('collection game is visible from main menu and collection pages', () => {
     assert.match(menuSource, /game:menu/);
     assert.match(botSource, /registerGameCommand\(bot\);\s*registerAddWordCommand\(bot\);/s);
     assert.match(gameSource, /bot\.callbackQuery\('game:menu'/);
+    assert.match(gameSource, /🚀 العب وحدك/);
+    assert.match(gameSource, /⚔️ تحدي شخص/);
     assert.match(gameSource, /showGameCollections\(ctx, user\.user_id, 1\)/);
     assert.match(gameSource, /game:collections:page:/);
     assert.match(gameSource, /createGameSession\(ctx\.db, userId, collectionId\)/);
@@ -2741,7 +2743,8 @@ test('collection game sessions are token scoped and collection permission checke
     assert.match(serviceSource, /crypto\.subtle\.digest\('SHA-256'/);
     assert.match(serviceSource, /GAME_SESSION_TTL_MINUTES = 30/);
     assert.match(serviceSource, /\+\$\{GAME_SESSION_TTL_MINUTES\} minutes/);
-    assert.match(serviceSource, /c\.owner_user_id = \? OR c\.visibility = 'public'/);
+    assert.match(serviceSource, /AND c\.owner_user_id = \?/);
+    assert.doesNotMatch(serviceSource, /AND \(c\.owner_user_id = \? OR c\.visibility = 'public'\)/);
     assert.match(serviceSource, /COALESCE\(u\.is_banned, 0\) = 0/);
     assert.match(serviceSource, /COALESCE\(u\.is_deleted, 0\) = 0/);
     assert.match(serviceSource, /ORDER BY i\.position ASC, i\.id ASC\s+LIMIT \?/);
@@ -2861,6 +2864,7 @@ test('collection speech rocket routes reject missing token and never trust clien
     assert.match(serviceSource, /answerGameQuestion/);
     assert.match(serviceSource, /restartGameSession/);
     assert.match(serviceSource, /createGameSession\(db, session\.user_id, session\.collection_id\)/);
+    assert.match(serviceSource, /if \(data\.challengeId\) throw new Error\('restart_not_allowed'\)/);
     assert.match(serviceSource, /isAcceptedGermanAnswer/);
     assert.match(serviceSource, /gameOver = true/);
     assert.match(serviceSource, /currentQuestion/);
@@ -2906,6 +2910,7 @@ test('collection speech rocket visual resolution requires clear visuals and manu
     const visualSource = fs.readFileSync(new URL('../src/services/gameVisualService.ts', import.meta.url), 'utf8');
     const wordPanelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
     const gameSource = fs.readFileSync(new URL('../src/commands/game.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0040_game_challenges_global_visuals.sql', import.meta.url), 'utf8');
 
     assert.deepEqual(resolveEmojiVisual('Haus', 'بيت').value, '🏠');
     assert.deepEqual(resolveEmojiVisual('Universität', 'جامعة').value, '🏫📚');
@@ -2925,6 +2930,14 @@ test('collection speech rocket visual resolution requires clear visuals and manu
     assert.doesNotMatch(visualSource, /getPictogramByWordId|word_pictograms|ARASAAC/);
     assert.doesNotMatch(visualSource, /type: 'image_url'|return \{ type: "image_url"/);
     assert.match(visualSource, /word_visual_cache\.source = 'manual'/);
+    assert.match(visualSource, /global_word_visuals/);
+    assert.match(visualSource, /getGlobalVisualForWord/);
+    assert.match(visualSource, /upsertGlobalVisualForWord/);
+    assert.match(visualSource, /findSharedCachedVisual/);
+    assert.match(visualSource, /normalizedVisualKey/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS global_word_visuals/);
+    assert.match(migrationSource, /normalized_key TEXT UNIQUE NOT NULL/);
+    assert.match(migrationSource, /created_by_user_id/);
     assert.match(visualSource, /fallback_letter/);
     assert.match(visualSource, /resolveOnlineEmojiProvider/);
     assert.match(visualSource, /EmojiHub, OpenMoji metadata, or Unicode CLDR/);
@@ -2945,8 +2958,12 @@ test('collection game finish awards capped XP once through addXp', () => {
     assert.equal(calculateGameXp(5, 3), 6);
     assert.equal(calculateGameXp(5, 600), 7);
     assert.equal(calculateGameXp(30, 30), 20);
-    assert.match(serviceSource, /reason: 'collection_game'/);
-    assert.match(serviceSource, /sourceType: 'collection_game'/);
+    assert.match(serviceSource, /reason: isChallenge \? 'collection_game_challenge' : 'collection_game'/);
+    assert.match(serviceSource, /sourceType: isChallenge \? 'collection_game_challenge' : 'collection_game'/);
+    assert.match(serviceSource, /challenge_id: data\.challengeId/);
+    assert.match(serviceSource, /opponent_user_id: data\.opponentUserId/);
+    assert.match(serviceSource, /duration_ms: calculateDurationMs/);
+    assert.match(serviceSource, /submitGameChallengeSessionResult/);
     assert.match(serviceSource, /allowDailyCap: true/);
     assert.match(serviceSource, /metadata:[\s\S]*collection_id:[\s\S]*correct_count:[\s\S]*total_count:[\s\S]*total_words:[\s\S]*completed_words:[\s\S]*failed_word_id:[\s\S]*height_meters:[\s\S]*score:[\s\S]*attempts_used:[\s\S]*mode: 'speech_rocket'[\s\S]*game_session:/);
     assert.match(serviceSource, /WHERE token_hash = \? AND xp_awarded = 0/);
@@ -2957,4 +2974,86 @@ test('collection game finish awards capped XP once through addXp', () => {
     assert.match(serviceSource, /restartGameSession\(db: D1Database, token: string\)/);
     assert.match(serviceSource, /heightGainForCorrect/);
     assert.doesNotMatch(serviceSource, /allowDailyCap: false/);
+});
+
+test('collection game solo lists only owned collections and has clear empty states', () => {
+    const gameSource = fs.readFileSync(new URL('../src/commands/game.ts', import.meta.url), 'utf8');
+    const serviceSource = fs.readFileSync(new URL('../src/services/gameSessionService.ts', import.meta.url), 'utf8');
+    const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+
+    assert.match(gameSource, /countOwnGameCollections/);
+    assert.match(gameSource, /ما عندك مجموعة كلمات حتى تبدأ اللعبة/);
+    assert.match(gameSource, /مجموعاتك موجودة، لكن تحتاج تضيف كلمات/);
+    assert.match(gameSource, /➕ إنشاء مجموعة/);
+    assert.match(gameSource, /📚 مجموعاتي/);
+    assert.match(serviceSource, /countPlayableGameCollections/);
+    assert.match(serviceSource, /AND c\.owner_user_id = \?/);
+    assert.match(serviceSource, /HAVING COUNT\(i\.word_id\) > 0/);
+    assert.doesNotMatch(sharingSource, /else \{[\s\S]*🎮 العب بهذه المجموعة[\s\S]*collection:copy_prompt/);
+});
+
+test('game challenge UI source selection and privacy are wired', () => {
+    const gameSource = fs.readFileSync(new URL('../src/commands/game.ts', import.meta.url), 'utf8');
+    const serviceSource = fs.readFileSync(new URL('../src/services/gameSessionService.ts', import.meta.url), 'utf8');
+    const migrationSource = fs.readFileSync(new URL('../src/db/migrations/0040_game_challenges_global_visuals.sql', import.meta.url), 'utf8');
+
+    assert.match(gameSource, /game_challenge:users:page:1/);
+    assert.match(gameSource, /🔍 بحث عن مستخدم/);
+    assert.match(gameSource, /game_challenge_user_search/);
+    assert.match(gameSource, /u\.display_name IS NOT NULL/);
+    assert.match(gameSource, /COALESCE\(u\.is_banned, 0\) = 0/);
+    assert.match(gameSource, /COALESCE\(u\.is_deleted, 0\) = 0/);
+    assert.doesNotMatch(gameSource, /keyboard\.text\([^)]*telegram_id/);
+    assert.match(gameSource, /📚 من مجموعاتي/);
+    assert.match(gameSource, /📚 من مجموعاته/);
+    assert.match(gameSource, /🔀 مختلط/);
+    assert.match(gameSource, /countOpponentPublicGameCollections/);
+    assert.match(gameSource, /getOpponentPublicGameCollections/);
+    assert.match(gameSource, /لا توجد مجموعات متاحة لهذا المستخدم/);
+    assert.match(gameSource, /createGameChallenge\(ctx\.db, userId, opponentUserId, sourceType, collectionId\)/);
+    assert.match(gameSource, /sendTelegramMessage/);
+    assert.match(gameSource, /🚀 ابدأ التحدي/);
+    assert.match(gameSource, /startGameChallengeForUser/);
+
+    assert.match(serviceSource, /export type GameChallengeSourceType = 'mine' \| 'opponent' \| 'mixed'/);
+    assert.match(serviceSource, /canUseOpponentCollectionForGame/);
+    assert.match(serviceSource, /c\.visibility = 'public'/);
+    assert.match(serviceSource, /getMixedGameChallengeWords/);
+    assert.match(serviceSource, /word_ids_json/);
+    assert.match(serviceSource, /createGameSessionFromWords/);
+    assert.match(serviceSource, /challengeId/);
+    assert.match(serviceSource, /challengeRole/);
+    assert.match(serviceSource, /opponentUserId/);
+    assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS game_challenges/);
+    assert.match(migrationSource, /source_type TEXT NOT NULL CHECK \(source_type IN \('mine', 'opponent', 'mixed'\)\)/);
+    assert.match(migrationSource, /creator_duration_ms/);
+    assert.match(migrationSource, /opponent_duration_ms/);
+});
+
+test('game challenge finish stores results and uses faster tie breaker', () => {
+    const serviceSource = fs.readFileSync(new URL('../src/services/gameSessionService.ts', import.meta.url), 'utf8');
+    const challengeRepoSource = fs.readFileSync(new URL('../src/repositories/challengeRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(serviceSource, /collection_game_challenge/);
+    assert.match(serviceSource, /submitGameChallengeSessionResult/);
+    assert.match(serviceSource, /creator_score/);
+    assert.match(serviceSource, /opponent_score/);
+    assert.match(serviceSource, /creator_completed_words/);
+    assert.match(serviceSource, /opponent_completed_words/);
+    assert.match(serviceSource, /creator_xp_gained/);
+    assert.match(serviceSource, /opponent_xp_gained/);
+    assert.match(serviceSource, /winner_user_id/);
+    assert.match(serviceSource, /pickWinnerByScoreAndDuration/);
+    assert.match(serviceSource, /بانتظار الطرف الآخر/);
+    assert.match(serviceSource, /نتيجة تحدي الصور والكلمات/);
+    assert.match(serviceSource, /status != 'completed'/);
+
+    assert.match(challengeRepoSource, /export function pickWinnerByScoreAndDuration/);
+    assert.match(challengeRepoSource, /if \(creatorScore > opponentScore\) return creatorId/);
+    assert.match(challengeRepoSource, /if \(opponentScore > creatorScore\) return opponentId/);
+    assert.match(challengeRepoSource, /if \(creatorTimeMs === null \|\| opponentTimeMs === null\) return null/);
+    assert.match(challengeRepoSource, /if \(creatorTimeMs < opponentTimeMs\) return creatorId/);
+    assert.match(challengeRepoSource, /if \(opponentTimeMs < creatorTimeMs\) return opponentId/);
+    assert.match(challengeRepoSource, /return null/);
+    assert.doesNotMatch(challengeRepoSource, /SET opponent_score = \?, opponent_time_ms = \?, winner_user_id = \?, status = 'completed'/);
 });

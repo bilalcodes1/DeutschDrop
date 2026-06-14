@@ -1,14 +1,20 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import type { Word } from '../models';
+import type { Env, User, Word } from '../models';
 import { queryAll, queryOne, run } from '../db/queries';
 import { addXp, getTotalXp } from './xpLevels';
 import { getRequiredVisualForWord, type GameVisual } from './gameVisualService';
+import { pickWinnerByScoreAndDuration } from '../repositories/challengeRepository';
+import { displayUserName, sendTelegramMessage } from './notifications';
 
 export const GAME_QUESTION_LIMIT = 100;
 export const GAME_UI_VERSION = 'speech-rocket-v4';
 export const GAME_MAX_ATTEMPTS = 3;
 const GAME_NO_SPEECH_GRACE_COUNT = 1;
 const GAME_SESSION_TTL_MINUTES = 30;
+const GAME_CHALLENGE_TTL_HOURS = 24;
+
+export type GameChallengeSourceType = 'mine' | 'opponent' | 'mixed';
+export type GameChallengeRole = 'creator' | 'opponent';
 
 export interface PlayableCollection {
     id: number;
@@ -40,6 +46,10 @@ export interface GameSessionData {
     mode: 'speech_rocket';
     speechLang: 'de-DE';
     collectionTitle: string;
+    challengeId?: number;
+    challengeRole?: GameChallengeRole;
+    opponentUserId?: number;
+    challengeSourceType?: GameChallengeSourceType;
     totalQuestions: number;
     totalWords: number;
     currentIndex: number;
@@ -70,6 +80,34 @@ export interface GameSessionRecord {
     xp_awarded: number;
     created_at: string;
     expires_at: string;
+}
+
+export interface GameChallengeRecord {
+    challenge_id: number;
+    creator_user_id: number;
+    opponent_user_id: number;
+    source_type: GameChallengeSourceType;
+    collection_id: number | null;
+    collection_title: string | null;
+    word_ids_json: string;
+    question_count: number;
+    status: 'pending' | 'in_progress' | 'completed' | 'expired' | 'cancelled';
+    created_at: string;
+    expires_at: string;
+    completed_at: string | null;
+    creator_session_hash: string | null;
+    opponent_session_hash: string | null;
+    creator_score: number;
+    opponent_score: number;
+    creator_completed_words: number;
+    opponent_completed_words: number;
+    creator_height_meters: number;
+    opponent_height_meters: number;
+    creator_duration_ms: number | null;
+    opponent_duration_ms: number | null;
+    creator_xp_gained: number;
+    opponent_xp_gained: number;
+    winner_user_id: number | null;
 }
 
 export interface PublicGameQuestion {
@@ -129,7 +167,7 @@ export async function countPlayableGameCollections(db: D1Database, userId: numbe
             WHERE c.is_deleted = 0
               AND COALESCE(u.is_banned, 0) = 0
               AND COALESCE(u.is_deleted, 0) = 0
-              AND (c.owner_user_id = ? OR c.visibility = 'public')
+              AND c.owner_user_id = ?
             GROUP BY c.id
             HAVING COUNT(i.word_id) > 0
          ) playable`,
@@ -154,12 +192,71 @@ export async function getPlayableGameCollections(db: D1Database, userId: number,
          WHERE c.is_deleted = 0
            AND COALESCE(u.is_banned, 0) = 0
            AND COALESCE(u.is_deleted, 0) = 0
-           AND (c.owner_user_id = ? OR c.visibility = 'public')
+           AND c.owner_user_id = ?
          GROUP BY c.id
          HAVING COUNT(i.word_id) > 0
-         ORDER BY CASE WHEN c.owner_user_id = ? THEN 0 ELSE 1 END, c.updated_at DESC, c.id DESC
+         ORDER BY c.updated_at DESC, c.id DESC
          LIMIT ? OFFSET ?`,
-        [userId, userId, limit, offset]
+        [userId, limit, offset]
+    );
+}
+
+export async function countOwnGameCollections(db: D1Database, userId: number): Promise<number> {
+    const row = await queryOne<{ count: number }>(
+        db,
+        `SELECT COUNT(*) AS count
+         FROM word_collections
+         WHERE owner_user_id = ? AND is_deleted = 0`,
+        [userId]
+    );
+    return row?.count ?? 0;
+}
+
+export async function countOpponentPublicGameCollections(db: D1Database, opponentUserId: number): Promise<number> {
+    const row = await queryOne<{ count: number }>(
+        db,
+        `SELECT COUNT(*) AS count
+         FROM (
+            SELECT c.id
+            FROM word_collections c
+            INNER JOIN users u ON u.user_id = c.owner_user_id
+            INNER JOIN word_collection_items i ON i.collection_id = c.id
+            WHERE c.owner_user_id = ?
+              AND c.visibility = 'public'
+              AND c.is_deleted = 0
+              AND COALESCE(u.is_banned, 0) = 0
+              AND COALESCE(u.is_deleted, 0) = 0
+            GROUP BY c.id
+            HAVING COUNT(i.word_id) > 0
+         ) playable`,
+        [opponentUserId]
+    );
+    return row?.count ?? 0;
+}
+
+export async function getOpponentPublicGameCollections(db: D1Database, opponentUserId: number, limit: number, offset: number): Promise<PlayableCollection[]> {
+    return queryAll<PlayableCollection>(
+        db,
+        `SELECT c.id,
+                c.owner_user_id,
+                c.title,
+                c.description,
+                c.visibility,
+                COALESCE(u.display_name, u.name) AS owner_name,
+                COUNT(i.word_id) AS word_count
+         FROM word_collections c
+         INNER JOIN users u ON u.user_id = c.owner_user_id
+         INNER JOIN word_collection_items i ON i.collection_id = c.id
+         WHERE c.owner_user_id = ?
+           AND c.visibility = 'public'
+           AND c.is_deleted = 0
+           AND COALESCE(u.is_banned, 0) = 0
+           AND COALESCE(u.is_deleted, 0) = 0
+         GROUP BY c.id
+         HAVING COUNT(i.word_id) > 0
+         ORDER BY c.updated_at DESC, c.id DESC
+         LIMIT ? OFFSET ?`,
+        [opponentUserId, limit, offset]
     );
 }
 
@@ -180,7 +277,7 @@ export async function canUseCollectionForGame(db: D1Database, userId: number, co
            AND c.is_deleted = 0
            AND COALESCE(u.is_banned, 0) = 0
            AND COALESCE(u.is_deleted, 0) = 0
-           AND (c.owner_user_id = ? OR c.visibility = 'public')
+           AND c.owner_user_id = ?
          GROUP BY c.id`,
         [collectionId, userId]
     );
@@ -197,11 +294,25 @@ export async function createGameSession(db: D1Database, userId: number, collecti
     const missingVisuals = await findMissingVisualsForCollection(db, userId, collectionId, GAME_QUESTION_LIMIT);
     if (missingVisuals[0]) throw new MissingGameVisualError(missingVisuals[0], collectionId);
 
+    return createGameSessionFromWords(db, userId, collection, words);
+}
+
+async function createGameSessionFromWords(
+    db: D1Database,
+    userId: number,
+    collection: PlayableCollection,
+    words: Word[],
+    challenge?: { challengeId: number; role: GameChallengeRole; opponentUserId: number; sourceType: GameChallengeSourceType }
+): Promise<{ token: string; tokenHash: string; collection: PlayableCollection; totalQuestions: number }> {
     const questions = await buildQuestions(db, words);
     const data: GameSessionData = {
         mode: 'speech_rocket',
         speechLang: 'de-DE',
         collectionTitle: collection.title,
+        challengeId: challenge?.challengeId,
+        challengeRole: challenge?.role,
+        opponentUserId: challenge?.opponentUserId,
+        challengeSourceType: challenge?.sourceType,
         totalQuestions: questions.length,
         totalWords: questions.length,
         currentIndex: 0,
@@ -226,15 +337,118 @@ export async function createGameSession(db: D1Database, userId: number, collecti
         db,
         `INSERT INTO game_sessions (token_hash, user_id, collection_id, session_data, finished, xp_awarded, expires_at)
          VALUES (?, ?, ?, ?, 0, 0, datetime('now', '+${GAME_SESSION_TTL_MINUTES} minutes'))`,
-        [tokenHash, userId, collectionId, JSON.stringify(data)]
+        [tokenHash, userId, collection.id, JSON.stringify(data)]
     );
 
-    return { token, collection, totalQuestions: questions.length };
+    return { token, tokenHash, collection, totalQuestions: questions.length };
 }
 
 export async function getPublicGameState(db: D1Database, token: string): Promise<PublicGameState> {
     const session = await requireValidSession(db, token);
     return toPublicState(session);
+}
+
+export async function createGameChallenge(
+    db: D1Database,
+    creatorUserId: number,
+    opponentUserId: number,
+    sourceType: GameChallengeSourceType,
+    collectionId: number
+): Promise<{ challengeId: number; collection: PlayableCollection; opponent: Pick<User, 'user_id' | 'telegram_id' | 'display_name' | 'name'>; totalQuestions: number }> {
+    const opponent = await queryOne<Pick<User, 'user_id' | 'telegram_id' | 'display_name' | 'name' | 'is_banned' | 'is_deleted'>>(
+        db,
+        `SELECT user_id, telegram_id, display_name, name, COALESCE(is_banned, 0) AS is_banned, COALESCE(is_deleted, 0) AS is_deleted
+         FROM users
+         WHERE user_id = ? AND display_name IS NOT NULL`,
+        [opponentUserId]
+    );
+    if (!opponent || opponent.user_id === creatorUserId || opponent.is_banned || opponent.is_deleted) {
+        throw new Error('game_challenge_opponent_unavailable');
+    }
+
+    const collection = sourceType === 'opponent'
+        ? await canUseOpponentCollectionForGame(db, opponentUserId, collectionId)
+        : await canUseCollectionForGame(db, creatorUserId, collectionId);
+    if (!collection) throw new Error('collection_not_allowed');
+    if ((collection.word_count ?? 0) <= 0) throw new Error('collection_empty');
+
+    const words = sourceType === 'mixed'
+        ? await getMixedGameChallengeWords(db, creatorUserId, opponentUserId, collectionId)
+        : await getCollectionWordsForGameByCollectionOwner(db, collection.owner_user_id, collectionId, GAME_QUESTION_LIMIT);
+    const selected = capGameWords(shuffle(words));
+    if (selected.length === 0) throw new Error('collection_empty');
+    await assertWordsHaveVisuals(db, selected, collection.id);
+
+    const result = await run(
+        db,
+        `INSERT INTO game_challenges (
+            creator_user_id, opponent_user_id, source_type, collection_id, collection_title,
+            word_ids_json, question_count, status, expires_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now', '+${GAME_CHALLENGE_TTL_HOURS} hours'))`,
+        [
+            creatorUserId,
+            opponentUserId,
+            sourceType,
+            collection.id,
+            collection.title,
+            JSON.stringify(selected.map(word => word.word_id)),
+            selected.length,
+        ]
+    );
+    const challengeId = (result.meta as { last_row_id?: number })?.last_row_id ?? 0;
+    return { challengeId, collection, opponent, totalQuestions: selected.length };
+}
+
+export async function startGameChallengeForUser(
+    db: D1Database,
+    challengeId: number,
+    userId: number
+): Promise<{ token: string; collectionTitle: string; challenge: GameChallengeRecord; role: GameChallengeRole; totalQuestions: number }> {
+    const challenge = await getGameChallenge(db, challengeId);
+    if (!challenge || !['pending', 'in_progress'].includes(challenge.status)) throw new Error('game_challenge_unavailable');
+    if (new Date(challenge.expires_at).getTime() <= Date.now()) throw new Error('expired_token');
+
+    const role: GameChallengeRole | null = challenge.creator_user_id === userId
+        ? 'creator'
+        : challenge.opponent_user_id === userId
+            ? 'opponent'
+            : null;
+    if (!role) throw new Error('game_challenge_unavailable');
+    if (role === 'creator' && challenge.creator_duration_ms !== null) throw new Error('game_challenge_completed');
+    if (role === 'opponent' && challenge.opponent_duration_ms !== null) throw new Error('game_challenge_completed');
+
+    const wordIds = parseWordIds(challenge.word_ids_json);
+    const words = await getWordsByIdsForGame(db, wordIds);
+    if (words.length === 0) throw new Error('collection_empty');
+    await assertWordsHaveVisuals(db, words, challenge.collection_id ?? 0);
+
+    const collection: PlayableCollection = {
+        id: challenge.collection_id ?? 0,
+        owner_user_id: role === 'creator' ? challenge.creator_user_id : challenge.opponent_user_id,
+        title: challenge.collection_title ?? 'تحدي الصور والكلمات',
+        description: null,
+        visibility: 'private',
+        owner_name: null,
+        word_count: words.length,
+    };
+    const opponentUserId = role === 'creator' ? challenge.opponent_user_id : challenge.creator_user_id;
+    const session = await createGameSessionFromWords(db, userId, collection, words, {
+        challengeId,
+        role,
+        opponentUserId,
+        sourceType: challenge.source_type,
+    });
+
+    await run(
+        db,
+        role === 'creator'
+            ? `UPDATE game_challenges SET creator_session_hash = ?, status = 'in_progress', updated_at = datetime('now') WHERE challenge_id = ?`
+            : `UPDATE game_challenges SET opponent_session_hash = ?, status = 'in_progress', updated_at = datetime('now') WHERE challenge_id = ?`,
+        [session.tokenHash, challengeId]
+    );
+    const updated = await getGameChallenge(db, challengeId);
+    return { token: session.token, collectionTitle: collection.title, challenge: updated ?? challenge, role, totalQuestions: session.totalQuestions };
 }
 
 export async function answerGameQuestion(
@@ -335,6 +549,7 @@ export async function restartGameSession(db: D1Database, token: string): Promise
     const session = await requireValidSession(db, token);
     const data = parseSessionData(session);
     normalizeGameData(data);
+    if (data.challengeId) throw new Error('restart_not_allowed');
     const isTerminal = session.finished === 1 || data.gameOver || data.currentIndex >= data.totalQuestions;
     if (isTerminal && session.xp_awarded === 0) {
         await finishGameSession(db, token);
@@ -347,7 +562,7 @@ export async function restartGameSession(db: D1Database, token: string): Promise
     return { token: next.token, totalQuestions: next.totalQuestions };
 }
 
-export async function finishGameSession(db: D1Database, token: string): Promise<PublicGameState> {
+export async function finishGameSession(db: D1Database, token: string, env?: Env): Promise<PublicGameState> {
     const session = await requireValidSession(db, token);
     const data = parseSessionData(session);
     normalizeGameData(data);
@@ -372,11 +587,15 @@ export async function finishGameSession(db: D1Database, token: string): Promise<
 
     if (getChanges(claimed) > 0 && xpBase > 0) {
         const before = await getTotalXp(db, session.user_id);
+        const isChallenge = Boolean(data.challengeId);
         await addXp(db, session.user_id, xpBase, {
-            reason: 'collection_game',
-            sourceType: 'collection_game',
-            sourceId: String(session.collection_id),
+            reason: isChallenge ? 'collection_game_challenge' : 'collection_game',
+            sourceType: isChallenge ? 'collection_game_challenge' : 'collection_game',
+            sourceId: isChallenge ? String(data.challengeId) : String(session.collection_id),
             metadata: {
+                challenge_id: data.challengeId ?? null,
+                opponent_user_id: data.opponentUserId ?? null,
+                source_type: data.challengeSourceType ?? null,
                 collection_id: session.collection_id,
                 correct_count: data.correctCount,
                 total_count: data.totalQuestions,
@@ -385,6 +604,8 @@ export async function finishGameSession(db: D1Database, token: string): Promise<
                 failed_word_id: data.failedQuestion?.wordId ?? null,
                 height_meters: data.heightMeters,
                 score: calculateGameScore(data.heightMeters, data.correctCount),
+                duration_ms: calculateDurationMs(data.startedAt, data.finishedAt ?? new Date().toISOString()),
+                result: data.challengeId ? 'pending' : null,
                 attempts_used: Object.values(data.attemptsByWord ?? {}).reduce((sum, value) => sum + Number(value || 0), 0),
                 mode: 'speech_rocket',
                 game_session: session.token_hash,
@@ -398,10 +619,17 @@ export async function finishGameSession(db: D1Database, token: string): Promise<
     data.xpGained = xpGained;
     data.finishedAt = data.finishedAt ?? new Date().toISOString();
     await updateSessionData(db, session.token_hash, data, 1, 1);
+    if (getChanges(claimed) > 0 && data.challengeId && data.challengeRole) {
+        await submitGameChallengeSessionResult(db, env, session, data, xpGained);
+    }
     return toPublicState({ ...session, session_data: JSON.stringify(data), finished: 1, xp_awarded: 1 });
 }
 
 export async function getCollectionWordsForGame(db: D1Database, userId: number, collectionId: number, limit = GAME_QUESTION_LIMIT): Promise<Word[]> {
+    return getCollectionWordsForGameByCollectionOwner(db, userId, collectionId, limit);
+}
+
+async function getCollectionWordsForGameByCollectionOwner(db: D1Database, ownerUserId: number, collectionId: number, limit = GAME_QUESTION_LIMIT): Promise<Word[]> {
     return queryAll<Word>(
         db,
         `SELECT w.*
@@ -413,10 +641,10 @@ export async function getCollectionWordsForGame(db: D1Database, userId: number, 
            AND c.is_deleted = 0
            AND COALESCE(u.is_banned, 0) = 0
            AND COALESCE(u.is_deleted, 0) = 0
-           AND (c.owner_user_id = ? OR c.visibility = 'public')
+           AND c.owner_user_id = ?
          ORDER BY i.position ASC, i.id ASC
          LIMIT ?`,
-        [collectionId, userId, Math.max(1, Math.min(GAME_QUESTION_LIMIT, limit))]
+        [collectionId, ownerUserId, Math.max(1, Math.min(GAME_QUESTION_LIMIT, limit))]
     );
 }
 
@@ -428,6 +656,150 @@ export async function findMissingVisualsForCollection(db: D1Database, userId: nu
         if (!visual) missing.push(word);
     }
     return missing;
+}
+
+async function canUseOpponentCollectionForGame(db: D1Database, opponentUserId: number, collectionId: number): Promise<PlayableCollection | null> {
+    return queryOne<PlayableCollection>(
+        db,
+        `SELECT c.id,
+                c.owner_user_id,
+                c.title,
+                c.description,
+                c.visibility,
+                COALESCE(u.display_name, u.name) AS owner_name,
+                COUNT(i.word_id) AS word_count
+         FROM word_collections c
+         INNER JOIN users u ON u.user_id = c.owner_user_id
+         LEFT JOIN word_collection_items i ON i.collection_id = c.id
+         WHERE c.id = ?
+           AND c.owner_user_id = ?
+           AND c.visibility = 'public'
+           AND c.is_deleted = 0
+           AND COALESCE(u.is_banned, 0) = 0
+           AND COALESCE(u.is_deleted, 0) = 0
+         GROUP BY c.id`,
+        [collectionId, opponentUserId]
+    );
+}
+
+async function getMixedGameChallengeWords(db: D1Database, creatorUserId: number, opponentUserId: number, collectionId: number): Promise<Word[]> {
+    const creatorWords = await getCollectionWordsForGameByCollectionOwner(db, creatorUserId, collectionId, Math.ceil(GAME_QUESTION_LIMIT / 2));
+    const opponentWords = await queryAll<Word>(
+        db,
+        `SELECT DISTINCT w.*
+         FROM word_collections c
+         INNER JOIN word_collection_items i ON i.collection_id = c.id
+         INNER JOIN words w ON w.word_id = i.word_id
+         INNER JOIN users u ON u.user_id = c.owner_user_id
+         WHERE c.owner_user_id = ?
+           AND c.visibility = 'public'
+           AND c.is_deleted = 0
+           AND COALESCE(u.is_banned, 0) = 0
+           AND COALESCE(u.is_deleted, 0) = 0
+         ORDER BY c.updated_at DESC, i.position ASC
+         LIMIT ?`,
+        [opponentUserId, Math.floor(GAME_QUESTION_LIMIT / 2)]
+    );
+    const selected = [...creatorWords, ...opponentWords];
+    const seen = new Set<number>();
+    return selected.filter(word => {
+        if (seen.has(word.word_id)) return false;
+        seen.add(word.word_id);
+        return true;
+    });
+}
+
+async function getWordsByIdsForGame(db: D1Database, wordIds: number[]): Promise<Word[]> {
+    const ids = capGameIds(wordIds.filter(Number.isFinite));
+    if (ids.length === 0) return [];
+    const rows = await queryAll<Word>(
+        db,
+        `SELECT * FROM words WHERE word_id IN (${ids.map(() => '?').join(',')})`,
+        ids
+    );
+    const byId = new Map(rows.map(word => [word.word_id, word]));
+    return ids.map(id => byId.get(id)).filter((word): word is Word => Boolean(word));
+}
+
+async function assertWordsHaveVisuals(db: D1Database, words: Word[], collectionId: number): Promise<void> {
+    for (const word of words) {
+        const visual = await getRequiredVisualForWord(db, word);
+        if (!visual) throw new MissingGameVisualError(word, collectionId);
+    }
+}
+
+export async function getGameChallenge(db: D1Database, challengeId: number): Promise<GameChallengeRecord | null> {
+    return queryOne<GameChallengeRecord>(db, 'SELECT * FROM game_challenges WHERE challenge_id = ?', [challengeId]);
+}
+
+async function submitGameChallengeSessionResult(
+    db: D1Database,
+    env: Env | undefined,
+    session: GameSessionRecord,
+    data: GameSessionData,
+    xpGained: number
+): Promise<void> {
+    if (!data.challengeId || !data.challengeRole) return;
+    const score = calculateGameScore(data.heightMeters, data.correctCount);
+    const durationMs = calculateDurationMs(data.startedAt, data.finishedAt ?? new Date().toISOString());
+    const completedWords = data.completedWords ?? data.correctCount;
+    if (data.challengeRole === 'creator') {
+        await run(
+            db,
+            `UPDATE game_challenges
+             SET creator_session_hash = COALESCE(creator_session_hash, ?),
+                 creator_score = ?,
+                 creator_completed_words = ?,
+                 creator_height_meters = ?,
+                 creator_duration_ms = ?,
+                 creator_xp_gained = ?,
+                 status = CASE WHEN opponent_duration_ms IS NULL THEN 'in_progress' ELSE status END,
+                 updated_at = datetime('now')
+             WHERE challenge_id = ? AND creator_user_id = ? AND creator_duration_ms IS NULL`,
+            [session.token_hash, score, completedWords, data.heightMeters, durationMs, xpGained, data.challengeId, session.user_id]
+        );
+    } else {
+        await run(
+            db,
+            `UPDATE game_challenges
+             SET opponent_session_hash = COALESCE(opponent_session_hash, ?),
+                 opponent_score = ?,
+                 opponent_completed_words = ?,
+                 opponent_height_meters = ?,
+                 opponent_duration_ms = ?,
+                 opponent_xp_gained = ?,
+                 status = CASE WHEN creator_duration_ms IS NULL THEN 'in_progress' ELSE status END,
+                 updated_at = datetime('now')
+             WHERE challenge_id = ? AND opponent_user_id = ? AND opponent_duration_ms IS NULL`,
+            [session.token_hash, score, completedWords, data.heightMeters, durationMs, xpGained, data.challengeId, session.user_id]
+        );
+    }
+
+    const challenge = await getGameChallenge(db, data.challengeId);
+    if (!challenge) return;
+    if (challenge.creator_duration_ms !== null && challenge.opponent_duration_ms !== null && challenge.status !== 'completed') {
+        const winnerId = pickWinnerByScoreAndDuration(
+            challenge.creator_user_id,
+            challenge.creator_score,
+            challenge.creator_duration_ms,
+            challenge.opponent_user_id,
+            challenge.opponent_score,
+            challenge.opponent_duration_ms
+        );
+        const completed = await run(
+            db,
+            `UPDATE game_challenges
+             SET winner_user_id = ?, status = 'completed', completed_at = datetime('now'), updated_at = datetime('now')
+             WHERE challenge_id = ? AND status != 'completed'`,
+            [winnerId, challenge.challenge_id]
+        );
+        if (getChanges(completed) > 0 && env) {
+            const finalChallenge = await getGameChallenge(db, challenge.challenge_id);
+            if (finalChallenge) await announceGameChallengeResult(db, env, finalChallenge);
+        }
+    } else if (env) {
+        await notifyGameChallengeWaiting(db, env, session.user_id);
+    }
 }
 
 export function calculateGameXp(completedWords: number, heightMeters: number): number {
@@ -595,6 +967,79 @@ function timeLimitForQuestion(questionIndex: number): number {
 
 function calculateGameScore(heightMeters: number, correctCount: number): number {
     return Math.max(0, heightMeters) + Math.max(0, correctCount) * 10;
+}
+
+function capGameWords(words: Word[]): Word[] {
+    return words.filter((_, index) => index < GAME_QUESTION_LIMIT);
+}
+
+function capGameIds(ids: number[]): number[] {
+    return ids.filter((_, index) => index < GAME_QUESTION_LIMIT);
+}
+
+function calculateDurationMs(startedAt: string, finishedAt: string): number {
+    const start = new Date(startedAt).getTime();
+    const finish = new Date(finishedAt).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(finish)) return 0;
+    return Math.max(0, finish - start);
+}
+
+function parseWordIds(raw: string): number[] {
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) return [];
+        return capGameIds(parsed.map(Number).filter(Number.isFinite));
+    } catch {
+        return [];
+    }
+}
+
+async function announceGameChallengeResult(db: D1Database, env: Env, challenge: GameChallengeRecord): Promise<void> {
+    const creator = await queryOne<Pick<User, 'telegram_id' | 'display_name' | 'name'>>(
+        db,
+        'SELECT telegram_id, display_name, name FROM users WHERE user_id = ?',
+        [challenge.creator_user_id]
+    );
+    const opponent = await queryOne<Pick<User, 'telegram_id' | 'display_name' | 'name'>>(
+        db,
+        'SELECT telegram_id, display_name, name FROM users WHERE user_id = ?',
+        [challenge.opponent_user_id]
+    );
+    if (!creator || !opponent) return;
+    const winner = challenge.winner_user_id
+        ? challenge.winner_user_id === challenge.creator_user_id
+            ? displayUserName(creator)
+            : displayUserName(opponent)
+        : null;
+    const result = `⚔️ نتيجة تحدي الصور والكلمات #${challenge.challenge_id}\n\n` +
+        `${displayUserName(creator)}: ${challenge.creator_score} نقطة | ${challenge.creator_completed_words}/${challenge.question_count} | ${formatMs(challenge.creator_duration_ms)} | +${challenge.creator_xp_gained} XP\n` +
+        `${displayUserName(opponent)}: ${challenge.opponent_score} نقطة | ${challenge.opponent_completed_words}/${challenge.question_count} | ${formatMs(challenge.opponent_duration_ms)} | +${challenge.opponent_xp_gained} XP\n\n` +
+        (winner ? `🏆 الفائز: ${winner}` : '🤝 النتيجة تعادل');
+    await sendTelegramMessage(env, creator.telegram_id, result).catch(() => {});
+    await sendTelegramMessage(env, opponent.telegram_id, result).catch(() => {});
+}
+
+async function notifyGameChallengeWaiting(db: D1Database, env: Env, userId: number): Promise<void> {
+    const user = await queryOne<Pick<User, 'telegram_id'>>(db, 'SELECT telegram_id FROM users WHERE user_id = ?', [userId]);
+    if (!user) return;
+    await sendTelegramMessage(env, user.telegram_id, '✅ انتهيت من تحدي الصور والكلمات.\nبانتظار الطرف الآخر.').catch(() => {});
+}
+
+function formatMs(value: number | null): string {
+    if (value === null) return '-';
+    const seconds = Math.max(0, Math.round(value / 1000));
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return minutes > 0 ? `${minutes}:${String(rest).padStart(2, '0')}` : `${rest}s`;
+}
+
+function shuffle<T>(array: T[]): T[] {
+    const arr = [...array];
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
 }
 
 function createToken(): string {

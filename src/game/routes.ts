@@ -39,8 +39,8 @@ export async function handleGameRoute(request: Request, env: Env): Promise<Respo
 
     if (url.pathname === '/game/api/finish' && request.method === 'POST') {
         return jsonResult(async () => {
-            const body = await readJson<{ token?: string }>(request);
-            return finishGameSession(env.DB, body.token ?? '');
+            const body = await readJson<{ token?: string; reason?: string }>(request);
+            return finishGameSession(env.DB, body.token ?? '', env);
         });
     }
 
@@ -89,7 +89,8 @@ function statusForError(message: string): number {
     if (message === 'missing_token' || message === 'bad_json') return 400;
     if (message === 'invalid_token' || message === 'collection_not_allowed') return 401;
     if (message === 'expired_token') return 410;
-    if (message === 'question_mismatch' || message === 'question_not_found') return 409;
+    if (message === 'question_mismatch' || message === 'question_not_found' || message === 'restart_not_allowed' || message === 'game_challenge_completed') return 409;
+    if (message === 'game_challenge_unavailable' || message === 'game_challenge_opponent_unavailable') return 404;
     return 500;
 }
 
@@ -103,6 +104,10 @@ function safeGameError(message: string): string {
         'question_not_found',
         'collection_not_allowed',
         'collection_empty',
+        'restart_not_allowed',
+        'game_challenge_unavailable',
+        'game_challenge_completed',
+        'game_challenge_opponent_unavailable',
     ]);
     return allowed.has(message) ? message : 'game_error';
 }

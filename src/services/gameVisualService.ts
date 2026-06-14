@@ -21,6 +21,19 @@ interface VisualCacheRow {
     updated_at: string;
 }
 
+interface GlobalVisualRow {
+    id: number;
+    normalized_key: string;
+    german: string | null;
+    arabic: string | null;
+    visual_emoji: string;
+    source: string;
+    confidence: number;
+    created_by_user_id: number | null;
+    created_at: string;
+    updated_at: string;
+}
+
 const GERMAN_EMOJI_MAP: Record<string, string> = {
     haus: '🏠',
     wasser: '💧',
@@ -203,10 +216,29 @@ const ARABIC_EMOJI_KEYWORDS: Array<[RegExp, string]> = [
 export async function getVisualForWord(db: D1Database, word: Word): Promise<GameVisual> {
     const cached = await getCachedVisual(db, word.word_id);
     const cachedVisual = cached ? rowToVisual(cached) : null;
-    if (cachedVisual && isClearGameVisual(cachedVisual)) return cachedVisual;
+    if (cachedVisual && isClearGameVisual(cachedVisual)) {
+        await upsertGlobalVisualForWord(db, word, cachedVisual, word.added_by);
+        return cachedVisual;
+    }
+
+    const global = await getGlobalVisualForWord(db, word);
+    if (global && isClearGameVisual(global)) {
+        await upsertAutoVisual(db, word.word_id, global);
+        return global;
+    }
+
+    const shared = await findSharedCachedVisual(db, word);
+    if (shared && isClearGameVisual(shared)) {
+        await upsertGlobalVisualForWord(db, word, shared);
+        await upsertAutoVisual(db, word.word_id, shared);
+        return shared;
+    }
 
     const resolved = resolveEmojiVisual(word.german, word.arabic);
     await upsertAutoVisual(db, word.word_id, resolved);
+    if (isClearGameVisual(resolved)) {
+        await upsertGlobalVisualForWord(db, word, resolved);
+    }
     return resolved;
 }
 
@@ -265,6 +297,7 @@ export function validateManualVisual(input: string): GameVisual | null {
 }
 
 export async function upsertManualVisual(db: D1Database, wordId: number, visual: GameVisual): Promise<void> {
+    const word = await queryOne<Word>(db, 'SELECT * FROM words WHERE word_id = ?', [wordId]);
     await run(
         db,
         `INSERT INTO word_visual_cache (word_id, visual_type, visual_value, source, confidence, updated_at)
@@ -277,6 +310,60 @@ export async function upsertManualVisual(db: D1Database, wordId: number, visual:
             updated_at = datetime('now')`,
         [wordId, visual.type, visual.value, visual.confidence]
     );
+    if (word && isClearGameVisual(visual)) {
+        await upsertGlobalVisualForWord(db, word, visual, word.added_by);
+    }
+}
+
+export async function getGlobalVisualForWord(db: D1Database, word: Pick<Word, 'german' | 'arabic'>): Promise<GameVisual | null> {
+    const keys = normalizedVisualKeys(word.german, word.arabic);
+    if (keys.length === 0) return null;
+    const row = await queryOne<GlobalVisualRow>(
+        db,
+        `SELECT *
+         FROM global_word_visuals
+         WHERE normalized_key IN (${keys.map(() => '?').join(',')})
+         ORDER BY confidence DESC, updated_at DESC
+         LIMIT 1`,
+        keys
+    );
+    if (!row || !isEmojiOnly(row.visual_emoji)) return null;
+    return {
+        type: row.visual_emoji.length > 3 ? 'emoji_combo' : 'emoji',
+        value: row.visual_emoji,
+        source: row.source === 'manual' ? 'global_manual' : `global_${row.source}`,
+        confidence: row.confidence,
+    };
+}
+
+export async function upsertGlobalVisualForWord(
+    db: D1Database,
+    word: Pick<Word, 'german' | 'arabic'>,
+    visual: GameVisual,
+    createdByUserId?: number | null
+): Promise<void> {
+    if (!isClearGameVisual(visual)) return;
+    const key = normalizedVisualKey(word.german, word.arabic);
+    if (!key) return;
+    await run(
+        db,
+        `INSERT INTO global_word_visuals (
+            normalized_key, german, arabic, visual_emoji, source, confidence, created_by_user_id, created_at, updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+         ON CONFLICT(normalized_key) DO UPDATE SET
+            visual_emoji = CASE
+                WHEN excluded.confidence >= global_word_visuals.confidence THEN excluded.visual_emoji
+                ELSE global_word_visuals.visual_emoji
+            END,
+            source = CASE
+                WHEN excluded.confidence >= global_word_visuals.confidence THEN excluded.source
+                ELSE global_word_visuals.source
+            END,
+            confidence = MAX(global_word_visuals.confidence, excluded.confidence),
+            updated_at = datetime('now')`,
+        [key, word.german, word.arabic, visual.value, visual.source, visual.confidence, createdByUserId ?? null]
+    );
 }
 
 async function getCachedVisual(db: D1Database, wordId: number): Promise<VisualCacheRow | null> {
@@ -285,6 +372,29 @@ async function getCachedVisual(db: D1Database, wordId: number): Promise<VisualCa
         'SELECT * FROM word_visual_cache WHERE word_id = ?',
         [wordId]
     );
+}
+
+async function findSharedCachedVisual(db: D1Database, word: Word): Promise<GameVisual | null> {
+    const germanKey = normalizeLooseText(removeGermanArticleText(word.german));
+    const arabicKey = normalizeLooseText(word.arabic);
+    if (!germanKey && !arabicKey) return null;
+    const row = await queryOne<VisualCacheRow>(
+        db,
+        `SELECT vc.*
+         FROM word_visual_cache vc
+         INNER JOIN words w ON w.word_id = vc.word_id
+         WHERE vc.source != 'fallback_letter'
+           AND vc.visual_type IN ('emoji', 'emoji_combo', 'manual')
+           AND (
+                lower(trim(replace(replace(replace(w.german, 'der ', ''), 'die ', ''), 'das ', ''))) = ?
+                OR lower(trim(w.german)) = ?
+                OR trim(w.arabic) = ?
+           )
+         ORDER BY CASE WHEN vc.source = 'manual' THEN 0 ELSE 1 END, vc.confidence DESC, vc.updated_at DESC
+         LIMIT 1`,
+        [germanKey, normalizeLooseText(word.german), arabicKey]
+    );
+    return row ? rowToVisual(row) : null;
 }
 
 async function upsertAutoVisual(db: D1Database, wordId: number, visual: GameVisual): Promise<void> {
@@ -326,6 +436,38 @@ function normalizeGermanKeys(value: string): string[] {
         .replace(/ü/g, 'ue')
         .replace(/ß/g, 'ss');
     return [stripped, ascii, ...stripped.split(' '), ...ascii.split(' ')].filter(Boolean);
+}
+
+export function normalizedVisualKey(german: string, arabic: string): string {
+    const germanKey = normalizeLooseText(removeGermanArticleText(german));
+    const arabicKey = normalizeLooseText(arabic);
+    return [germanKey, arabicKey].filter(Boolean).join('|');
+}
+
+function normalizedVisualKeys(german: string, arabic: string): string[] {
+    const germanKey = normalizeLooseText(removeGermanArticleText(german));
+    const arabicKey = normalizeLooseText(arabic);
+    return Array.from(new Set([
+        [germanKey, arabicKey].filter(Boolean).join('|'),
+        germanKey,
+    ].filter(Boolean)));
+}
+
+function removeGermanArticleText(value: string): string {
+    return value.trim().replace(/^(der|die|das)\s+/i, '');
+}
+
+function normalizeLooseText(value: string): string {
+    return value
+        .trim()
+        .replace(/[!?.,;:،؟]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .toLocaleLowerCase('de-DE')
+        .replace(/ä/g, 'ae')
+        .replace(/ö/g, 'oe')
+        .replace(/ü/g, 'ue')
+        .replace(/ß/g, 'ss')
+        .trim();
 }
 
 function resolveEmojiCombo(german: string, arabic: string): string | null {
