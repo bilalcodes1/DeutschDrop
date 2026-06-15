@@ -245,10 +245,12 @@ test('about project page introduces developer and navigation', () => {
     assert.match(source, /bot\.callbackQuery\('menu_about'/);
     assert.match(aboutBlock, /await ctx\.answerCallbackQuery\(\)/);
     assert.match(source, /ℹ️ عن DeutschDrop/);
-    assert.match(source, /بلال زامل/);
-    assert.match(source, /جامعة الأنبار/);
-    assert.match(source, /قسم علوم الحاسوب/);
+    assert.match(source, /Bilal Zamil Ahmed/);
+    assert.match(source, /University of Anbar/);
+    assert.match(source, /Computer Science/);
     assert.match(source, /@bilalcodes1/);
+    assert.match(source, /https:\/\/bilalzamilahmed\.page\//);
+    assert.match(source, /\.url\('🌐 Website', 'https:\/\/bilalzamilahmed\.page\/'\)/);
     assert.match(source, /\.url\('📸 Instagram', 'https:\/\/instagram\.com\/bilalcodes1'\)/);
     assert.match(source, /\.url\('✈️ Telegram', 'https:\/\/t\.me\/bilalcodes1'\)/);
     assert.match(source, /\.text\('💙 دعم المشروع', 'menu_support'\)/);

@@ -185,14 +185,31 @@ DeutschDrop هو بوت تعليمي لتعلم وحفظ الكلمات الأل
 
 المشروع صُمم حتى يكون مساعد يومي للمتعلم، مو مجرد قائمة كلمات.
 
+🛠 تفاصيل المشروع (Project Info):
+* المشروع: DeutschDrop
+* النوع: Telegram bot for German vocabulary training
+* التقنيات (Stack): Cloudflare Workers, TypeScript, D1, R2, Telegram Bot API
+* الميزات: Collections, Training, Game, Challenges, XP, Achievements, Leaderboard, CSV Import, TTS, Visual words / emoji support.
+
 🧾 حجم المشروع:
 يتكوّن DeutschDrop حالياً من حوالي ${PROJECT_CODE_LINES_LABEL} سطر برمجي.
+* ملفات TypeScript (src): تقريباً 101
+* ملفات الاختبار (test): تقريباً 5
+* أسطر الكود (src): تقريباً 21,500
+* أسطر الاختبار (test): تقريباً 3,800
+* عدد Migrations: 0
 
 👨‍💻 المطور
 
-بلال زامل
-طالب في جامعة الأنبار
-قسم علوم الحاسوب
+الاسم: Bilal Zamil Ahmed
+طالب Computer Science
+University of Anbar
+Third-year student
+
+طالب يبني مشاريع عملية: Telegram bots, web tools, mobile apps, IoT prototypes
+
+GitHub: bilalcodes1
+Website: https://bilalzamilahmed.page/
 
 Instagram:
 @bilalcodes1
@@ -203,6 +220,7 @@ Telegram:
 
 function aboutProjectKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
+        .url('🌐 Website', 'https://bilalzamilahmed.page/').row()
         .url('📸 Instagram', 'https://instagram.com/bilalcodes1')
         .url('✈️ Telegram', 'https://t.me/bilalcodes1').row()
         .text('💙 دعم المشروع', 'menu_support').row()
