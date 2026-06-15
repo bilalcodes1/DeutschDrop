@@ -112,6 +112,7 @@ async function mainMenuText(ctx: BotContext): Promise<string> {
 
 function trainCountKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
+        .text('📚 تدريب على مجموعة', 'train_collection_picker:page:1').row()
         .text('⚡ تدريب سريع', 'train_quick')
         .text('🎲 مختلط', 'train_mixed').row()
         .text('✍️ كتابة', 'train_typing')

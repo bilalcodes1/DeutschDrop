@@ -1592,6 +1592,12 @@ test('training supports typing missing-letter hint and mixed question types', ()
     assert.match(trainSource, /train_mixed/);
 });
 
+test('main training menu contains train collection button', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    assert.match(menuSource, /📚 تدريب على مجموعة/);
+    assert.match(menuSource, /train_collection_picker:page:1/);
+});
+
 test('training selection returns unique words when enough candidates exist', () => {
     const words = Array.from({ length: 150 }, (_, index) => ({
         wordId: index + 1,
