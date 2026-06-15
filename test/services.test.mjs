@@ -996,7 +996,7 @@ test('training and notification performance paths use candidate limits and safe 
     const adminSource = fs.readFileSync(new URL('../src/commands/admin.ts', import.meta.url), 'utf8');
     const notificationSource = fs.readFileSync(new URL('../src/services/smartNotificationService.ts', import.meta.url), 'utf8');
 
-    assert.match(trainSource, /getTrainingWordCandidates\(ctx\.db, user\.user_id, Math\.max\(100, count \* 6\)\)/);
+    assert.match(trainSource, /getTrainingWordCandidates\(ctx\.db, user\.user_id, Math\.max\(100, count \* 6\)(, collectionId)?\)/);
     assert.match(wordRepoSource, /LIMIT \?/);
     assert.match(wordRepoSource, /RANDOM\(\)/);
     assert.match(adminSource, /getBroadcastRecipients\(ctx, BROADCAST_PAGE_SIZE, offset\)/);

@@ -17,6 +17,7 @@ import { recordCorrectTrainingAnswer, recordTrainingSessionComplete } from '../s
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
 import type { TrainExplainSession } from './aiCoach';
+import { getCollectionsByUser, countCollectionsByUser, getCollectionById } from '../repositories/wordSharingRepository';
 
 export interface TrainingQuestion {
     question_index: number;
@@ -40,6 +41,8 @@ export interface TrainingSessionData {
     wrongWordIds: number[];
     startTime: number;
     planId?: number;
+    collectionId?: number;
+    collectionTitle?: string;
 }
 
 export type TrainingQuestionType =
@@ -137,6 +140,16 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
         await showTrainingQuestion(ctx, user.user_id);
     });
 
+    bot.callbackQuery(/^train_collection_picker:page:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await showTrainCollectionPicker(ctx, Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery(/^train_col:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startTraining(ctx, 10, 'mixed', undefined, Number(ctx.match[1]));
+    });
+
     bot.on('message:text', async (ctx, next) => {
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user || ctx.message.text.startsWith('/')) return next();
@@ -153,6 +166,7 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
 
 async function showTrainOptions(ctx: BotContext): Promise<void> {
     const keyboard = new InlineKeyboard()
+        .text('📚 تدريب على مجموعة', 'train_collection_picker:page:1').row()
         .text('⚡ تدريب سريع', 'train_quick')
         .text('🎲 مختلط', 'train_mixed').row()
         .text('✍️ كتابة', 'train_typing')
@@ -167,7 +181,41 @@ async function showTrainOptions(ctx: BotContext): Promise<void> {
     await replaceWithText(ctx, '🏋️ *اختر نوع التدريب:*\n\nالافتراضي الأفضل هو 🎲 مختلط.', keyboard, 'Markdown');
 }
 
-async function startTraining(ctx: BotContext, count: number, mode: TrainingMode, planId?: number): Promise<void> {
+async function showTrainCollectionPicker(ctx: BotContext, page: number): Promise<void> {
+    const telegramId = ctx.from?.id ?? 0;
+    const user = await getUserByTelegramId(ctx.db, telegramId);
+    if (!user) return;
+
+    const total = await countCollectionsByUser(ctx.db, user.user_id);
+    if (total === 0) {
+        await replaceWithText(
+            ctx,
+            'ما عندك مجموعات بعد. أنشئ مجموعة أولاً حتى تتدرب عليها.',
+            new InlineKeyboard().text('⬅️ رجوع', 'menu_train').text('🏠 الرئيسية', 'menu_main')
+        );
+        return;
+    }
+
+    const PAGE_SIZE = 10;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    const collections = await getCollectionsByUser(ctx.db, user.user_id, PAGE_SIZE, (safePage - 1) * PAGE_SIZE);
+
+    const keyboard = new InlineKeyboard();
+    for (const item of collections) {
+        keyboard.text(`🗂 ${item.title} (${item.word_count ?? 0})`, `train_col:${item.id}`).row();
+    }
+    
+    if (safePage > 1) keyboard.text('⬅️ السابق', `train_collection_picker:page:${safePage - 1}`);
+    if (safePage < totalPages) keyboard.text('التالي ➡️', `train_collection_picker:page:${safePage + 1}`);
+    if (safePage > 1 || safePage < totalPages) keyboard.row();
+    
+    keyboard.text('⬅️ رجوع', 'menu_train').text('🏠 الرئيسية', 'menu_main');
+    
+    await replaceWithText(ctx, '📚 اختر مجموعة للتدريب:', keyboard);
+}
+
+async function startTraining(ctx: BotContext, count: number, mode: TrainingMode, planId?: number, collectionId?: number): Promise<void> {
     const telegramId = ctx.from?.id ?? 0;
     const user = await getUserByTelegramId(ctx.db, telegramId);
 
@@ -176,9 +224,30 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
         return;
     }
 
-    await replaceWithText(ctx, '⏳ جاري تجهيز تدريب جديد...', mainMenuKeyboard());
+    let collectionTitle: string | undefined;
 
-    const allWords = await getTrainingWordCandidates(ctx.db, user.user_id, Math.max(100, count * 6));
+    if (collectionId) {
+        const collection = await getCollectionById(ctx.db, collectionId);
+        if (!collection || collection.owner_user_id !== user.user_id || collection.is_deleted) {
+            await replaceWithText(ctx, 'هذه المجموعة غير متوفرة أو محذوفة.', new InlineKeyboard().text('⬅️ رجوع', 'train_collection_picker:page:1'));
+            return;
+        }
+        if ((collection.word_count ?? 0) === 0) {
+            await replaceWithText(ctx, 'هذه المجموعة فارغة. أضف كلمات أولاً.', new InlineKeyboard().text('⬅️ رجوع', 'train_collection_picker:page:1'));
+            return;
+        }
+        collectionTitle = collection.title;
+        count = Math.max(count, collection.word_count ?? 10);
+    }
+
+    const allWords = await getTrainingWordCandidates(ctx.db, user.user_id, Math.max(100, count * 6), collectionId);
+
+    if (collectionId) {
+        await replaceWithText(ctx, `⏳ بدأ تدريب مجموعة: ${collectionTitle}\nعدد الكلمات: ${allWords.length}`, mainMenuKeyboard());
+    } else {
+        await replaceWithText(ctx, '⏳ جاري تجهيز تدريب جديد...', mainMenuKeyboard());
+    }
+
     const words = mode === 'hard'
         ? allWords.filter(w => isHardWord({ wrongCount: w.wrong_count, correctCount: w.correct_count, status: w.status, difficultyScore: w.difficulty_score, isHard: Boolean(w.stats_is_hard), consecutiveWrong: w.consecutive_wrong }))
         : allWords;
@@ -223,6 +292,7 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
         wrongWordIds: [],
         startTime: Date.now(),
         ...(planId ? { planId } : {}),
+        ...(collectionId ? { collectionId, collectionTitle } : {}),
     });
 
     await showTrainingQuestion(ctx, user.user_id);
@@ -284,10 +354,12 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
         await deleteBotSession(ctx.db, userId, 'train');
         await recordTrainingSessionComplete(ctx.db, userId, { total, correct, wrong });
 
+        const collectionText = session.data.collectionTitle ? `\n📚 المجموعة: ${session.data.collectionTitle}\n` : '\n\n';
+
         await replaceWithText(
             ctx,
-            `✅ انتهى التدريب!\n\n📊 النتيجة: ${correct}/${total} (${percent}%)\n❌ الأخطاء: ${wrong}\n🎯 XP: +${correct * 2}`,
-            trainingFinishedKeyboard(session.data.wrongWordIds.length ?? 0)
+            `✅ انتهى التدريب!${collectionText}📊 النتيجة: ${correct}/${total} (${percent}%)\n❌ الأخطاء: ${wrong}\n🎯 XP: +${correct * 2}`,
+            trainingFinishedKeyboard(session.data.wrongWordIds.length ?? 0, session.data.collectionId)
         );
         return;
     }
@@ -307,9 +379,11 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
 
     const label = questionLabel(q);
     const flag = q.direction === 'de_ar' ? '🇩🇪' : '🇮🇶';
+    const collectionText = session.data.collectionTitle ? `\n📚 المجموعة: ${session.data.collectionTitle}` : '';
+
     await replaceWithText(
         ctx,
-        `🏋️ (${progress}) ${label}:\n\n${flag} *${q.prompt}*` +
+        `🏋️ (${progress}) ${label}:${collectionText}\n\n${flag} *${q.prompt}*` +
         (q.helper ? `\n\n${q.helper}` : '') +
         (q.options.length === 0 ? `\n\nاكتب جوابك برسالة عادية.` : ''),
         keyboard,
@@ -540,12 +614,17 @@ function isQuestionAnswered(data: TrainingSessionData, questionIndex: number): b
     return (data.answeredQuestionIndexes ?? []).includes(questionIndex);
 }
 
-function trainingFinishedKeyboard(hasWrongWords: number): InlineKeyboard {
-    const keyboard = new InlineKeyboard()
-        .text('🔁 تدريب جديد', 'train_mixed').row();
+function trainingFinishedKeyboard(hasWrongWords: number, collectionId?: number): InlineKeyboard {
+    const keyboard = new InlineKeyboard();
+    if (collectionId) {
+        keyboard.text('🔁 إعادة تدريب نفس المجموعة', `train_col:${collectionId}`).row();
+        keyboard.text('📚 اختيار مجموعة أخرى', 'train_collection_picker:page:1').row();
+    } else {
+        keyboard.text('🔁 تدريب جديد', 'train_mixed').row();
+    }
     if (hasWrongWords > 0) keyboard.text('🔥 درّب الكلمات الغلط', 'train_hard').row();
-    keyboard.text('📚 راجع الآن', 'menu_learn').row()
-        .text('🏠 الرئيسية', 'menu_main');
+    if (!collectionId) keyboard.text('📚 راجع الآن', 'menu_learn').row();
+    keyboard.text('🏠 الرئيسية', 'menu_main');
     return keyboard;
 }
 

@@ -507,19 +507,29 @@ export async function getWordsForUserWithStatus(
 export async function getTrainingWordCandidates(
     db: D1Database,
     userId: number,
-    limit: number = 100
+    limit: number = 100,
+    collectionId?: number
 ): Promise<Array<Word & { status: string; next_review: string | null; correct_count: number; wrong_count: number; difficulty_score?: number; stats_is_hard?: number; consecutive_wrong?: number }>> {
-    return queryAll(
-        db,
-        `SELECT w.*, uw.status, uw.next_review, uw.correct_count, uw.wrong_count,
+    let sql = `SELECT w.*, uw.status, uw.next_review, uw.correct_count, uw.wrong_count,
                 COALESCE(wls.difficulty_score, 0) AS difficulty_score,
                 COALESCE(wls.is_hard, 0) AS stats_is_hard,
                 COALESCE(wls.consecutive_wrong, 0) AS consecutive_wrong
          FROM words w
          INNER JOIN user_words uw ON w.word_id = uw.word_id
-         LEFT JOIN word_learning_stats wls ON wls.user_id = uw.user_id AND wls.word_id = uw.word_id
-         WHERE uw.user_id = ?
-         ORDER BY
+         LEFT JOIN word_learning_stats wls ON wls.user_id = uw.user_id AND wls.word_id = uw.word_id`;
+    
+    const params: unknown[] = [];
+
+    if (collectionId) {
+        sql += ` INNER JOIN word_collection_items wci ON wci.word_id = w.word_id`;
+        sql += ` WHERE uw.user_id = ? AND wci.collection_id = ?`;
+        params.push(userId, collectionId);
+    } else {
+        sql += ` WHERE uw.user_id = ?`;
+        params.push(userId);
+    }
+
+    sql += ` ORDER BY
             CASE
                 WHEN uw.next_review IS NOT NULL AND datetime(uw.next_review) <= datetime('now') THEN 0
                 WHEN COALESCE(wls.is_hard, 0) = 1 OR COALESCE(wls.difficulty_score, 0) >= 0.7 OR uw.wrong_count >= 2 OR uw.wrong_count > uw.correct_count OR uw.status = 'learning' THEN 1
@@ -528,9 +538,11 @@ export async function getTrainingWordCandidates(
                 ELSE 4
             END,
             RANDOM()
-         LIMIT ?`,
-        [userId, limit]
-    );
+         LIMIT ?`;
+    
+    params.push(limit);
+
+    return queryAll(db, sql, params);
 }
 
 export async function batchCreateWords(
