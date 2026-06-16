@@ -2,7 +2,7 @@ import type { Env } from '../models';
 import { GAME_UI_VERSION, answerGameQuestion, finishGameSession, getPublicGameState, restartGameSession } from '../services/gameSessionService';
 import { renderCollectionGameHtml } from './html';
 
-export async function handleGameRoute(request: Request, env: Env): Promise<Response | null> {
+export async function handleGameRoute(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response | null> {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/game')) return null;
 
@@ -40,7 +40,7 @@ export async function handleGameRoute(request: Request, env: Env): Promise<Respo
     if (url.pathname === '/game/api/finish' && request.method === 'POST') {
         return jsonResult(async () => {
             const body = await readJson<{ token?: string; reason?: string }>(request);
-            return finishGameSession(env.DB, body.token ?? '', env, String(body.reason ?? 'unknown'));
+            return finishGameSession(env.DB, body.token ?? '', env, String(body.reason ?? 'unknown'), ctx);
         });
     }
 
