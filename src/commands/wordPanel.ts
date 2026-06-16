@@ -5,6 +5,7 @@ import { getWordById } from '../repositories/wordRepository';
 import type { Word } from '../models';
 import { getUserByTelegramId } from '../repositories/userRepository';
 import { buildYouglishDirectUrl } from '../services/youglish';
+import { logBotMessage } from '../repositories/botMessageLogRepository';
 
 export async function showWordDetailPanel(ctx: BotContext, wordId: number, notice?: string, backCallback = 'list_words'): Promise<void> {
     const word = await getWordById(ctx.db, wordId);
@@ -46,10 +47,13 @@ export async function replaceWithText(
                 // Best effort: Telegram may reject deleting old messages.
             }
         }
-        await ctx.reply(text, {
+        const msg = await ctx.reply(text, {
             parse_mode: parseMode,
             reply_markup: replyMarkup,
         });
+        if (ctx.from?.id && ctx.chat?.id) {
+            logBotMessage(ctx.db, ctx.from.id, ctx.chat.id, msg.message_id).catch(() => {});
+        }
     }
 }
 

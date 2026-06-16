@@ -631,6 +631,15 @@ CREATE TABLE IF NOT EXISTS job_runs (
     status TEXT CHECK (status IN ('success', 'failed'))
 );
 
+CREATE TABLE IF NOT EXISTS bot_message_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+);
+
 -- =====================================================
 -- Indexes for performance
 -- =====================================================
@@ -692,6 +701,7 @@ CREATE INDEX IF NOT EXISTS idx_notification_events_user_word_sent ON notificatio
 CREATE INDEX IF NOT EXISTS idx_daily_review_plans_user_active ON daily_review_plans(user_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshots_period ON leaderboard_snapshots(period_type, period_start, period_end);
 CREATE INDEX IF NOT EXISTS idx_learning_sources_level_active ON learning_sources(level, is_active);
+CREATE INDEX IF NOT EXISTS idx_bot_message_log_telegram_created ON bot_message_log(telegram_id, created_at);
 
 -- =====================================================
 -- Seed: Default achievement definitions

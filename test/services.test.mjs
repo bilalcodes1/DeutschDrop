@@ -3067,6 +3067,25 @@ test('collection game finish awards capped XP once through addXp', () => {
     assert.doesNotMatch(serviceSource, /allowDailyCap: false/);
 });
 
+test('cleanup chat is available in main menu and clears logs safely', () => {
+    const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
+    const panelSource = fs.readFileSync(new URL('../src/commands/wordPanel.ts', import.meta.url), 'utf8');
+    const repoSource = fs.readFileSync(new URL('../src/repositories/botMessageLogRepository.ts', import.meta.url), 'utf8');
+
+    assert.match(menuSource, /🧹 تنظيف المحادثة/);
+    assert.match(menuSource, /cleanup_chat/);
+    assert.match(menuSource, /await ctx\.api\.deleteMessage\(log\.chat_id, log\.message_id\)\.catch/);
+    assert.match(menuSource, /deleteBotMessageLogs/);
+    assert.match(menuSource, /showMainMenu/);
+    
+    assert.match(repoSource, /bot_message_log/);
+    assert.match(repoSource, /logBotMessage/);
+    
+    assert.match(panelSource, /logBotMessage/);
+    assert.match(panelSource, /ctx\.reply/);
+});
+
+
 test('collection game solo lists only owned collections and has clear empty states', () => {
     const gameSource = fs.readFileSync(new URL('../src/commands/game.ts', import.meta.url), 'utf8');
     const serviceSource = fs.readFileSync(new URL('../src/services/gameSessionService.ts', import.meta.url), 'utf8');

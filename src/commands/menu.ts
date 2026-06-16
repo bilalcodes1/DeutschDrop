@@ -59,6 +59,33 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
         await clearTrainingAndEditSessions(ctx);
         await showMainMenu(ctx);
     });
+
+    bot.callbackQuery('cleanup_chat', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const telegramId = ctx.from?.id;
+        if (!telegramId) return;
+
+        // Best effort: delete the callback message itself if we can
+        if (ctx.callbackQuery?.message) {
+            await ctx.deleteMessage().catch(() => {});
+        }
+
+        const { getBotMessageLogs, deleteBotMessageLogs } = await import('../repositories/botMessageLogRepository.js');
+        const logs = await getBotMessageLogs(ctx.db, telegramId, 100);
+        if (logs.length > 0) {
+            const idsToDelete: number[] = [];
+            for (const log of logs) {
+                // Ignore errors
+                await ctx.api.deleteMessage(log.chat_id, log.message_id).catch(() => {});
+                idsToDelete.push(log.id);
+            }
+            await deleteBotMessageLogs(ctx.db, idsToDelete);
+        }
+
+        // Resend fresh menu
+        await clearTrainingAndEditSessions(ctx);
+        await showMainMenu(ctx);
+    });
 }
 
 export async function showMainMenu(ctx: BotContext): Promise<void> {
@@ -158,6 +185,7 @@ export function moreMenuKeyboard(isAdmin: boolean = false): InlineKeyboard {
     if (isAdmin) keyboard.text('🛠 لوحة الأدمن', 'admin_panel').row();
 
     return keyboard
+        .text('🧹 تنظيف المحادثة', 'cleanup_chat').row()
         .text('🗑 حذف كل كلماتي ومجموعاتي', 'user_delete:data').row()
         .text('🏠 الرئيسية', 'menu_main');
 }

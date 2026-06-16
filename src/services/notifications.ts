@@ -1,6 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env, User } from '../models';
 import { queryAll, queryOne } from '../db/queries';
+import { logBotMessage } from '../repositories/botMessageLogRepository';
 
 export interface TelegramSentMessage {
     message_id: number;
@@ -11,7 +12,8 @@ export async function sendTelegramMessage(
     env: Env,
     telegramId: number,
     text: string,
-    replyMarkup?: unknown
+    replyMarkup?: unknown,
+    trackForCleanup: boolean = false
 ): Promise<TelegramSentMessage | null> {
     const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
@@ -19,7 +21,11 @@ export async function sendTelegramMessage(
         body: JSON.stringify({ chat_id: telegramId, text, parse_mode: 'Markdown', reply_markup: replyMarkup }),
     });
     const payload = await response.json<{ ok?: boolean; result?: TelegramSentMessage }>().catch(() => null);
-    return payload?.ok ? payload.result ?? null : null;
+    const sent = payload?.ok ? payload.result ?? null : null;
+    if (sent && trackForCleanup) {
+        logBotMessage(env.DB, telegramId, sent.chat?.id || telegramId, sent.message_id).catch(() => {});
+    }
+    return sent;
 }
 
 export async function sendTemporaryTelegramMessage(
@@ -53,20 +59,27 @@ export async function sendTelegramPhoto(
     telegramId: number,
     photo: string,
     caption: string,
-    replyMarkup?: unknown
+    replyMarkup?: unknown,
+    trackForCleanup: boolean = false
 ): Promise<void> {
-    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+    const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: telegramId, photo, caption, parse_mode: 'Markdown', reply_markup: replyMarkup }),
     });
+    const payload = await response.json<{ ok?: boolean; result?: TelegramSentMessage }>().catch(() => null);
+    const sent = payload?.ok ? payload.result ?? null : null;
+    if (sent && trackForCleanup) {
+        logBotMessage(env.DB, telegramId, sent.chat?.id || telegramId, sent.message_id).catch(() => {});
+    }
 }
 
 export async function sendTelegramPlainMessage(
     env: Env,
     telegramId: number,
     text: string,
-    replyMarkup?: unknown
+    replyMarkup?: unknown,
+    trackForCleanup: boolean = false
 ): Promise<TelegramSentMessage | null> {
     const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
@@ -74,7 +87,11 @@ export async function sendTelegramPlainMessage(
         body: JSON.stringify({ chat_id: telegramId, text, reply_markup: replyMarkup }),
     });
     const payload = await response.json<{ ok?: boolean; result?: TelegramSentMessage }>().catch(() => null);
-    return payload?.ok ? payload.result ?? null : null;
+    const sent = payload?.ok ? payload.result ?? null : null;
+    if (sent && trackForCleanup) {
+        logBotMessage(env.DB, telegramId, sent.chat?.id || telegramId, sent.message_id).catch(() => {});
+    }
+    return sent;
 }
 
 export async function sendTelegramPlainPhoto(
@@ -82,7 +99,8 @@ export async function sendTelegramPlainPhoto(
     telegramId: number,
     photo: string,
     caption?: string | null,
-    replyMarkup?: unknown
+    replyMarkup?: unknown,
+    trackForCleanup: boolean = false
 ): Promise<TelegramSentMessage | null> {
     const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`, {
         method: 'POST',
@@ -90,7 +108,11 @@ export async function sendTelegramPlainPhoto(
         body: JSON.stringify({ chat_id: telegramId, photo, caption: caption || undefined, reply_markup: replyMarkup }),
     });
     const payload = await response.json<{ ok?: boolean; result?: TelegramSentMessage }>().catch(() => null);
-    return payload?.ok ? payload.result ?? null : null;
+    const sent = payload?.ok ? payload.result ?? null : null;
+    if (sent && trackForCleanup) {
+        logBotMessage(env.DB, telegramId, sent.chat?.id || telegramId, sent.message_id).catch(() => {});
+    }
+    return sent;
 }
 
 export async function getPeerUser(db: D1Database, userId: number): Promise<User | null> {
