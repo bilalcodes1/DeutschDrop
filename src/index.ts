@@ -38,7 +38,7 @@ export default {
             });
         }
 
-        const gameResponse = await handleGameRoute(request, env);
+        const gameResponse = await handleGameRoute(request, env, ctx);
         if (gameResponse) return gameResponse;
 
         // Default: 404

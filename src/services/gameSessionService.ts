@@ -1,11 +1,12 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database, ExecutionContext } from '@cloudflare/workers-types';
 import type { Env, User, Word } from '../models';
 import { queryAll, queryOne, run } from '../db/queries';
 import { addXp, getTotalXp } from './xpLevels';
 import { getVisualForWord, getRequiredVisualForWord, type GameVisual } from './gameVisualService';
 import { pickWinnerByScoreAndDuration } from '../repositories/challengeRepository';
-import { displayUserName, sendTelegramMessage } from './notifications';
+import { displayUserName, sendTelegramMessage, sendTemporaryTelegramMessage } from './notifications';
 
+export const GAME_NOTIFICATION_DELETE_AFTER_SECONDS = 10;
 export const GAME_QUESTION_LIMIT = 100;
 export const GAME_UI_VERSION = 'underwater-worm-v2';
 export const GAME_MAX_ATTEMPTS = 3;
@@ -562,7 +563,7 @@ export async function restartGameSession(db: D1Database, token: string): Promise
     return { token: next.token, totalQuestions: next.totalQuestions };
 }
 
-export async function finishGameSession(db: D1Database, token: string, env?: Env, finishReason = 'unknown'): Promise<PublicGameState> {
+export async function finishGameSession(db: D1Database, token: string, env?: Env, finishReason = 'unknown', ctx?: ExecutionContext): Promise<PublicGameState> {
     const session = await requireValidSession(db, token);
     const data = parseSessionData(session);
     normalizeGameData(data);
@@ -625,9 +626,9 @@ export async function finishGameSession(db: D1Database, token: string, env?: Env
     }
     await updateSessionData(db, session.token_hash, data, 1, 1);
     if (getChanges(claimed) > 0 && data.challengeId && data.challengeRole) {
-        await submitGameChallengeSessionResult(db, env, session, data, xpGained);
+        await submitGameChallengeSessionResult(db, env, session, data, xpGained, ctx);
     } else if (getChanges(claimed) > 0 && env) {
-        await sendGameFinishNotification(db, env, session.user_id, data, xpGained);
+        await sendGameFinishNotification(db, env, session.user_id, data, xpGained, ctx);
     }
     return toPublicState({ ...session, session_data: JSON.stringify(data), finished: 1, xp_awarded: 1 });
 }
@@ -744,7 +745,8 @@ async function submitGameChallengeSessionResult(
     env: Env | undefined,
     session: GameSessionRecord,
     data: GameSessionData,
-    xpGained: number
+    xpGained: number,
+    ctx?: ExecutionContext
 ): Promise<void> {
     if (!data.challengeId || !data.challengeRole) return;
     const score = calculateGameScore(data.heightMeters, data.correctCount);
@@ -802,10 +804,10 @@ async function submitGameChallengeSessionResult(
         );
         if (getChanges(completed) > 0 && env) {
             const finalChallenge = await getGameChallenge(db, challenge.challenge_id);
-            if (finalChallenge) await announceGameChallengeResult(db, env, finalChallenge);
+            if (finalChallenge) await announceGameChallengeResult(db, env, finalChallenge, ctx);
         }
     } else if (env) {
-        await notifyGameChallengeWaiting(db, env, session.user_id, data, xpGained);
+        await notifyGameChallengeWaiting(db, env, session.user_id, data, xpGained, ctx);
     }
 }
 
@@ -1006,7 +1008,7 @@ function parseWordIds(raw: string): number[] {
     }
 }
 
-async function announceGameChallengeResult(db: D1Database, env: Env, challenge: GameChallengeRecord): Promise<void> {
+async function announceGameChallengeResult(db: D1Database, env: Env, challenge: GameChallengeRecord, ctx?: ExecutionContext): Promise<void> {
     const creator = await queryOne<Pick<User, 'telegram_id' | 'display_name' | 'name'>>(
         db,
         'SELECT telegram_id, display_name, name FROM users WHERE user_id = ?',
@@ -1033,8 +1035,8 @@ async function announceGameChallengeResult(db: D1Database, env: Env, challenge: 
         `${displayUserName(opponent)}: ${challenge.opponent_score} نقطة | ${challenge.opponent_completed_words}/${challenge.question_count} | ${formatMs(challenge.opponent_duration_ms)} | +${challenge.opponent_xp_gained} XP\n\n` +
         `${resultReason}\n` +
         (winner ? `🏆 الفائز: ${winner}` : '🤝 النتيجة تعادل');
-    await sendTelegramMessage(env, creator.telegram_id, result).catch(() => {});
-    await sendTelegramMessage(env, opponent.telegram_id, result).catch(() => {});
+    await sendTemporaryTelegramMessage(env, creator.telegram_id, result, GAME_NOTIFICATION_DELETE_AFTER_SECONDS, ctx).catch(() => {});
+    await sendTemporaryTelegramMessage(env, opponent.telegram_id, result, GAME_NOTIFICATION_DELETE_AFTER_SECONDS, ctx).catch(() => {});
 }
 
 async function sendGameFinishNotification(
@@ -1042,7 +1044,8 @@ async function sendGameFinishNotification(
     env: Env,
     userId: number,
     data: GameSessionData,
-    xpGained: number
+    xpGained: number,
+    ctx?: ExecutionContext
 ): Promise<void> {
     const user = await queryOne<Pick<User, 'telegram_id'>>(db, 'SELECT telegram_id FROM users WHERE user_id = ?', [userId]);
     if (!user) return;
@@ -1063,7 +1066,7 @@ async function sendGameFinishNotification(
                 `🐛 طول الدودة: ${completedWords} مراحل\n` +
                 `ارجع للعبة بأي وقت تكمل تحديك.`
             : `🌊 تم إغلاق لعبة الدودة.\nلم يتم تسجيل تقدم جديد هذه المرة.`;
-    await sendTelegramMessage(env, user.telegram_id, message).catch(() => {});
+    await sendTemporaryTelegramMessage(env, user.telegram_id, message, GAME_NOTIFICATION_DELETE_AFTER_SECONDS, ctx).catch(() => {});
 }
 
 async function notifyGameChallengeWaiting(
@@ -1071,7 +1074,8 @@ async function notifyGameChallengeWaiting(
     env: Env,
     userId: number,
     data: GameSessionData,
-    xpGained: number
+    xpGained: number,
+    ctx?: ExecutionContext
 ): Promise<void> {
     const user = await queryOne<Pick<User, 'telegram_id'>>(db, 'SELECT telegram_id FROM users WHERE user_id = ?', [userId]);
     if (!user) return;
@@ -1083,7 +1087,7 @@ async function notifyGameChallengeWaiting(
         `⭐ النقاط: ${score}\n` +
         `💎 XP: +${xpGained}\n` +
         `⏳ بانتظار نتيجة الطرف الآخر...`;
-    await sendTelegramMessage(env, user.telegram_id, message).catch(() => {});
+    await sendTemporaryTelegramMessage(env, user.telegram_id, message, GAME_NOTIFICATION_DELETE_AFTER_SECONDS, ctx).catch(() => {});
 }
 
 function formatMs(value: number | null): string {

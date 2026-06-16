@@ -2768,7 +2768,7 @@ test('collection underwater worm routes reject missing token and never trust cli
     const htmlSource = fs.readFileSync(new URL('../src/game/html.ts', import.meta.url), 'utf8');
     const serviceSource = fs.readFileSync(new URL('../src/services/gameSessionService.ts', import.meta.url), 'utf8');
 
-    assert.match(indexSource, /handleGameRoute\(request, env\)/);
+    assert.match(indexSource, /handleGameRoute\(request, env, ctx\)/);
     assert.match(routeSource, /url\.pathname === '\/game'/);
     assert.match(routeSource, /url\.pathname === '\/game\/api\/session'/);
     assert.match(routeSource, /url\.pathname === '\/game\/api\/answer'/);
@@ -2972,13 +2972,13 @@ test('collection underwater worm routes reject missing token and never trust cli
     assert.match(serviceSource, /safeSpeechVariants/);
     assert.match(serviceSource, /timeLimitForQuestion/);
     assert.match(serviceSource, /correctAnswer: data\.failedQuestion\.correctAnswer/);
-    assert.match(routeSource, /finishGameSession\(env\.DB, body\.token \?\? '', env, String\(body\.reason \?\? 'unknown'\)\)/);
+    assert.match(routeSource, /finishGameSession\(env\.DB, body\.token \?\? '', env, String\(body\.reason \?\? 'unknown'\), ctx\)/);
     assert.match(serviceSource, /finish_reason: data\.finishReason/);
     assert.match(serviceSource, /sanitizeFinishReason/);
     assert.match(serviceSource, /sendGameFinishNotification/);
     assert.match(serviceSource, /finishNotificationSent/);
     assert.match(serviceSource, /if \(getChanges\(claimed\) > 0 && env\)/);
-    assert.match(serviceSource, /sendTelegramMessage\(env, user\.telegram_id, message\)/);
+    assert.match(serviceSource, /sendTemporaryTelegramMessage\(env, user\.telegram_id, message, GAME_NOTIFICATION_DELETE_AFTER_SECONDS, ctx\)/);
     assert.match(serviceSource, /تم حفظ تقدمك في لعبة الدودة/);
     assert.match(serviceSource, /مبروك! أكملت مجموعة الكلمات في لعبة الدودة/);
     assert.match(serviceSource, /تم حفظ نتيجتك في تحدي الدودة/);

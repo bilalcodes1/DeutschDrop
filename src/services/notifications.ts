@@ -22,6 +22,32 @@ export async function sendTelegramMessage(
     return payload?.ok ? payload.result ?? null : null;
 }
 
+export async function sendTemporaryTelegramMessage(
+    env: Env,
+    telegramId: number,
+    text: string,
+    seconds: number,
+    ctx?: ExecutionContext
+): Promise<TelegramSentMessage | null> {
+    const sent = await sendTelegramMessage(env, telegramId, text);
+    if (sent?.message_id) {
+        const deleteTask = new Promise<void>(resolve => setTimeout(resolve, seconds * 1000)).then(() => {
+            return fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/deleteMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: telegramId, message_id: sent.message_id }),
+            }).catch(() => undefined);
+        });
+        
+        if (ctx && ctx.waitUntil) {
+            ctx.waitUntil(deleteTask);
+        } else {
+            deleteTask.catch(() => undefined);
+        }
+    }
+    return sent;
+}
+
 export async function sendTelegramPhoto(
     env: Env,
     telegramId: number,
