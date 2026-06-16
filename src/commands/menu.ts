@@ -60,45 +60,26 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
         await showMainMenu(ctx);
     });
 
-    const CHAT_CLEANUP_SCAN_LIMIT = 200;
-
     bot.callbackQuery('cleanup_chat', async (ctx) => {
         await ctx.answerCallbackQuery();
         const telegramId = ctx.from?.id;
-        const chatId = ctx.chat?.id;
-        if (!telegramId || !chatId) return;
+        if (!telegramId) return;
 
         // Best effort: delete the callback message itself if we can
-        const currentMsgId = ctx.callbackQuery?.message?.message_id;
-        if (currentMsgId) {
+        if (ctx.callbackQuery?.message) {
             await ctx.deleteMessage().catch(() => {});
         }
 
-        // 1. Delete stored logs
         const { getBotMessageLogs, deleteBotMessageLogs } = await import('../repositories/botMessageLogRepository.js');
         const logs = await getBotMessageLogs(ctx.db, telegramId, 100);
         if (logs.length > 0) {
             const idsToDelete: number[] = [];
             for (const log of logs) {
+                // Ignore errors
                 await ctx.api.deleteMessage(log.chat_id, log.message_id).catch(() => {});
                 idsToDelete.push(log.id);
             }
             await deleteBotMessageLogs(ctx.db, idsToDelete);
-        }
-
-        // 2. Aggressive range scan
-        if (currentMsgId) {
-            const promises: Promise<void>[] = [];
-            for (let i = 1; i <= CHAT_CLEANUP_SCAN_LIMIT; i++) {
-                const targetId = currentMsgId - i;
-                if (targetId <= 0) break;
-                promises.push(
-                    ctx.api.deleteMessage(chatId, targetId)
-                    .then(() => {})
-                    .catch(() => {})
-                );
-            }
-            await Promise.allSettled(promises);
         }
 
         // Resend fresh menu

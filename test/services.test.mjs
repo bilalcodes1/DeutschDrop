@@ -3076,8 +3076,6 @@ test('cleanup chat is available in main menu and clears logs safely', () => {
     assert.match(menuSource, /cleanup_chat/);
     assert.match(menuSource, /await ctx\.api\.deleteMessage\(log\.chat_id, log\.message_id\)\.catch/);
     assert.match(menuSource, /deleteBotMessageLogs/);
-    assert.match(menuSource, /CHAT_CLEANUP_SCAN_LIMIT = 200/);
-    assert.match(menuSource, /Promise\.allSettled\(promises\)/);
     assert.match(menuSource, /showMainMenu/);
     
     assert.match(repoSource, /bot_message_log/);
