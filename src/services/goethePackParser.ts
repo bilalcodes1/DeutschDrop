@@ -1,4 +1,4 @@
-import { AsyncUnzipInflate, Unzip, UnzipPassThrough } from 'fflate';
+import { Unzip, UnzipInflate, UnzipPassThrough } from 'fflate';
 import type { Env } from '../models/index.js';
 import type { GoetheFormat, GoetheLevel, GoetheQuestionInput, GoetheSection } from '../repositories/goetheRepository.js';
 
@@ -364,7 +364,7 @@ async function unzipBounded(zipBytes: Uint8Array, limits: GoethePackLimits): Pro
             }
         });
         unzipper.register(UnzipPassThrough);
-        unzipper.register(AsyncUnzipInflate);
+        unzipper.register(UnzipInflate);
 
         try {
             unzipper.push(zipBytes, true);

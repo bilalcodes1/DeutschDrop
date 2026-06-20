@@ -161,6 +161,26 @@ test('goethe pack parser accepts valid ZIP with manifest csv and audio', async (
     assert.equal(pack.rightsConfirmed, true);
 });
 
+test('goethe pack parser works in production-like runtime without global Worker', async () => {
+    const hadWorker = Object.prototype.hasOwnProperty.call(globalThis, 'Worker');
+    const originalWorker = globalThis.Worker;
+    try {
+        Object.defineProperty(globalThis, 'Worker', { value: undefined, configurable: true });
+        const pack = await parseGoethePack(fixtureZip('valid_pack.zip'), env());
+        assert.equal(pack.questions.length, 1);
+        assert.equal(pack.sourceName, 'Goethe A1 Modelltest 01');
+    } finally {
+        if (hadWorker) Object.defineProperty(globalThis, 'Worker', { value: originalWorker, configurable: true });
+        else delete globalThis.Worker;
+    }
+});
+
+test('goethe pack parser does not use worker-backed fflate APIs', () => {
+    const source = fs.readFileSync(new URL('../src/services/goethePackParser.ts', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /Async(?:Unzip|Inflate|Gunzip|Decompress)/);
+    assert.doesNotMatch(source, /new\s+Worker/);
+});
+
 test('goethe fixture ZIP imports end-to-end into source questions options and active level', async () => {
     const db = createMockD1();
     const pack = await parseGoethePack(fixtureZip('valid_pack.zip'), env());
