@@ -16,6 +16,7 @@
     "db:execute": "wrangler d1 execute deutschdrop-db"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "grammy": "^1.20.0"
   },
   "devDependencies": {

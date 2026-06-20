@@ -107,6 +107,7 @@ export function mainMenuKeyboard(isAdmin: boolean = false): InlineKeyboard {
         .text('📚 راجع الآن', 'menu_learn')
         .text('🏋️ تدريب', 'menu_train').row()
         .text('🎯 مهامي اليومية', 'daily_quests').row()
+        .text('🎯 تحديات غوته', 'menu_goethe').row()
         .text('🫧 لعبة دودة البحر', 'game:menu').row()
         .text('📂 كلماتي', 'menu_words')
         .text('🔎 بحث', 'global_search_start').row()

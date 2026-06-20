@@ -31,6 +31,10 @@ database_name = "deutschdrop-db"
 database_id = "d26385ff-94fe-45d3-a5a0-c63131019158"
 migrations_dir = "src/db/migrations"
 
+[[r2_buckets]]
+binding = "GOETHE_AUDIO"
+bucket_name = "deutschdrop-goethe-audio"
+
 # Cron triggers for scheduled jobs
 [triggers]
 crons = ["* * * * *", "0 * * * *", "0 20 * * *", "0 0 * * *"]

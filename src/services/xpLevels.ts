@@ -147,7 +147,7 @@ export async function addXp(
     const level = getLevelFromXp(total).level;
     await run(
         db,
-        'UPDATE users SET xp = ?, level = ?, updated_at = datetime("now") WHERE user_id = ?',
+        "UPDATE users SET xp = ?, level = ?, updated_at = datetime('now') WHERE user_id = ?",
         [total, level, userId]
     );
     return total;

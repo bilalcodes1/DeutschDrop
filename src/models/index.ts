@@ -4,6 +4,7 @@
 
 export interface Env {
     DB: D1Database;
+    GOETHE_AUDIO?: R2Bucket;
     AI?: { run(model: string, input: unknown): Promise<unknown> };
     TELEGRAM_BOT_TOKEN: string;
     PUBLIC_BASE_URL?: string;
@@ -34,6 +35,12 @@ export interface Env {
     ZAI_BASE_URL?: string;
     MISTRAL_MODEL?: string;
     COHERE_MODEL?: string;
+    GOETHE_PACK_MAX_COMPRESSED_BYTES?: string;
+    GOETHE_PACK_MAX_UNCOMPRESSED_BYTES?: string;
+    GOETHE_PACK_MAX_FILES?: string;
+    GOETHE_PACK_MAX_AUDIO_FILE_BYTES?: string;
+    GOETHE_PACK_MAX_QUESTIONS?: string;
+    GOETHE_PACK_MAX_COMPRESSION_RATIO?: string;
 }
 
 export interface User {

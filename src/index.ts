@@ -8,6 +8,7 @@ import { sendSmartNotification } from './services/smartNotificationService';
 import { getLeaderboardByPeriod, type LeaderboardPeriod } from './services/xpLevels';
 import { cleanupExpiredTemporaryMessages } from './services/temporaryMessageCleanup';
 import { processPendingImports } from './services/csvImportBackground';
+import { processPendingGoetheImports } from './services/goetheImportService';
 import { Bot } from 'grammy';
 import { handleGameRoute } from './game/routes';
 
@@ -61,6 +62,7 @@ export default {
                 case 'process_csv_imports': {
                     const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
                     await processPendingImports(env, bot);
+                    await processPendingGoetheImports(env, bot);
                     break;
                 }
                 case 'generate_daily_summary': {
