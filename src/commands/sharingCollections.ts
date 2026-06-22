@@ -1209,7 +1209,7 @@ async function showCollection(ctx: BotContext, userId: number, collectionId: num
     const keyboard = new InlineKeyboard();
     if (isOwner) {
         if (total > 0) {
-            keyboard.text('🎯 تدرب على هذه المجموعة', `train_col:${collectionId}`).row();
+            keyboard.text('🎯 تدرب على هذه المجموعة', `train_col_mode:${collectionId}`).row();
         }
         keyboard.text('🫧 العب بهذه المجموعة', `game:start_collection:${collectionId}`).row();
         if (total > 0) {

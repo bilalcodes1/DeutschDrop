@@ -14,6 +14,7 @@ import { buildYouglishDirectUrl } from '../dist/services/youglish.js';
 import { normalizeArabicSearch, normalizeGermanSearch, rankWordSearchResults } from '../dist/services/wordSearch.js';
 import { resolveEmojiVisual, validateManualVisual } from '../dist/services/gameVisualService.js';
 import { calculateGameXp, GAME_MAX_ATTEMPTS, GAME_QUESTION_LIMIT, GAME_UI_VERSION, isAcceptedGermanAnswer, normalizeSpeechTranscript, removeGermanArticle } from '../dist/services/gameSessionService.js';
+import { buildTrainingQuestion, isAcceptedArabicAnswer, normalizeArabicTrainingAnswer } from '../dist/commands/train.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -1594,10 +1595,88 @@ test('training supports typing missing-letter hint and mixed question types', ()
     assert.match(trainSource, /train_mixed/);
 });
 
+test('Arabic typed training normalization accepts safe spelling variants only', () => {
+    assert.equal(normalizeArabicTrainingAnswer('السَّيارة!!'), 'السياره');
+    assert.equal(isAcceptedArabicAnswer('سياره', 'سيارة'), true);
+    assert.equal(isAcceptedArabicAnswer('الى', 'إلى'), true);
+    assert.equal(isAcceptedArabicAnswer('احمد', 'أحمد'), true);
+    assert.equal(isAcceptedArabicAnswer('مسئول', 'مسؤول'), true);
+    assert.equal(isAcceptedArabicAnswer('رووس', 'رؤوس'), true);
+    assert.equal(isAcceptedArabicAnswer('سيـــاره؟', 'سيارة'), true);
+    assert.equal(isAcceptedArabicAnswer('منزل', 'بيت|منزل'), true);
+    assert.equal(isAcceptedArabicAnswer('شجرة', 'بيت/منزل،دار'), false);
+    assert.equal(isAcceptedArabicAnswer('مركبة', 'سيارة'), false);
+});
+
+test('typed Arabic training uses strict local Arabic normalization instead of fuzzy AI grading', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /shouldUseArabicTrainingNormalization\(current\)/);
+    assert.match(trainSource, /question\.direction === 'de_ar' && question\.options\.length === 0/);
+    assert.match(trainSource, /isAcceptedArabicAnswer\(answerText, current\.answer\)/);
+    assert.match(trainSource, /splitArabicTrainingAnswers/);
+    assert.match(trainSource, /\.replace\(\/\[أإآٱ\]\/g, 'ا'\)/);
+    assert.match(trainSource, /\.replace\(\/ى\/g, 'ي'\)/);
+    assert.match(trainSource, /\.replace\(\/\[ؤئء\]\/g, ''\)/);
+    assert.match(trainSource, /\.replace\(\/و\{2,\}\/g, 'و'\)/);
+});
+
 test('main training menu contains train collection button', () => {
     const menuSource = fs.readFileSync(new URL('../src/commands/menu.ts', import.meta.url), 'utf8');
     assert.match(menuSource, /📚 تدريب على مجموعة/);
     assert.match(menuSource, /train_collection_picker:page:1/);
+});
+
+test('collection training opens a mode picker before starting', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /showCollectionTrainingModePicker/);
+    assert.match(trainSource, /train_col_mode:\$\{item\.id\}/);
+    assert.match(sharingSource, /train_col_mode:\$\{collectionId\}/);
+    for (const label of ['✍️ كتابة', '🔘 اختيارات', '🎲 مختلط', '⚡ سريع']) {
+        assert.match(trainSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(trainSource, /train_col_start:\$\{collectionId\}:writing/);
+    assert.match(trainSource, /train_col_start:\$\{collectionId\}:choices/);
+    assert.match(trainSource, /train_col_start:\$\{collectionId\}:mixed/);
+    assert.match(trainSource, /train_col_start:\$\{collectionId\}:fast/);
+    assert.match(trainSource, /collection\.owner_user_id !== user\.user_id/);
+});
+
+test('collection training modes map to writing-only and multiple-choice-only questions', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const words = [
+        { word_id: 1, german: 'Auto', arabic: 'سيارة', example: null },
+        { word_id: 2, german: 'Haus', arabic: 'بيت', example: null },
+        { word_id: 3, german: 'Baum', arabic: 'شجرة', example: null },
+    ];
+
+    const writingQuestion = buildTrainingQuestion(words, words[0], 'typing', 0);
+    assert.equal(writingQuestion.options.length, 0);
+    assert.ok(['typing_de', 'typing_ar'].includes(writingQuestion.type));
+
+    const choicesQuestion = buildTrainingQuestion(words, words[0], 'de_ar', 0);
+    assert.equal(choicesQuestion.type, 'german_to_arabic');
+    assert.ok(choicesQuestion.options.length >= 3);
+
+    assert.match(trainSource, /if \(mode === 'writing'\) return 'typing'/);
+    assert.match(trainSource, /if \(mode === 'choices'\) return 'de_ar'/);
+    assert.match(trainSource, /collectionTrainingMode === 'fast'/);
+    assert.match(trainSource, /return 'mixed'/);
+});
+
+test('collection training finish screen keeps same type restart and mode change navigation', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /collectionTrainingMode/);
+    assert.match(trainSource, /collectionTrainingModeLabel/);
+    assert.match(trainSource, /🎛 النوع:/);
+    assert.match(trainSource, /🔁 إعادة نفس النوع/);
+    assert.match(trainSource, /train_col_start:\$\{collectionId\}:\$\{collectionTrainingMode \?\? 'mixed'\}/);
+    assert.match(trainSource, /🎛 تغيير نوع التدريب/);
+    assert.match(trainSource, /train_col_mode:\$\{collectionId\}/);
+    assert.match(trainSource, /📚 اختيار مجموعة أخرى/);
 });
 
 test('training selection returns unique words when enough candidates exist', () => {

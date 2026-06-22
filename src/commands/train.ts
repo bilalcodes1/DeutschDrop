@@ -43,6 +43,7 @@ export interface TrainingSessionData {
     planId?: number;
     collectionId?: number;
     collectionTitle?: string;
+    collectionTrainingMode?: CollectionTrainingMode;
 }
 
 export type TrainingQuestionType =
@@ -57,6 +58,7 @@ export type TrainingQuestionType =
     'pictogram_recall';
 
 export type TrainingMode = 'mixed' | 'typing' | 'missing' | 'de_ar' | 'ar_de' | 'hard' | 'exam' | 'plan';
+export type CollectionTrainingMode = 'writing' | 'choices' | 'mixed' | 'fast';
 
 export function registerTrainCommand(bot: Bot<BotContext>): void {
     bot.command('train', async (ctx) => {
@@ -145,9 +147,19 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
         await showTrainCollectionPicker(ctx, Number(ctx.match[1]));
     });
 
+    bot.callbackQuery(/^train_col_mode:(\d+)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await showCollectionTrainingModePicker(ctx, Number(ctx.match[1]));
+    });
+
+    bot.callbackQuery(/^train_col_start:(\d+):(writing|choices|mixed|fast)$/, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await startCollectionTraining(ctx, Number(ctx.match[1]), ctx.match[2] as CollectionTrainingMode);
+    });
+
     bot.callbackQuery(/^train_col:(\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
-        await startTraining(ctx, 10, 'mixed', undefined, Number(ctx.match[1]));
+        await showCollectionTrainingModePicker(ctx, Number(ctx.match[1]));
     });
 
     bot.on('message:text', async (ctx, next) => {
@@ -203,7 +215,7 @@ async function showTrainCollectionPicker(ctx: BotContext, page: number): Promise
 
     const keyboard = new InlineKeyboard();
     for (const item of collections) {
-        keyboard.text(`🗂 ${item.title} (${item.word_count ?? 0})`, `train_col:${item.id}`).row();
+        keyboard.text(`🗂 ${item.title} (${item.word_count ?? 0})`, `train_col_mode:${item.id}`).row();
     }
     
     if (safePage > 1) keyboard.text('⬅️ السابق', `train_collection_picker:page:${safePage - 1}`);
@@ -215,7 +227,59 @@ async function showTrainCollectionPicker(ctx: BotContext, page: number): Promise
     await replaceWithText(ctx, '📚 اختر مجموعة للتدريب:', keyboard);
 }
 
-async function startTraining(ctx: BotContext, count: number, mode: TrainingMode, planId?: number, collectionId?: number): Promise<void> {
+async function showCollectionTrainingModePicker(ctx: BotContext, collectionId: number): Promise<void> {
+    const telegramId = ctx.from?.id ?? 0;
+    const user = await getUserByTelegramId(ctx.db, telegramId);
+    if (!user) return;
+
+    const collection = await getCollectionById(ctx.db, collectionId);
+    if (!collection || collection.owner_user_id !== user.user_id || collection.is_deleted) {
+        await replaceWithText(ctx, 'هذه المجموعة غير متوفرة أو محذوفة.', new InlineKeyboard().text('⬅️ رجوع', 'train_collection_picker:page:1').text('🏠 الرئيسية', 'menu_main'));
+        return;
+    }
+    if ((collection.word_count ?? 0) === 0) {
+        await replaceWithText(ctx, 'هذه المجموعة فارغة. أضف كلمات أولاً.', new InlineKeyboard().text('⬅️ رجوع', 'train_collection_picker:page:1').text('🏠 الرئيسية', 'menu_main'));
+        return;
+    }
+
+    const keyboard = new InlineKeyboard()
+        .text('✍️ كتابة', `train_col_start:${collectionId}:writing`)
+        .text('🔘 اختيارات', `train_col_start:${collectionId}:choices`).row()
+        .text('🎲 مختلط', `train_col_start:${collectionId}:mixed`)
+        .text('⚡ سريع', `train_col_start:${collectionId}:fast`).row()
+        .text('📂 عرض المجموعة', `collection:view:${collectionId}:page:1`).row()
+        .text('⬅️ رجوع', 'train_collection_picker:page:1')
+        .text('🏠 الرئيسية', 'menu_main');
+
+    await replaceWithText(
+        ctx,
+        `🎯 تدريب مجموعة\n\n📚 ${collection.title}\nعدد الكلمات: ${collection.word_count ?? 0}\n\nاختر نوع التدريب:`,
+        keyboard
+    );
+}
+
+async function startCollectionTraining(ctx: BotContext, collectionId: number, collectionTrainingMode: CollectionTrainingMode): Promise<void> {
+    const count = collectionTrainingMode === 'fast' ? 5 : 10;
+    await startTraining(ctx, count, collectionTrainingModeToTrainingMode(collectionTrainingMode), undefined, collectionId, collectionTrainingMode);
+}
+
+function collectionTrainingModeToTrainingMode(mode: CollectionTrainingMode): TrainingMode {
+    if (mode === 'writing') return 'typing';
+    if (mode === 'choices') return 'de_ar';
+    return 'mixed';
+}
+
+function collectionTrainingModeLabel(mode?: CollectionTrainingMode): string {
+    const labels: Record<CollectionTrainingMode, string> = {
+        writing: 'كتابة',
+        choices: 'اختيارات',
+        mixed: 'مختلط',
+        fast: 'سريع',
+    };
+    return mode ? labels[mode] : 'مختلط';
+}
+
+async function startTraining(ctx: BotContext, count: number, mode: TrainingMode, planId?: number, collectionId?: number, collectionTrainingMode?: CollectionTrainingMode): Promise<void> {
     const telegramId = ctx.from?.id ?? 0;
     const user = await getUserByTelegramId(ctx.db, telegramId);
 
@@ -237,13 +301,15 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
             return;
         }
         collectionTitle = collection.title;
-        count = Math.max(count, collection.word_count ?? 10);
+        count = collectionTrainingMode === 'fast'
+            ? Math.min(5, collection.word_count ?? 5)
+            : (collection.word_count ?? count);
     }
 
     const allWords = await getTrainingWordCandidates(ctx.db, user.user_id, Math.max(100, count * 6), collectionId);
 
     if (collectionId) {
-        await replaceWithText(ctx, `⏳ بدأ تدريب مجموعة: ${collectionTitle}\nعدد الكلمات: ${allWords.length}`, mainMenuKeyboard());
+        await replaceWithText(ctx, `⏳ بدأ تدريب مجموعة: ${collectionTitle}\nالنوع: ${collectionTrainingModeLabel(collectionTrainingMode)}\nعدد الكلمات: ${Math.min(count, allWords.length)}`, mainMenuKeyboard());
     } else {
         await replaceWithText(ctx, '⏳ جاري تجهيز تدريب جديد...', mainMenuKeyboard());
     }
@@ -292,7 +358,7 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
         wrongWordIds: [],
         startTime: Date.now(),
         ...(planId ? { planId } : {}),
-        ...(collectionId ? { collectionId, collectionTitle } : {}),
+        ...(collectionId ? { collectionId, collectionTitle, collectionTrainingMode } : {}),
     });
 
     await showTrainingQuestion(ctx, user.user_id);
@@ -354,12 +420,14 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
         await deleteBotSession(ctx.db, userId, 'train');
         await recordTrainingSessionComplete(ctx.db, userId, { total, correct, wrong });
 
-        const collectionText = session.data.collectionTitle ? `\n📚 المجموعة: ${session.data.collectionTitle}\n` : '\n\n';
+        const collectionText = session.data.collectionTitle
+            ? `\n📚 المجموعة: ${session.data.collectionTitle}\n🎛 النوع: ${collectionTrainingModeLabel(session.data.collectionTrainingMode)}\n`
+            : '\n\n';
 
         await replaceWithText(
             ctx,
             `✅ انتهى التدريب!${collectionText}📊 النتيجة: ${correct}/${total} (${percent}%)\n❌ الأخطاء: ${wrong}\n🎯 XP: +${correct * 2}`,
-            trainingFinishedKeyboard(session.data.wrongWordIds.length ?? 0, session.data.collectionId)
+            trainingFinishedKeyboard(session.data.wrongWordIds.length ?? 0, session.data.collectionId, session.data.collectionTrainingMode)
         );
         return;
     }
@@ -487,14 +555,20 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
     }
 
     const word = await getWordById(ctx.db, current.word_id);
-    const grade = await gradeTrainingAnswer(ctx, {
-        questionType: current.type,
-        direction: current.direction,
-        correctAnswer: current.answer,
-        userAnswer: answerText,
-        word,
-        userId: user.user_id,
-    });
+    const grade = shouldUseArabicTrainingNormalization(current)
+        ? {
+            isCorrect: isAcceptedArabicAnswer(answerText, current.answer),
+            verdict: isAcceptedArabicAnswer(answerText, current.answer) ? 'correct' as const : 'wrong' as const,
+            source: 'local' as const,
+        }
+        : await gradeTrainingAnswer(ctx, {
+            questionType: current.type,
+            direction: current.direction,
+            correctAnswer: current.answer,
+            userAnswer: answerText,
+            word,
+            userId: user.user_id,
+        });
     const isCorrect = grade.isCorrect;
     markQuestionAnswered(session.data, current, isCorrect);
 
@@ -614,10 +688,11 @@ function isQuestionAnswered(data: TrainingSessionData, questionIndex: number): b
     return (data.answeredQuestionIndexes ?? []).includes(questionIndex);
 }
 
-function trainingFinishedKeyboard(hasWrongWords: number, collectionId?: number): InlineKeyboard {
+function trainingFinishedKeyboard(hasWrongWords: number, collectionId?: number, collectionTrainingMode?: CollectionTrainingMode): InlineKeyboard {
     const keyboard = new InlineKeyboard();
     if (collectionId) {
-        keyboard.text('🔁 إعادة تدريب نفس المجموعة', `train_col:${collectionId}`).row();
+        keyboard.text('🔁 إعادة نفس النوع', `train_col_start:${collectionId}:${collectionTrainingMode ?? 'mixed'}`).row();
+        keyboard.text('🎛 تغيير نوع التدريب', `train_col_mode:${collectionId}`).row();
         keyboard.text('📚 اختيار مجموعة أخرى', 'train_collection_picker:page:1').row();
     } else {
         keyboard.text('🔁 تدريب جديد', 'train_mixed').row();
@@ -751,6 +826,39 @@ function maskGerman(value: string): string {
 
 export function normalizeAnswer(value: string): string {
     return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('de-DE');
+}
+
+function shouldUseArabicTrainingNormalization(question: TrainingQuestion): boolean {
+    return question.direction === 'de_ar' && question.options.length === 0;
+}
+
+export function isAcceptedArabicAnswer(userAnswer: string, correctAnswer: string): boolean {
+    const userOptions = splitArabicTrainingAnswers(userAnswer).map(normalizeArabicTrainingAnswer).filter(Boolean);
+    const correctOptions = splitArabicTrainingAnswers(correctAnswer).map(normalizeArabicTrainingAnswer).filter(Boolean);
+    if (userOptions.length === 0 || correctOptions.length === 0) return false;
+    return userOptions.some(user => correctOptions.includes(user));
+}
+
+function splitArabicTrainingAnswers(value: string): string[] {
+    return value.split(/[|/،]/g).map(item => item.trim()).filter(Boolean);
+}
+
+export function normalizeArabicTrainingAnswer(value: string): string {
+    return value
+        .trim()
+        .replace(/[\u064B-\u065F\u0670]/g, '')
+        .replace(/\u0640/g, '')
+        .replace(/[أإآٱ]/g, 'ا')
+        .replace(/ى/g, 'ي')
+        .replace(/[ؤئء]/g, '')
+        .replace(/و{2,}/g, 'و')
+        .replace(/ي{2,}/g, 'ي')
+        .replace(/[()[\]{}.,!?;:،؛؟"'“”‘’]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .split(' ')
+        .map(token => token.replace(/[ةه]$/g, 'ه'))
+        .join(' ');
 }
 
 function buildDistractors(
