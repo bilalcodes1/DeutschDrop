@@ -6,6 +6,7 @@ import {
     completeLifeGate,
     createLifeSentence,
     ensureLifeSettings,
+    getLifeShareCodeExists,
     getCompletedLifeGateDates,
     getLifeGate,
     type CreateLifeSentenceInput,
@@ -31,6 +32,34 @@ export interface LifeGateStatus {
     completed: boolean;
     gateDate: string;
     timezone: string;
+}
+
+export function validateLifeSearchQuery(text: string): { ok: true; query: string } | { ok: false; message: string } {
+    const query = text.replace(/\s+/g, ' ').trim();
+    if (query.length < 2) return { ok: false, message: 'اكتب حرفين على الأقل للبحث.' };
+    if (query.length > 100) return { ok: false, message: 'عبارة البحث طويلة جداً. اختصرها إلى أقل من 100 حرف.' };
+    if (!/[\p{Letter}\p{Number}]/u.test(query)) return { ok: false, message: 'اكتب كلمة عربية أو ألمانية للبحث.' };
+    return { ok: true, query };
+}
+
+export function sanitizeLifeShareDisplayName(value: string): string | null {
+    const name = value.replace(/\s+/g, ' ').trim();
+    if (name.length < 2 || name.length > 30) return null;
+    if (/https?:\/\//i.test(name) || /(?:t\.me|telegram\.me|instagram\.com|www\.)/i.test(name)) return null;
+    if (!/[\p{Letter}\p{Number}]/u.test(name)) return null;
+    return name.replace(/[<>]/g, '');
+}
+
+export function publicLifeAuthorName(value: string | null | undefined): string {
+    return value?.trim() ? value.trim() : 'متعلم في DeutschDrop';
+}
+
+export async function generateUniqueLifeShareCode(db: D1Database): Promise<string> {
+    for (let attempt = 0; attempt < 8; attempt++) {
+        const code = randomShareCode();
+        if (!await getLifeShareCodeExists(db, code)) return code;
+    }
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
 export function getLifeGateDate(now: Date = new Date(), timezone = 'Asia/Baghdad'): string {
@@ -172,6 +201,13 @@ export function parseExternalKeywords(value: string): Array<{ german: string; ar
         .slice(0, 5);
 }
 
+function randomShareCode(): string {
+    const alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    return [...bytes].map(byte => alphabet[byte % alphabet.length]).join('');
+}
+
 export async function saveLifeSentenceAndGate(
     db: D1Database,
     userId: number,
@@ -240,8 +276,17 @@ export function reviewLifeSentenceStats(sentence: LifeSentence, isCorrect: boole
 }
 
 export function chooseGapKeyword(sentence: LifeSentence, keywords: LifeKeyword[]): { prompt: string; answer: string } {
-    const keyword = keywords.find(item => sentence.german_text.includes(item.german_word));
-    const answer = keyword?.german_word || sentence.german_text.split(/\s+/).find(word => word.length > 3) || sentence.german_text.split(/\s+/)[0] || sentence.german_text;
+    const keyword = keywords.find(item => sentence.german_text.toLocaleLowerCase('de-DE').includes(item.german_word.toLocaleLowerCase('de-DE')));
+    const words = sentence.german_text
+        .split(/\s+/)
+        .map(word => word.replace(/^[^\p{Letter}\p{Number}]+|[^\p{Letter}\p{Number}]+$/gu, ''))
+        .filter(Boolean);
+    const weakWords = new Set(['der', 'die', 'das', 'ein', 'eine', 'und', 'oder', 'ich', 'du', 'er', 'sie', 'es', 'wir', 'ihr', 'zu', 'im', 'in', 'am']);
+    const answer = keyword?.german_word
+        || words.find(word => word.length > 3 && !weakWords.has(word.toLocaleLowerCase('de-DE')))
+        || words.find(word => word.length > 2)
+        || words[0]
+        || sentence.german_text;
     const escaped = answer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return {
         prompt: sentence.german_text.replace(new RegExp(escaped, 'i'), '____'),

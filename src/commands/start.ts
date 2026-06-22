@@ -3,6 +3,7 @@ import type { BotContext } from '../bot/context';
 import { completeUserRegistration, createPendingUser, getUserByTelegramId, isRegisteredUser, renameUser } from '../repositories/userRepository';
 import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { showLevelSelection, showMainMenu } from './menu';
+import { showLifeSentenceFromShareCode } from './life';
 
 interface NameSessionData {
     mode: 'register' | 'rename';
@@ -16,6 +17,12 @@ export function registerStartCommand(bot: Bot<BotContext>): void {
         if (!user.display_name?.trim()) {
             await saveBotSession<NameSessionData>(ctx.db, user.user_id, 'register', { mode: 'register' }, 30);
             await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:');
+            return;
+        }
+
+        const payload = ctx.message?.text?.split(/\s+/, 2)[1]?.trim();
+        if (payload?.startsWith('life_')) {
+            await showLifeSentenceFromShareCode(ctx, payload.slice('life_'.length));
             return;
         }
 

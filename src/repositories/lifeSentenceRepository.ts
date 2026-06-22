@@ -4,6 +4,18 @@ import { queryAll, queryOne, run } from '../db/queries.js';
 export type LifeSourceType = 'bot_ai' | 'external_chatgpt' | 'manual';
 export type LifeLevel = 'A1' | 'A2' | 'B1';
 export type LifeDifficulty = 'easy' | 'medium' | 'hard';
+export type LifeVisibility = 'private' | 'public' | 'unlisted';
+export type LifeShareNameMode = 'none' | 'bot_name' | 'custom';
+export type LifeReportReason = 'wrong_translation' | 'bad_german' | 'inappropriate' | 'personal_info' | 'spam' | 'other';
+
+const LIFE_REPORT_REASONS = new Set<LifeReportReason>([
+    'wrong_translation',
+    'bad_german',
+    'inappropriate',
+    'personal_info',
+    'spam',
+    'other',
+]);
 
 export interface LifeKeyword {
     id?: number;
@@ -33,6 +45,12 @@ export interface LifeSentence {
     repetitions: number;
     last_reviewed_at: string | null;
     next_review_at: string | null;
+    visibility: LifeVisibility;
+    share_code: string | null;
+    published_at: string | null;
+    view_count: number;
+    copied_count: number;
+    copied_from_sentence_id: number | null;
     created_at: string;
     updated_at: string;
     deleted_at: string | null;
@@ -51,6 +69,8 @@ export interface LifeSettings {
     target_level: LifeLevel;
     reminder_days: string;
     onboarding_seen: number;
+    share_name_mode: LifeShareNameMode;
+    share_display_name: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -66,7 +86,21 @@ export interface CreateLifeSentenceInput {
     level: LifeLevel;
     tense?: string | null;
     nextReviewAt?: string | null;
+    copiedFromSentenceId?: number | null;
     keywords: Array<{ german_word: string; arabic_meaning: string }>;
+}
+
+export interface PublicLifeSentence extends LifeSentence {
+    author_display_name: string | null;
+}
+
+export interface LifeSentenceCopyRow {
+    id: number;
+    source_sentence_id: number;
+    copied_by_user_id: number;
+    new_sentence_id: number;
+    created_at: string;
+    restored_at: string | null;
 }
 
 export async function ensureLifeSettings(db: D1Database, userId: number): Promise<LifeSettings> {
@@ -84,7 +118,7 @@ export async function ensureLifeSettings(db: D1Database, userId: number): Promis
 export async function updateLifeSettings(
     db: D1Database,
     userId: number,
-    patch: Partial<Pick<LifeSettings, 'gate_enabled' | 'reminders_enabled' | 'reminder_time' | 'timezone' | 'target_level' | 'reminder_days' | 'onboarding_seen'>>
+    patch: Partial<Pick<LifeSettings, 'gate_enabled' | 'reminders_enabled' | 'reminder_time' | 'timezone' | 'target_level' | 'reminder_days' | 'onboarding_seen' | 'share_name_mode' | 'share_display_name'>>
 ): Promise<void> {
     await ensureLifeSettings(db, userId);
     const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
@@ -153,8 +187,8 @@ export async function createLifeSentence(db: D1Database, input: CreateLifeSenten
         db,
         `INSERT INTO life_sentences (
             user_id, source_type, original_arabic, german_text, arabic_text,
-            pronunciation_ar, memory_hint, level, tense, next_review_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            pronunciation_ar, memory_hint, level, tense, next_review_at, copied_from_sentence_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             input.userId,
             input.sourceType,
@@ -166,6 +200,7 @@ export async function createLifeSentence(db: D1Database, input: CreateLifeSenten
             input.level,
             input.tense ?? null,
             input.nextReviewAt ?? null,
+            input.copiedFromSentenceId ?? null,
         ]
     );
     const id = (result.meta as { last_row_id?: number })?.last_row_id ?? 0;
@@ -190,6 +225,10 @@ export async function getLifeSentenceById(db: D1Database, userId: number, id: nu
     );
     if (!sentence) return null;
     return { ...sentence, keywords: await getLifeKeywords(db, id) };
+}
+
+export async function getLifeSentenceOwnedByUser(db: D1Database, userId: number, id: number): Promise<LifeSentenceWithKeywords | null> {
+    return getLifeSentenceById(db, userId, id);
 }
 
 export async function getTodayLifeSentence(db: D1Database, userId: number, gateDate: string): Promise<LifeSentenceWithKeywords | null> {
@@ -424,4 +463,319 @@ export async function getCompletedLifeGateDates(db: D1Database, userId: number):
         [userId]
     );
     return rows.map(row => row.gate_date);
+}
+
+export async function getLifeSentenceWithAuthorById(
+    db: D1Database,
+    sentenceId: number,
+    includeUnlisted = false
+): Promise<(PublicLifeSentence & { keywords: LifeKeyword[] }) | null> {
+    const visibilityClause = includeUnlisted ? "ls.visibility IN ('public', 'unlisted')" : "ls.visibility = 'public'";
+    const row = await queryOne<PublicLifeSentence>(
+        db,
+        `SELECT ls.*,
+                CASE
+                    WHEN COALESCE(lus.share_name_mode, 'none') = 'bot_name' THEN COALESCE(u.display_name, u.name)
+                    WHEN COALESCE(lus.share_name_mode, 'none') = 'custom' THEN lus.share_display_name
+                    ELSE NULL
+                END AS author_display_name
+         FROM life_sentences ls
+         JOIN users u ON u.user_id = ls.user_id
+         LEFT JOIN life_user_settings lus ON lus.user_id = ls.user_id
+         WHERE ls.id = ?
+           AND ${visibilityClause}
+           AND ls.status = 'active'
+           AND ls.deleted_at IS NULL`,
+        [sentenceId]
+    );
+    if (!row) return null;
+    return { ...row, keywords: await getLifeKeywords(db, row.id) };
+}
+
+export async function getLifeSentenceByShareCode(
+    db: D1Database,
+    shareCode: string
+): Promise<(PublicLifeSentence & { keywords: LifeKeyword[] }) | null> {
+    const row = await queryOne<PublicLifeSentence>(
+        db,
+        `SELECT ls.*,
+                CASE
+                    WHEN COALESCE(lus.share_name_mode, 'none') = 'bot_name' THEN COALESCE(u.display_name, u.name)
+                    WHEN COALESCE(lus.share_name_mode, 'none') = 'custom' THEN lus.share_display_name
+                    ELSE NULL
+                END AS author_display_name
+         FROM life_sentences ls
+         JOIN users u ON u.user_id = ls.user_id
+         LEFT JOIN life_user_settings lus ON lus.user_id = ls.user_id
+         WHERE ls.share_code = ?
+           AND ls.visibility IN ('public', 'unlisted')
+           AND ls.status = 'active'
+           AND ls.deleted_at IS NULL`,
+        [shareCode]
+    );
+    if (!row) return null;
+    return { ...row, keywords: await getLifeKeywords(db, row.id) };
+}
+
+export async function getLifeSentenceByShareCodeAnyVisibility(db: D1Database, shareCode: string): Promise<LifeSentence | null> {
+    return queryOne<LifeSentence>(db, 'SELECT * FROM life_sentences WHERE share_code = ? AND deleted_at IS NULL', [shareCode]);
+}
+
+export async function incrementLifeSentenceView(db: D1Database, sentenceId: number): Promise<void> {
+    await run(db, 'UPDATE life_sentences SET view_count = view_count + 1 WHERE id = ?', [sentenceId]);
+}
+
+export async function setLifeSentenceVisibility(
+    db: D1Database,
+    userId: number,
+    sentenceId: number,
+    visibility: LifeVisibility,
+    shareCode: string | null
+): Promise<boolean> {
+    const result = await run(
+        db,
+        `UPDATE life_sentences
+         SET visibility = ?,
+             share_code = COALESCE(share_code, ?),
+             published_at = CASE
+                WHEN ? IN ('public', 'unlisted') AND published_at IS NULL THEN datetime('now')
+                WHEN ? = 'private' THEN NULL
+                ELSE published_at
+             END,
+             updated_at = datetime('now')
+         WHERE id = ?
+           AND user_id = ?
+           AND deleted_at IS NULL`,
+        [visibility, shareCode, visibility, visibility, sentenceId, userId]
+    );
+    return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
+}
+
+export async function getLifeShareCodeExists(db: D1Database, shareCode: string): Promise<boolean> {
+    const row = await queryOne<{ id: number }>(db, 'SELECT id FROM life_sentences WHERE share_code = ?', [shareCode]);
+    return Boolean(row);
+}
+
+export async function countPublicLifeSentences(db: D1Database, options: { query?: string; level?: LifeLevel | null } = {}): Promise<number> {
+    const params: unknown[] = [];
+    let where = publicLifeWhere(options, params);
+    const row = await queryOne<{ count: number }>(
+        db,
+        `SELECT COUNT(*) AS count FROM life_sentences ls WHERE ${where}`,
+        params
+    );
+    return row?.count ?? 0;
+}
+
+export async function listPublicLifeSentences(
+    db: D1Database,
+    limit: number,
+    offset: number,
+    options: { sort?: 'latest' | 'popular'; query?: string; level?: LifeLevel | null } = {}
+): Promise<PublicLifeSentence[]> {
+    const params: unknown[] = [];
+    const where = publicLifeWhere(options, params);
+    const order = options.sort === 'popular'
+        ? 'ls.copied_count DESC, ls.published_at DESC, ls.id DESC'
+        : lifeSearchOrder(options.query, params);
+    return queryAll<PublicLifeSentence>(
+        db,
+        `SELECT ls.*,
+                CASE
+                    WHEN COALESCE(lus.share_name_mode, 'none') = 'bot_name' THEN COALESCE(u.display_name, u.name)
+                    WHEN COALESCE(lus.share_name_mode, 'none') = 'custom' THEN lus.share_display_name
+                    ELSE NULL
+                END AS author_display_name
+         FROM life_sentences ls
+         JOIN users u ON u.user_id = ls.user_id
+         LEFT JOIN life_user_settings lus ON lus.user_id = ls.user_id
+         WHERE ${where}
+         ORDER BY ${order}
+         LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+    );
+}
+
+export async function listPublishedLifeSentencesByUser(db: D1Database, userId: number, limit: number, offset: number): Promise<LifeSentence[]> {
+    return queryAll<LifeSentence>(
+        db,
+        `SELECT * FROM life_sentences
+         WHERE user_id = ?
+           AND visibility IN ('public', 'unlisted')
+           AND status = 'active'
+           AND deleted_at IS NULL
+         ORDER BY published_at DESC, id DESC
+         LIMIT ? OFFSET ?`,
+        [userId, limit, offset]
+    );
+}
+
+export async function countPublishedLifeSentencesByUser(db: D1Database, userId: number): Promise<number> {
+    const row = await queryOne<{ count: number }>(
+        db,
+        `SELECT COUNT(*) AS count FROM life_sentences
+         WHERE user_id = ?
+           AND visibility IN ('public', 'unlisted')
+           AND status = 'active'
+           AND deleted_at IS NULL`,
+        [userId]
+    );
+    return row?.count ?? 0;
+}
+
+export async function getLifeCopyRecord(db: D1Database, sourceSentenceId: number, userId: number): Promise<LifeSentenceCopyRow | null> {
+    return queryOne<LifeSentenceCopyRow>(
+        db,
+        'SELECT * FROM life_sentence_copies WHERE source_sentence_id = ? AND copied_by_user_id = ?',
+        [sourceSentenceId, userId]
+    );
+}
+
+export async function listCopiedLifeSentencesByUser(db: D1Database, userId: number, limit: number, offset: number): Promise<Array<LifeSentence & { copied_at: string; source_sentence_id: number }>> {
+    return queryAll(
+        db,
+        `SELECT ls.*, c.created_at AS copied_at, c.source_sentence_id
+         FROM life_sentence_copies c
+         JOIN life_sentences ls ON ls.id = c.new_sentence_id
+         WHERE c.copied_by_user_id = ?
+           AND ls.user_id = ?
+           AND ls.deleted_at IS NULL
+         ORDER BY c.created_at DESC
+         LIMIT ? OFFSET ?`,
+        [userId, userId, limit, offset]
+    );
+}
+
+export async function countCopiedLifeSentencesByUser(db: D1Database, userId: number): Promise<number> {
+    const row = await queryOne<{ count: number }>(
+        db,
+        `SELECT COUNT(*) AS count
+         FROM life_sentence_copies c
+         JOIN life_sentences ls ON ls.id = c.new_sentence_id
+         WHERE c.copied_by_user_id = ?
+           AND ls.user_id = ?
+           AND ls.deleted_at IS NULL`,
+        [userId, userId]
+    );
+    return row?.count ?? 0;
+}
+
+export async function restoreLifeSentenceCopy(db: D1Database, userId: number, copy: LifeSentenceCopyRow): Promise<void> {
+    await run(
+        db,
+        `UPDATE life_sentences
+         SET deleted_at = NULL,
+             status = 'active',
+             updated_at = datetime('now')
+         WHERE id = ?
+           AND user_id = ?`,
+        [copy.new_sentence_id, userId]
+    );
+    await run(db, 'UPDATE life_sentence_copies SET restored_at = datetime(\'now\') WHERE id = ?', [copy.id]);
+}
+
+export async function createLifeSentenceCopy(
+    db: D1Database,
+    source: LifeSentenceWithKeywords,
+    userId: number
+): Promise<{ newSentenceId: number; copiedNow: boolean }> {
+    const existing = await getLifeCopyRecord(db, source.id, userId);
+    if (existing) {
+        const existingSentence = await getLifeSentenceById(db, userId, existing.new_sentence_id);
+        if (!existingSentence) await restoreLifeSentenceCopy(db, userId, existing);
+        return { newSentenceId: existing.new_sentence_id, copiedNow: false };
+    }
+
+    const newSentenceId = await createLifeSentence(db, {
+        userId,
+        sourceType: source.source_type,
+        originalArabic: source.arabic_text,
+        germanText: source.german_text,
+        arabicText: source.arabic_text,
+        pronunciationAr: source.pronunciation_ar,
+        memoryHint: null,
+        level: source.level,
+        tense: source.tense,
+        nextReviewAt: new Date().toISOString(),
+        copiedFromSentenceId: source.id,
+        keywords: source.keywords.map(keyword => ({
+            german_word: keyword.german_word,
+            arabic_meaning: keyword.arabic_meaning,
+        })),
+    });
+    await run(
+        db,
+        `INSERT INTO life_sentence_copies (source_sentence_id, copied_by_user_id, new_sentence_id)
+         VALUES (?, ?, ?)`,
+        [source.id, userId, newSentenceId]
+    );
+    await run(db, 'UPDATE life_sentences SET copied_count = copied_count + 1 WHERE id = ?', [source.id]);
+    return { newSentenceId, copiedNow: true };
+}
+
+export async function createLifeSentenceReport(
+    db: D1Database,
+    sentenceId: number,
+    reporterUserId: number,
+    reason: string,
+    details: string | null = null
+): Promise<boolean> {
+    if (!LIFE_REPORT_REASONS.has(reason as LifeReportReason)) {
+        throw new Error('invalid_life_report_reason');
+    }
+    const result = await run(
+        db,
+        `INSERT OR IGNORE INTO life_sentence_reports (sentence_id, reporter_user_id, reason, details)
+         VALUES (?, ?, ?, ?)`,
+        [sentenceId, reporterUserId, reason, details]
+    );
+    return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
+}
+
+function publicLifeWhere(options: { query?: string; level?: LifeLevel | null }, params: unknown[]): string {
+    let where = "ls.visibility = 'public' AND ls.status = 'active' AND ls.deleted_at IS NULL";
+    if (options.level) {
+        where += ' AND ls.level = ?';
+        params.push(options.level);
+    }
+    const query = options.query?.trim();
+    if (query) {
+        const like = `%${escapeLike(query)}%`;
+        where += ` AND (
+            ls.german_text LIKE ? ESCAPE '\\'
+         OR ls.arabic_text LIKE ? ESCAPE '\\'
+         OR EXISTS (
+                SELECT 1 FROM life_sentence_keywords k
+                WHERE k.life_sentence_id = ls.id
+                  AND (k.german_word LIKE ? ESCAPE '\\' OR k.arabic_meaning LIKE ? ESCAPE '\\')
+            )
+        )`;
+        params.push(like, like, like, like);
+    }
+    return where;
+}
+
+function lifeSearchOrder(query: string | undefined, params: unknown[]): string {
+    const value = query?.trim();
+    if (!value) return 'ls.published_at DESC, ls.id DESC';
+    const exact = escapeLike(value);
+    const starts = `${escapeLike(value)}%`;
+    const contains = `%${escapeLike(value)}%`;
+    params.push(exact, exact, starts, starts, contains, contains);
+    return `CASE
+            WHEN ls.german_text = ? OR ls.arabic_text = ? THEN 1
+            WHEN ls.german_text LIKE ? ESCAPE '\\' OR ls.arabic_text LIKE ? ESCAPE '\\' THEN 2
+            WHEN EXISTS (
+                SELECT 1 FROM life_sentence_keywords k
+                WHERE k.life_sentence_id = ls.id
+                  AND (k.german_word LIKE ? ESCAPE '\\' OR k.arabic_meaning LIKE ? ESCAPE '\\')
+            ) THEN 3
+            ELSE 4
+        END ASC,
+        ls.published_at DESC,
+        ls.id DESC`;
+}
+
+export function escapeLike(value: string): string {
+    return value.replace(/[\\%_]/g, match => `\\${match}`);
 }

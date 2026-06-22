@@ -10,20 +10,41 @@ import {
     isLifeGateOpen,
     parseExternalKeywords,
     parseExternalLifeResult,
+    publicLifeAuthorName,
     reviewLifeSentenceStats,
     saveLifeSentenceAndGate,
+    sanitizeLifeShareDisplayName,
     shuffledSentenceWords,
+    validateLifeSearchQuery,
     validateLifeDraft,
     validateLifeOriginalInput,
 } from '../dist/services/lifeSentences.js';
 import {
+    countCopiedLifeSentencesByUser,
+    countPublicLifeSentences,
+    countPublishedLifeSentencesByUser,
     completeLifeGate,
+    createLifeSentenceCopy,
+    createLifeSentenceReport,
     createLifeSentence,
+    escapeLike,
     ensureLifeSettings,
+    getLifeSentenceByShareCode,
+    getLifeSentenceByShareCodeAnyVisibility,
+    getLifeSentenceWithAuthorById,
+    getLifeShareCodeExists,
+    getLifeCopyRecord,
     getLifeSentenceById,
     getLifeStats,
+    listCopiedLifeSentencesByUser,
     listLifeSentences,
+    listPublicLifeSentences,
+    listPublishedLifeSentencesByUser,
+    restoreLifeSentenceCopy,
+    setLifeSentenceVisibility,
     softDeleteLifeSentence,
+    archiveLifeSentence,
+    updateLifeSentenceReview,
     updateLifeSettings,
 } from '../dist/repositories/lifeSentenceRepository.js';
 
@@ -31,7 +52,7 @@ function createMockD1() {
     const sqlite = new Database(':memory:');
     sqlite.exec(`
         PRAGMA foreign_keys = ON;
-        CREATE TABLE users (user_id INTEGER PRIMARY KEY, xp INTEGER DEFAULT 0, level INTEGER DEFAULT 1, updated_at TEXT);
+        CREATE TABLE users (user_id INTEGER PRIMARY KEY, name TEXT, display_name TEXT, xp INTEGER DEFAULT 0, level INTEGER DEFAULT 1, updated_at TEXT);
         CREATE TABLE xp_log (log_id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, reason TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE xp_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, reason TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE xp_transactions (
@@ -65,7 +86,8 @@ function createMockD1() {
         CREATE TABLE ai_usage (user_id INTEGER, usage_date TEXT, task_type TEXT, count INTEGER DEFAULT 0, updated_at TEXT, UNIQUE(user_id, usage_date, task_type));
     `);
     sqlite.exec(fs.readFileSync(new URL('../src/db/migrations/0043_life_sentences.sql', import.meta.url), 'utf8'));
-    sqlite.exec('INSERT INTO users (user_id, xp, level) VALUES (1, 0, 1), (2, 0, 1);');
+    sqlite.exec(fs.readFileSync(new URL('../src/db/migrations/0044_life_sentence_sharing.sql', import.meta.url), 'utf8'));
+    sqlite.exec("INSERT INTO users (user_id, name, display_name, xp, level) VALUES (1, 'Bilal', 'Bilal', 0, 1), (2, 'Mira', 'Mira', 0, 1);");
     return {
         prepare: sql => {
             const stmt = sqlite.prepare(sql);
@@ -96,6 +118,19 @@ function draft(overrides = {}) {
         tense: 'past',
         ...overrides,
     };
+}
+
+function createMockD1BeforeSharing() {
+    const sqlite = new Database(':memory:');
+    sqlite.exec(`
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE users (user_id INTEGER PRIMARY KEY, name TEXT, display_name TEXT, xp INTEGER DEFAULT 0, level INTEGER DEFAULT 1, updated_at TEXT);
+    `);
+    sqlite.exec(fs.readFileSync(new URL('../src/db/migrations/0043_life_sentences.sql', import.meta.url), 'utf8'));
+    sqlite.exec("INSERT INTO users (user_id, name, display_name, xp, level) VALUES (1, 'Bilal', 'Bilal', 0, 1), (2, 'Mira', 'Mira', 0, 1);");
+    sqlite.prepare(`INSERT INTO life_sentences (user_id, source_type, original_arabic, german_text, arabic_text, level)
+        VALUES (1, 'bot_ai', 'قديم', 'Ich trinke Wasser.', 'أشرب الماء.', 'A1')`).run();
+    return sqlite;
 }
 
 test('life gate respects enabled setting completion and new day reset', async () => {
@@ -189,6 +224,266 @@ test('life listing view ownership soft delete archive and stats are scoped per u
     assert.equal((await listLifeSentences(db, 1, 10, 0)).length, 0);
     const stats = await getLifeStats(db, 1);
     assert.equal(stats.total, 1);
+});
+
+test('life sharing visibility search and deep links enforce privacy', async () => {
+    const db = createMockD1();
+    await ensureLifeSettings(db, 1);
+    await updateLifeSettings(db, 1, { share_name_mode: 'custom', share_display_name: 'Bilal Deutsch' });
+    const id = await createLifeSentence(db, {
+        userId: 1,
+        sourceType: 'bot_ai',
+        originalArabic: 'رأيت نمراً في الحديقة.',
+        germanText: 'Ich habe einen Tiger im Garten gesehen.',
+        arabicText: 'رأيت نمراً في الحديقة.',
+        pronunciationAr: 'إخ هابه آينن تيغر إم غارتن غِزين',
+        memoryHint: 'Tiger مثل tiger',
+        level: 'A1',
+        keywords: [{ german_word: 'Tiger', arabic_meaning: 'نمر' }],
+    });
+
+    const privateSentence = await getLifeSentenceById(db, 1, id);
+    assert.equal(privateSentence.visibility, 'private');
+    assert.equal(await countPublicLifeSentences(db, { query: 'Tiger' }), 0);
+    assert.equal(await setLifeSentenceVisibility(db, 2, id, 'public', 'badcode'), false);
+
+    assert.equal(await setLifeSentenceVisibility(db, 1, id, 'public', 'LifeA001'), true);
+    assert.equal(await getLifeShareCodeExists(db, 'LifeA001'), true);
+    assert.equal((await getLifeSentenceByShareCode(db, 'LifeA001'))?.id, id);
+    assert.equal((await listPublicLifeSentences(db, 5, 0, { query: 'Tiger' })).length, 1);
+    assert.equal((await listPublicLifeSentences(db, 5, 0, { query: 'نمر' })).length, 1);
+    assert.equal((await listPublicLifeSentences(db, 5, 0, { query: 'Garten' }))[0].author_display_name, 'Bilal Deutsch');
+    assert.equal(publicLifeAuthorName(null), 'متعلم في DeutschDrop');
+
+    assert.equal(await setLifeSentenceVisibility(db, 1, id, 'unlisted', 'LifeA001'), true);
+    assert.equal(await countPublicLifeSentences(db, { query: 'Tiger' }), 0);
+    assert.equal((await getLifeSentenceByShareCode(db, 'LifeA001'))?.visibility, 'unlisted');
+
+    assert.equal(await setLifeSentenceVisibility(db, 1, id, 'private', 'LifeA001'), true);
+    assert.equal(await getLifeSentenceByShareCode(db, 'LifeA001'), null);
+    assert.equal((await getLifeSentenceByShareCodeAnyVisibility(db, 'LifeA001'))?.visibility, 'private');
+
+    await setLifeSentenceVisibility(db, 1, id, 'public', 'LifeA001');
+    await softDeleteLifeSentence(db, 1, id);
+    assert.equal(await getLifeSentenceByShareCode(db, 'LifeA001'), null);
+});
+
+test('life sentence copy creates private independent SRS-ready copies and prevents duplicates', async () => {
+    const db = createMockD1();
+    const id = await createLifeSentence(db, {
+        userId: 1,
+        sourceType: 'bot_ai',
+        originalArabic: 'هذا نص شخصي لا ينسخ.',
+        germanText: 'Ich trinke heute Tee.',
+        arabicText: 'أشرب الشاي اليوم.',
+        pronunciationAr: 'إخ ترينكه هويته تيه',
+        memoryHint: 'تلميح شخصي لا ينسخ',
+        level: 'A1',
+        tense: 'present',
+        keywords: [{ german_word: 'Tee', arabic_meaning: 'شاي' }],
+    });
+    await setLifeSentenceVisibility(db, 1, id, 'public', 'LifeCopy1');
+    const source = await getLifeSentenceWithAuthorById(db, id, false);
+    const first = await createLifeSentenceCopy(db, source, 2);
+    const copy = await getLifeSentenceById(db, 2, first.newSentenceId);
+
+    assert.equal(first.copiedNow, true);
+    assert.equal(copy.user_id, 2);
+    assert.equal(copy.visibility, 'private');
+    assert.equal(copy.german_text, source.german_text);
+    assert.equal(copy.arabic_text, source.arabic_text);
+    assert.equal(copy.pronunciation_ar, source.pronunciation_ar);
+    assert.equal(copy.original_arabic, source.arabic_text);
+    assert.equal(copy.memory_hint, null);
+    assert.equal(copy.copied_from_sentence_id, id);
+    assert.equal(copy.keywords.length, 1);
+    assert.equal((await getLifeSentenceById(db, 1, id)).copied_count, 1);
+    assert.equal((await listCopiedLifeSentencesByUser(db, 2, 5, 0)).length, 1);
+    assert.equal(await countCopiedLifeSentencesByUser(db, 2), 1);
+
+    const second = await createLifeSentenceCopy(db, source, 2);
+    assert.equal(second.copiedNow, false);
+    assert.equal(second.newSentenceId, first.newSentenceId);
+    assert.equal((await getLifeSentenceById(db, 1, id)).copied_count, 1);
+
+    await softDeleteLifeSentence(db, 2, first.newSentenceId);
+    const record = await getLifeCopyRecord(db, id, 2);
+    await restoreLifeSentenceCopy(db, 2, record);
+    assert.equal((await getLifeSentenceById(db, 2, first.newSentenceId)).deleted_at, null);
+});
+
+test('life sharing reports search validation and UI wiring are safe', async () => {
+    const migration = fs.readFileSync(new URL('../src/db/migrations/0044_life_sentence_sharing.sql', import.meta.url), 'utf8');
+    const lifeSource = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
+    const startSource = fs.readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf8');
+    const db = createMockD1();
+    const id = await createLifeSentence(db, {
+        userId: 1,
+        sourceType: 'bot_ai',
+        originalArabic: 'ذهبت إلى السوق.',
+        germanText: 'Ich bin zum Markt gegangen.',
+        arabicText: 'ذهبت إلى السوق.',
+        level: 'A1',
+        keywords: [{ german_word: 'Markt', arabic_meaning: 'سوق' }],
+    });
+    await setLifeSentenceVisibility(db, 1, id, 'public', 'LifeR001');
+
+    assert.equal(await createLifeSentenceReport(db, id, 2, 'wrong_translation'), true);
+    assert.equal(await createLifeSentenceReport(db, id, 2, 'wrong_translation'), false);
+    assert.equal(validateLifeSearchQuery('😀🔥').ok, false);
+    assert.equal(validateLifeSearchQuery('Ma').ok, true);
+    assert.equal(escapeLike('50%_test'), '50\\%\\_test');
+    assert.equal(sanitizeLifeShareDisplayName('https://spam.test'), null);
+    assert.equal(sanitizeLifeShareDisplayName('Bilal Codes'), 'Bilal Codes');
+
+    for (const text of ['visibility TEXT', 'life_sentence_copies', 'life_sentence_reports', 'share_name_mode']) {
+        assert.match(migration, new RegExp(text));
+    }
+    for (const callback of ['life:community', 'life:copy', 'life:share', 'life:published', 'life:copied', 'life:report', 'life:ord']) {
+        assert.match(lifeSource, new RegExp(callback.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(startSource, /life_/);
+    assert.match(lifeSource, /recordTemporaryMessage/);
+    assert.doesNotMatch(lifeSource, /caption:\s*`🔊/);
+});
+
+test('life sharing migration preserves old sentences as private with nullable share code', () => {
+    const sqlite = createMockD1BeforeSharing();
+    sqlite.exec(fs.readFileSync(new URL('../src/db/migrations/0044_life_sentence_sharing.sql', import.meta.url), 'utf8'));
+    const row = sqlite.prepare('SELECT visibility, share_code, view_count, copied_count FROM life_sentences LIMIT 1').get();
+    assert.equal(row.visibility, 'private');
+    assert.equal(row.share_code, null);
+    assert.equal(row.view_count, 0);
+    assert.equal(row.copied_count, 0);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name IN ('life_sentence_copies', 'life_sentence_reports')").get().count, 2);
+});
+
+test('life sharing migration enforces unique non-null share codes while allowing private nulls', async () => {
+    const db = createMockD1();
+    const id1 = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'أ', germanText: 'Ich trinke Wasser.', arabicText: 'أشرب الماء.', level: 'A1', keywords: [] });
+    const id2 = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'ب', germanText: 'Ich esse Brot.', arabicText: 'آكل الخبز.', level: 'A1', keywords: [] });
+    assert.equal((await getLifeSentenceById(db, 1, id1)).share_code, null);
+    assert.equal((await getLifeSentenceById(db, 1, id2)).share_code, null);
+    assert.equal(await setLifeSentenceVisibility(db, 1, id1, 'public', 'Unique01'), true);
+    await assert.rejects(() => setLifeSentenceVisibility(db, 1, id2, 'public', 'Unique01'));
+});
+
+test('life public latest and popular lists order by published time and copied count', async () => {
+    const db = createMockD1();
+    const low = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'أ', germanText: 'Ich trinke Wasser.', arabicText: 'أشرب الماء.', level: 'A1', keywords: [] });
+    const high = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'ب', germanText: 'Ich esse Brot.', arabicText: 'آكل الخبز.', level: 'A1', keywords: [] });
+    await setLifeSentenceVisibility(db, 1, low, 'public', 'Latest01');
+    await setLifeSentenceVisibility(db, 1, high, 'public', 'Latest02');
+    db._db.prepare('UPDATE life_sentences SET copied_count = 9, published_at = datetime(\'now\', \'-1 day\') WHERE id = ?').run(low);
+    db._db.prepare('UPDATE life_sentences SET copied_count = 1, published_at = datetime(\'now\') WHERE id = ?').run(high);
+
+    assert.equal((await listPublicLifeSentences(db, 5, 0, { sort: 'latest' }))[0].id, high);
+    assert.equal((await listPublicLifeSentences(db, 5, 0, { sort: 'popular' }))[0].id, low);
+});
+
+test('life public search escapes wildcards and does not duplicate keyword matches', async () => {
+    const db = createMockD1();
+    const percent = await createLifeSentence(db, {
+        userId: 1,
+        sourceType: 'bot_ai',
+        originalArabic: 'اختبار نسبة.',
+        germanText: 'Ich habe 50% geschafft.',
+        arabicText: 'أنجزت 50%.',
+        level: 'A1',
+        keywords: [{ german_word: '50%', arabic_meaning: 'خمسون بالمئة' }],
+    });
+    const other = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'آخر.', germanText: 'Ich habe Tee.', arabicText: 'لدي شاي.', level: 'A1', keywords: [] });
+    await setLifeSentenceVisibility(db, 1, percent, 'public', 'Percent1');
+    await setLifeSentenceVisibility(db, 1, other, 'public', 'Percent2');
+
+    assert.deepEqual((await listPublicLifeSentences(db, 5, 0, { query: '50%' })).map(row => row.id), [percent]);
+    assert.equal(await countPublicLifeSentences(db, { query: '__' }), 0);
+    assert.equal((await listPublicLifeSentences(db, 5, 0, { query: 'خمسون' })).length, 1);
+});
+
+test('life unlisted sentence is hidden from public lists but opens and copies by share code', async () => {
+    const db = createMockD1();
+    const id = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'سر.', germanText: 'Ich habe ein Geheimnis.', arabicText: 'لدي سر.', level: 'A1', keywords: [] });
+    await setLifeSentenceVisibility(db, 1, id, 'unlisted', 'Hidden01');
+    assert.equal(await countPublicLifeSentences(db, { query: 'Geheimnis' }), 0);
+    assert.equal(await getLifeSentenceWithAuthorById(db, id, false), null);
+    const byCode = await getLifeSentenceByShareCode(db, 'Hidden01');
+    assert.equal(byCode.id, id);
+    const copy = await createLifeSentenceCopy(db, byCode, 2);
+    assert.equal((await getLifeSentenceById(db, 2, copy.newSentenceId)).visibility, 'private');
+});
+
+test('life private sentence cannot be copied through public lookup even if id is known', async () => {
+    const db = createMockD1();
+    const id = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'خاص.', germanText: 'Das ist privat.', arabicText: 'هذا خاص.', level: 'A1', keywords: [] });
+    assert.equal(await getLifeSentenceWithAuthorById(db, id, false), null);
+    assert.equal(await getLifeSentenceByShareCode(db, 'missing'), null);
+    assert.equal(await countCopiedLifeSentencesByUser(db, 2), 0);
+});
+
+test('life copied sentence SRS updates independently from source', async () => {
+    const db = createMockD1();
+    const id = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'شربت ماء.', germanText: 'Ich habe Wasser getrunken.', arabicText: 'شربت الماء.', level: 'A1', keywords: [{ german_word: 'Wasser', arabic_meaning: 'ماء' }] });
+    await setLifeSentenceVisibility(db, 1, id, 'public', 'SrsCopy1');
+    const source = await getLifeSentenceWithAuthorById(db, id, false);
+    const copy = await createLifeSentenceCopy(db, source, 2);
+    const copied = await getLifeSentenceById(db, 2, copy.newSentenceId);
+    const stats = reviewLifeSentenceStats(copied, true);
+    await updateLifeSentenceReview(db, 2, copied.id, { isCorrect: true, ...stats });
+
+    assert.equal((await getLifeSentenceById(db, 2, copied.id)).correct_count, 1);
+    assert.equal((await getLifeSentenceById(db, 1, id)).correct_count, 0);
+});
+
+test('life due and hard filters exclude archived deleted future and other users', async () => {
+    const db = createMockD1();
+    const hard = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'صعب.', germanText: 'Das ist schwierig.', arabicText: 'هذا صعب.', level: 'A1', nextReviewAt: '2000-01-01T00:00:00.000Z', keywords: [] });
+    const future = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'مستقبل.', germanText: 'Ich lerne morgen.', arabicText: 'أتعلم غداً.', level: 'A1', nextReviewAt: '2999-01-01T00:00:00.000Z', keywords: [] });
+    const archived = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'أرشيف.', germanText: 'Ich war dort.', arabicText: 'كنت هناك.', level: 'A1', nextReviewAt: '2000-01-01T00:00:00.000Z', keywords: [] });
+    const other = await createLifeSentence(db, { userId: 2, sourceType: 'bot_ai', originalArabic: 'آخر.', germanText: 'Ich bin da.', arabicText: 'أنا هنا.', level: 'A1', nextReviewAt: '2000-01-01T00:00:00.000Z', keywords: [] });
+    db._db.prepare("UPDATE life_sentences SET difficulty = 'hard' WHERE id = ?").run(hard);
+    await archiveLifeSentence(db, 1, archived);
+
+    assert.deepEqual((await listLifeSentences(db, 1, 10, 0, 'hard')).map(row => row.id), [hard]);
+    assert.deepEqual((await listLifeSentences(db, 1, 10, 0, 'due')).map(row => row.id), [hard]);
+    assert.equal((await listLifeSentences(db, 1, 10, 0, 'active')).some(row => row.id === other), false);
+    assert.equal((await listLifeSentences(db, 1, 10, 0, 'due')).some(row => row.id === future), false);
+});
+
+test('life gap keyword prefers meaningful keyword over article and punctuation', () => {
+    const prompt = chooseGapKeyword(
+        { german_text: 'Der Tiger schläft.' },
+        [{ german_word: 'Tiger', arabic_meaning: 'نمر' }]
+    );
+    assert.equal(prompt.answer, 'Tiger');
+    assert.equal(prompt.prompt, 'Der ____ schläft.');
+});
+
+test('life report constraints reject malformed reason and keep source visible', async () => {
+    const db = createMockD1();
+    const id = await createLifeSentence(db, { userId: 1, sourceType: 'bot_ai', originalArabic: 'سوق.', germanText: 'Ich gehe zum Markt.', arabicText: 'أذهب إلى السوق.', level: 'A1', keywords: [] });
+    await setLifeSentenceVisibility(db, 1, id, 'public', 'Report01');
+    await assert.rejects(() => createLifeSentenceReport(db, id, 2, 'not_allowed'));
+    assert.equal(await createLifeSentenceReport(db, id, 2, 'spam'), true);
+    assert.equal((await getLifeSentenceWithAuthorById(db, id, false)).id, id);
+});
+
+test('life TTS command path records temporary audio without leaking German in caption', () => {
+    const lifeSource = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
+    assert.match(lifeSource, /ttlSeconds: LIFE_AUDIO_TTL_SECONDS/);
+    assert.match(lifeSource, /const LIFE_AUDIO_TTL_SECONDS = 45/);
+    assert.match(lifeSource, /kind: 'life_tts'/);
+    assert.doesNotMatch(lifeSource, /caption:/);
+    assert.doesNotMatch(lifeSource, /setTimeout/);
+});
+
+test('life ordering callbacks use indexes and keep callback data short', () => {
+    const lifeSource = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
+    assert.match(lifeSource, /life:ord:\$\{index\}/);
+    assert.match(lifeSource, /handleLifeOrderUndo/);
+    assert.match(lifeSource, /handleLifeOrderReset/);
+    assert.ok('life:train_filter:hard:m'.length <= 64);
+    assert.ok('life:copy_code:ABCDEFGH'.length <= 64);
 });
 
 test('life SRS review helpers update next review and hard difficulty', () => {
