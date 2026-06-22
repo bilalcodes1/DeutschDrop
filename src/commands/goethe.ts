@@ -16,6 +16,7 @@ import { formatGoetheImportsList, processGoetheImportJobById } from '../services
 import { formatGoetheReview, formatGoetheStats, getGoetheQuestionRenderData, startGoetheSession, answerGoetheQuestion, type GoetheMode } from '../services/goetheTrainingService.js';
 import { sendGoetheQuestionAudio } from '../services/goetheAudioService.js';
 import { replaceWithText } from './wordPanel.js';
+import { ensureLifeGateOrShow } from './life.js';
 
 interface GoetheUploadSession {
     waiting: true;
@@ -63,6 +64,9 @@ export function registerGoetheCommand(bot: Bot<BotContext>): void {
     });
 
     bot.command('goethe', async (ctx) => {
+        const user = await currentUser(ctx);
+        if (!user) return;
+        if (!await ensureLifeGateOrShow(ctx, user, 'menu_goethe')) return;
         await showGoetheMenu(ctx);
     });
 
@@ -115,6 +119,9 @@ export function registerGoetheCommand(bot: Bot<BotContext>): void {
 
     bot.callbackQuery('menu_goethe', async (ctx) => {
         await ctx.answerCallbackQuery();
+        const user = await currentUser(ctx);
+        if (!user) return;
+        if (!await ensureLifeGateOrShow(ctx, user, 'menu_goethe')) return;
         await showGoetheMenu(ctx);
     });
 
@@ -127,6 +134,7 @@ export function registerGoetheCommand(bot: Bot<BotContext>): void {
         await ctx.answerCallbackQuery();
         const user = await currentUser(ctx);
         if (!user) return;
+        if (!await ensureLifeGateOrShow(ctx, user, 'menu_goethe')) return;
         const level = ctx.match[1] as GoetheLevel;
         const mode = ctx.match[2] as GoetheMode;
         const result = await startGoetheSession(ctx.db, user.user_id, level, mode);

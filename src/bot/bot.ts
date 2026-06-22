@@ -28,6 +28,7 @@ import { registerDailyQuestsCommand } from '../commands/dailyQuests';
 import { registerMyBoostCommand } from '../commands/myBoost';
 import { registerUserDataDeletionCommand } from '../commands/userDataDeletion';
 import { registerGoetheCommand } from '../commands/goethe';
+import { registerLifeCommand } from '../commands/life';
 import { getUserByTelegramId, isRegisteredUser, updateUserLastActive } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 import { safeAnswerCallback, showCallbackError } from './callbacks';
@@ -97,6 +98,7 @@ export function createBot(token: string, env: Env, executionCtx?: ExecutionConte
     registerUserDataDeletionCommand(bot);
     registerSupportCommand(bot);
     registerSourcesCommand(bot);
+    registerLifeCommand(bot);
     registerSharingCollectionsCommand(bot);
     registerGameCommand(bot);
     registerAddWordCommand(bot);

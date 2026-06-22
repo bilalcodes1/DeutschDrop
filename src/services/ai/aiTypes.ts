@@ -1,6 +1,6 @@
 import type { Env } from '../../models';
 
-export type AiTaskType = 'generate_example_and_pronunciation' | 'generate_pronunciation' | 'explain_answer' | 'classify_level' | 'grade_training_answer';
+export type AiTaskType = 'generate_example_and_pronunciation' | 'generate_pronunciation' | 'explain_answer' | 'classify_level' | 'grade_training_answer' | 'generate_life_sentence';
 export type AiProviderName = 'cloudflareAi' | 'groqCloud' | 'openrouter' | 'zai' | 'mistral' | 'cohere' | 'gemini' | 'kimi';
 export type AiStatus = 'ok' | 'AI_DISABLED' | 'RATE_LIMITED' | 'AI_RATE_LIMITED' | 'AI_UNAVAILABLE';
 
@@ -40,7 +40,14 @@ export interface GradeTrainingAnswerInput {
     level?: string | null;
 }
 
-export type AiTaskInput = GenerateExampleInput | GeneratePronunciationInput | ExplainAnswerInput | ClassifyLevelInput | GradeTrainingAnswerInput;
+export interface GenerateLifeSentenceInput {
+    original_arabic: string;
+    target_level: 'A1' | 'A2' | 'B1';
+    retry?: boolean;
+    regenerate?: boolean;
+}
+
+export type AiTaskInput = GenerateExampleInput | GeneratePronunciationInput | ExplainAnswerInput | ClassifyLevelInput | GradeTrainingAnswerInput | GenerateLifeSentenceInput;
 
 export interface AiTaskResult<T = unknown> {
     status: AiStatus;

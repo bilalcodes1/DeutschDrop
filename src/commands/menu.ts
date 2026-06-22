@@ -8,6 +8,7 @@ import { isAdminTelegramId } from '../services/adminAccess.js';
 import { formatSupportRemaining, getUserRoleBadge } from '../services/roleUi.js';
 import { PROJECT_CODE_LINES_LABEL } from '../generated/projectStats.js';
 import { replaceWithText } from './wordPanel.js';
+import { ensureLifeGateOrShow } from './life.js';
 
 export function registerMenuCommand(bot: Bot<BotContext>): void {
     bot.command('menu', async (ctx) => {
@@ -17,6 +18,11 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
     // Handle menu callbacks that are not owned by feature modules.
     bot.callbackQuery(/^(menu_train|train_menu)$/, async (ctx) => {
         await clearTextInteractionSessions(ctx);
+        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+        if (user && !await ensureLifeGateOrShow(ctx, user, 'menu_train')) {
+            await ctx.answerCallbackQuery();
+            return;
+        }
         await replaceWithText(
             ctx,
             trainMenuText(),
@@ -106,6 +112,7 @@ export function mainMenuKeyboard(isAdmin: boolean = false): InlineKeyboard {
     return new InlineKeyboard()
         .text('📚 راجع الآن', 'menu_learn')
         .text('🏋️ تدريب', 'menu_train').row()
+        .text('🧠 مواقف الحياة', 'life:menu').row()
         .text('🎯 مهامي اليومية', 'daily_quests').row()
         .text('🎯 تحديات غوته', 'menu_goethe').row()
         .text('🫧 لعبة دودة البحر', 'game:menu').row()

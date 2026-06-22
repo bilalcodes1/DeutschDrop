@@ -71,6 +71,23 @@ export function buildPrompt(taskType: AiTaskType, input: AiTaskInput): string {
             `الإخراج JSON فقط:\n{"is_correct":true,"confidence":0.85,"verdict":"correct","short_feedback":"..."}`;
     }
 
+    if (taskType === 'generate_life_sentence') {
+        return `${RULES}\n\nالمهمة: حوّل موقفاً عربياً حقيقياً من يوم المستخدم إلى جملة ألمانية طبيعية وشائعة.\n` +
+            `قواعد صارمة:\n` +
+            `- حافظ على معنى المستخدم ولا تخترع حدثاً مختلفاً.\n` +
+            `- german إلزامي وجملة ألمانية طبيعية لا تتجاوز 20 كلمة إلا للضرورة.\n` +
+            `- arabic ترجمة عربية دقيقة للجملة الألمانية.\n` +
+            `- pronunciation_ar لفظ مبسط بحروف عربية للجملة الألمانية.\n` +
+            `- memory_hint تلميح قصير للتذكر.\n` +
+            `- keywords بين 1 و5 عناصر بصيغة {"german":"...","arabic":"..."}.\n` +
+            `- level يجب أن يكون A1 أو A2 أو B1 حسب target_level ومعنى الجملة.\n` +
+            `- tense يكون present أو past أو future أو mixed.\n` +
+            `- لا تستخدم Markdown ولا code fences ولا شرح خارج JSON.\n` +
+            `المدخل: ${safeInput}\n` +
+            `الإخراج JSON فقط:\n` +
+            `{"german":"Heute war es sehr heiß.","arabic":"اليوم كان الجو حاراً جداً.","pronunciation_ar":"هويته فار إس زير هايس","memory_hint":"heiß تعني حار","keywords":[{"german":"heiß","arabic":"حار"}],"level":"A1","tense":"present","notes":""}`;
+    }
+
     return `${RULES}\n\nالمهمة: صنّف مستوى الكلمة الألمانية A1/A2/B1 أو Unknown مع سبب قصير بالعربي.\n` +
         `المدخل: ${safeInput}\n` +
         `الإخراج JSON فقط:\n{"level":"A1","reason":"..."}`;
