@@ -17,6 +17,7 @@ import { registerExportWordsCommand } from '../commands/exportWords';
 import { registerPictogramCommand } from '../commands/pictograms';
 import { registerProfileCommand } from '../commands/profile';
 import { registerAdminCommand } from '../commands/admin';
+import { registerAdminModerationCommand } from '../commands/adminModeration';
 import { registerSourcesCommand } from '../commands/sources';
 import { registerSmartNotificationCommand } from '../commands/smartNotifications';
 import { registerAiCoachCommand } from '../commands/aiCoach';
@@ -114,6 +115,7 @@ export function createBot(token: string, env: Env, executionCtx?: ExecutionConte
     registerPictogramCommand(bot);
     registerProfileCommand(bot);
     registerAdminCommand(bot);
+    registerAdminModerationCommand(bot);
     registerSmartNotificationCommand(bot);
     registerAiCoachCommand(bot);
     registerTtsCommand(bot);

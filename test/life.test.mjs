@@ -87,6 +87,7 @@ function createMockD1() {
     `);
     sqlite.exec(fs.readFileSync(new URL('../src/db/migrations/0043_life_sentences.sql', import.meta.url), 'utf8'));
     sqlite.exec(fs.readFileSync(new URL('../src/db/migrations/0044_life_sentence_sharing.sql', import.meta.url), 'utf8'));
+    sqlite.exec(fs.readFileSync(new URL('../src/db/migrations/0045_admin_moderation.sql', import.meta.url), 'utf8'));
     sqlite.exec("INSERT INTO users (user_id, name, display_name, xp, level) VALUES (1, 'Bilal', 'Bilal', 0, 1), (2, 'Mira', 'Mira', 0, 1);");
     return {
         prepare: sql => {

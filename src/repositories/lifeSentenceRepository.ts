@@ -6,6 +6,7 @@ export type LifeLevel = 'A1' | 'A2' | 'B1';
 export type LifeDifficulty = 'easy' | 'medium' | 'hard';
 export type LifeVisibility = 'private' | 'public' | 'unlisted';
 export type LifeShareNameMode = 'none' | 'bot_name' | 'custom';
+export type LifeModerationStatus = 'approved' | 'hidden' | 'under_review' | 'removed';
 export type LifeReportReason = 'wrong_translation' | 'bad_german' | 'inappropriate' | 'personal_info' | 'spam' | 'other';
 
 const LIFE_REPORT_REASONS = new Set<LifeReportReason>([
@@ -51,6 +52,14 @@ export interface LifeSentence {
     view_count: number;
     copied_count: number;
     copied_from_sentence_id: number | null;
+    moderation_status: LifeModerationStatus;
+    moderation_note: string | null;
+    moderated_by: number | null;
+    moderated_at: string | null;
+    is_pinned: number;
+    pinned_at: string | null;
+    pinned_by: number | null;
+    pin_order: number;
     created_at: string;
     updated_at: string;
     deleted_at: string | null;
@@ -71,6 +80,9 @@ export interface LifeSettings {
     onboarding_seen: number;
     share_name_mode: LifeShareNameMode;
     share_display_name: string | null;
+    life_sharing_suspended: number;
+    sharing_suspended_at: string | null;
+    sharing_suspended_by: number | null;
     created_at: string;
     updated_at: string;
 }
@@ -118,7 +130,7 @@ export async function ensureLifeSettings(db: D1Database, userId: number): Promis
 export async function updateLifeSettings(
     db: D1Database,
     userId: number,
-    patch: Partial<Pick<LifeSettings, 'gate_enabled' | 'reminders_enabled' | 'reminder_time' | 'timezone' | 'target_level' | 'reminder_days' | 'onboarding_seen' | 'share_name_mode' | 'share_display_name'>>
+    patch: Partial<Pick<LifeSettings, 'gate_enabled' | 'reminders_enabled' | 'reminder_time' | 'timezone' | 'target_level' | 'reminder_days' | 'onboarding_seen' | 'share_name_mode' | 'share_display_name' | 'life_sharing_suspended' | 'sharing_suspended_at' | 'sharing_suspended_by'>>
 ): Promise<void> {
     await ensureLifeSettings(db, userId);
     const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
@@ -485,6 +497,7 @@ export async function getLifeSentenceWithAuthorById(
          WHERE ls.id = ?
            AND ${visibilityClause}
            AND ls.status = 'active'
+           AND COALESCE(ls.moderation_status, 'approved') = 'approved'
            AND ls.deleted_at IS NULL`,
         [sentenceId]
     );
@@ -510,6 +523,7 @@ export async function getLifeSentenceByShareCode(
          WHERE ls.share_code = ?
            AND ls.visibility IN ('public', 'unlisted')
            AND ls.status = 'active'
+           AND COALESCE(ls.moderation_status, 'approved') = 'approved'
            AND ls.deleted_at IS NULL`,
         [shareCode]
     );
@@ -593,6 +607,29 @@ export async function listPublicLifeSentences(
          ORDER BY ${order}
          LIMIT ? OFFSET ?`,
         [...params, limit, offset]
+    );
+}
+
+export async function listPinnedPublicLifeSentences(db: D1Database, limit = 3): Promise<PublicLifeSentence[]> {
+    return queryAll<PublicLifeSentence>(
+        db,
+        `SELECT ls.*,
+                CASE
+                    WHEN COALESCE(lus.share_name_mode, 'none') = 'bot_name' THEN COALESCE(u.display_name, u.name)
+                    WHEN COALESCE(lus.share_name_mode, 'none') = 'custom' THEN lus.share_display_name
+                    ELSE NULL
+                END AS author_display_name
+         FROM life_sentences ls
+         JOIN users u ON u.user_id = ls.user_id
+         LEFT JOIN life_user_settings lus ON lus.user_id = ls.user_id
+         WHERE ls.visibility = 'public'
+           AND ls.status = 'active'
+           AND COALESCE(ls.moderation_status, 'approved') = 'approved'
+           AND COALESCE(ls.is_pinned, 0) = 1
+           AND ls.deleted_at IS NULL
+         ORDER BY ls.pin_order DESC, ls.pinned_at DESC, ls.id DESC
+         LIMIT ?`,
+        [limit]
     );
 }
 
@@ -733,7 +770,7 @@ export async function createLifeSentenceReport(
 }
 
 function publicLifeWhere(options: { query?: string; level?: LifeLevel | null }, params: unknown[]): string {
-    let where = "ls.visibility = 'public' AND ls.status = 'active' AND ls.deleted_at IS NULL";
+    let where = "ls.visibility = 'public' AND ls.status = 'active' AND COALESCE(ls.moderation_status, 'approved') = 'approved' AND ls.deleted_at IS NULL";
     if (options.level) {
         where += ' AND ls.level = ?';
         params.push(options.level);

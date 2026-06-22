@@ -24,6 +24,7 @@ import {
     incrementLifeSentenceView,
     listCopiedLifeSentencesByUser,
     listLifeSentences,
+    listPinnedPublicLifeSentences,
     listPublicLifeSentences,
     listPublishedLifeSentencesByUser,
     restoreLifeSentenceCopy,
@@ -678,21 +679,32 @@ async function showLifeList(ctx: BotContext, page: number, filter = 'active'): P
 async function showLifeCommunity(ctx: BotContext): Promise<void> {
     const user = await currentUser(ctx);
     if (!user) return;
+    const pinned = await listPinnedPublicLifeSentences(ctx.db, 3);
+    const pinnedText = pinned.length
+        ? `\n\n📌 جمل مميزة\n\n${pinned.map((row, index) =>
+            `${index + 1}. 🇩🇪 ${row.german_text}\n   🇮🇶 ${row.arabic_text}\n   👤 ${publicLifeAuthorName(row.author_display_name)} · 📥 ${row.copied_count}`
+        ).join('\n\n')}`
+        : '';
+    const keyboard = new InlineKeyboard();
+    for (const row of pinned) {
+        keyboard.text(`📌 ${row.german_text.slice(0, 28)}`, `life:pub:${row.id}`).row();
+    }
+    keyboard
+        .text('🔥 الأكثر نسخاً', 'life:public:popular:1').row()
+        .text('🆕 الأحدث', 'life:public:latest:1').row()
+        .text('🔎 بحث', 'life:search')
+        .text('🏷 حسب الكلمات', 'life:search').row()
+        .text('🎯 A1', 'life:public:level:A1:1')
+        .text('🎯 A2', 'life:public:level:A2:1')
+        .text('🎯 B1', 'life:public:level:B1:1').row()
+        .text('📤 جُملي المنشورة', 'life:published:1')
+        .text('📥 الجمل التي نسختها', 'life:copied:1').row()
+        .text('🔙 رجوع', 'life:menu')
+        .text('🏠 الرئيسية', 'menu_main');
     await replaceWithText(
         ctx,
-        `🌍 مجتمع الجمل\n\nاكتشف جملاً عامة من مستخدمين آخرين، وانسخ ما يفيدك إلى جُمَلك الخاصة.`,
-        new InlineKeyboard()
-            .text('🔥 الأكثر نسخاً', 'life:public:popular:1').row()
-            .text('🆕 الأحدث', 'life:public:latest:1').row()
-            .text('🔎 بحث', 'life:search')
-            .text('🏷 حسب الكلمات', 'life:search').row()
-            .text('🎯 A1', 'life:public:level:A1:1')
-            .text('🎯 A2', 'life:public:level:A2:1')
-            .text('🎯 B1', 'life:public:level:B1:1').row()
-            .text('📤 جُملي المنشورة', 'life:published:1')
-            .text('📥 الجمل التي نسختها', 'life:copied:1').row()
-            .text('🔙 رجوع', 'life:menu')
-            .text('🏠 الرئيسية', 'menu_main')
+        `🌍 مجتمع الجمل\n\nاكتشف جملاً عامة من مستخدمين آخرين، وانسخ ما يفيدك إلى جُمَلك الخاصة.${pinnedText}`,
+        keyboard
     );
 }
 
@@ -892,11 +904,14 @@ async function showLifeShareOptions(ctx: BotContext, sentenceId: number): Promis
         await replaceWithText(ctx, 'لم أجد هذه الجملة.', new InlineKeyboard().text('🧠 مواقف الحياة', 'life:menu').text('🏠 الرئيسية', 'menu_main'));
         return;
     }
-    const keyboard = new InlineKeyboard()
-        .text('🌍 عامة', `life:vis:${sentence.id}:public`).row()
-        .text('🔗 برابط فقط', `life:vis:${sentence.id}:unlisted`).row()
-        .text('🔒 خاصة', `life:vis:${sentence.id}:private`).row();
-    if (sentence.visibility !== 'private' && sentence.share_code) keyboard.text('📤 رابط المشاركة', `life:share_link:${sentence.id}`).row();
+    const settings = await ensureLifeSettings(ctx.db, user.user_id);
+    const keyboard = new InlineKeyboard();
+    if (!settings.life_sharing_suspended) {
+        keyboard.text('🌍 عامة', `life:vis:${sentence.id}:public`).row()
+            .text('🔗 برابط فقط', `life:vis:${sentence.id}:unlisted`).row();
+    }
+    keyboard.text('🔒 خاصة', `life:vis:${sentence.id}:private`).row();
+    if (!settings.life_sharing_suspended && sentence.visibility !== 'private' && sentence.share_code) keyboard.text('📤 رابط المشاركة', `life:share_link:${sentence.id}`).row();
     keyboard.text('🔙 رجوع', `life:view:${sentence.id}`).text('🏠 الرئيسية', 'menu_main');
     await replaceWithText(
         ctx,
@@ -904,6 +919,7 @@ async function showLifeShareOptions(ctx: BotContext, sentenceId: number): Promis
         `🌍 عامة: تظهر في المجتمع والبحث.\n` +
         `🔗 برابط فقط: لا تظهر في البحث، وتفتح بالرابط فقط.\n` +
         `🔒 خاصة: لا يراها إلا أنت.\n\n` +
+        (settings.life_sharing_suspended ? `🚫 مشاركة الجمل معطلة لحسابك مؤقتاً من الإدارة.\n\n` : '') +
         `الحالة الحالية: ${visibilityLabel(sentence.visibility)}`,
         keyboard
     );
@@ -912,8 +928,16 @@ async function showLifeShareOptions(ctx: BotContext, sentenceId: number): Promis
 async function changeLifeVisibility(ctx: BotContext, sentenceId: number, visibility: LifeVisibility): Promise<void> {
     const user = await currentUser(ctx);
     if (!user) return;
-    const sentence = await getLifeSentenceById(ctx.db, user.user_id, sentenceId)
-        ?? await getLifeSentenceWithAuthorById(ctx.db, sentenceId, false);
+    const settings = await ensureLifeSettings(ctx.db, user.user_id);
+    if (settings.life_sharing_suspended && visibility !== 'private') {
+        await replaceWithText(
+            ctx,
+            '🚫 تم تعطيل مشاركة جملك مؤقتاً من إدارة DeutschDrop.\n\nتستطيع استخدام جملك الخاصة والتدريب عليها، لكن لا يمكنك نشرها للعامة أو بالرابط حالياً.',
+            new InlineKeyboard().text('🔙 رجوع', `life:view:${sentenceId}`).text('🏠 الرئيسية', 'menu_main')
+        );
+        return;
+    }
+    const sentence = await getLifeSentenceById(ctx.db, user.user_id, sentenceId);
     if (!sentence) {
         await replaceWithText(ctx, 'غير مصرح لك بتغيير هذه الجملة.', new InlineKeyboard().text('🧠 مواقف الحياة', 'life:menu').text('🏠 الرئيسية', 'menu_main'));
         return;
@@ -926,6 +950,11 @@ async function changeLifeVisibility(ctx: BotContext, sentenceId: number, visibil
 async function showLifeShareLink(ctx: BotContext, sentenceId: number): Promise<void> {
     const user = await currentUser(ctx);
     if (!user) return;
+    const settings = await ensureLifeSettings(ctx.db, user.user_id);
+    if (settings.life_sharing_suspended) {
+        await replaceWithText(ctx, '🚫 مشاركة الجمل معطلة لحسابك مؤقتاً من الإدارة.', new InlineKeyboard().text('🔙 رجوع', `life:view:${sentenceId}`).text('🏠 الرئيسية', 'menu_main'));
+        return;
+    }
     const sentence = await getLifeSentenceById(ctx.db, user.user_id, sentenceId);
     if (!sentence || !sentence.share_code || sentence.visibility === 'private') {
         await replaceWithText(ctx, 'هذه الجملة غير متاحة للمشاركة الآن.', new InlineKeyboard().text('🧠 مواقف الحياة', 'life:menu').text('🏠 الرئيسية', 'menu_main'));
