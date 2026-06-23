@@ -1099,7 +1099,7 @@ async function showCopiedLifeSentences(ctx: BotContext, page: number): Promise<v
     const keyboard = new InlineKeyboard();
     for (const row of rows) {
         keyboard.text(`👁 ${row.german_text.slice(0, 24)}`, `life:view:${row.id}`).row()
-            .text('✍️ كتابة', `life:train:w:${row.id}`)
+            .text('✍️ كتابة بالألمانية', `life:train:w:${row.id}`)
             .text('🎧 استماع', `life:train:l:${row.id}`).row()
             .text('🧩 ترتيب', `life:train:o:${row.id}`)
             .text('🕳 فراغ', `life:train:f:${row.id}`).row();
@@ -1121,7 +1121,7 @@ async function showLifeDetails(ctx: BotContext, sentenceId: number, notice = '')
     }
     const keyboard = new InlineKeyboard()
         .text('🔊 استماع', `life:train:l:${sentence.id}`).row()
-        .text('✍️ كتابة', `life:train:w:${sentence.id}`)
+        .text('✍️ كتابة بالألمانية', `life:train:w:${sentence.id}`)
         .text('🎧 اسمع واكتب', `life:train:l:${sentence.id}`).row()
         .text('🧩 ترتيب', `life:train:o:${sentence.id}`)
         .text('🕳 فراغ', `life:train:f:${sentence.id}`).row()
@@ -1145,7 +1145,7 @@ async function showDueLifeSentences(ctx: BotContext): Promise<void> {
     }
     const keyboard = new InlineKeyboard();
     for (const sentence of due) keyboard.text(sentence.german_text.slice(0, 32), `life:view:${sentence.id}`).row();
-    keyboard.text('✍️ كتابة', `life:train:w:${due[0].id}`)
+    keyboard.text('✍️ كتابة بالألمانية', `life:train:w:${due[0].id}`)
         .text('🎧 استماع', `life:train:l:${due[0].id}`).row()
         .text('🧩 ترتيب', `life:train:o:${due[0].id}`)
         .text('🕳 فراغ', `life:train:f:${due[0].id}`).row()

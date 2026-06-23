@@ -31,6 +31,7 @@ export interface WrittenAnswerEvaluation {
 
 const GENERIC_ARABIC_DESCRIPTOR = /^(مارك[هة]|نوع|اسم|فعل|كلم[هة])\s+/;
 const ACCEPTED_ANSWER_SEPARATOR = /[|،,؛;\n]+/g;
+const GERMAN_ARTICLE_PATTERN = /^(der|die|das)\s+(.+)$/i;
 
 export function evaluateWrittenAnswer(input: EvaluateWrittenAnswerInput): WrittenAnswerEvaluation {
     return input.answerLanguage === 'ar'
@@ -74,6 +75,19 @@ export function normalizeGermanAnswer(value: string): string {
 export function formatExpectedAnswers(expectedAnswer: string, answerLanguage: AnswerLanguage, acceptedAnswers?: string[]): string {
     const answers = resolveExpectedAnswers(expectedAnswer, answerLanguage, acceptedAnswers);
     return answers.length ? answers.join(' / ') : expectedAnswer.trim();
+}
+
+export function getMissingGermanArticleHint(userAnswer: string, expectedAnswer: string, acceptedAnswers?: string[]): string | null {
+    const normalizedUser = normalizeGermanAnswer(userAnswer);
+    if (!normalizedUser) return null;
+    for (const expected of resolveExpectedAnswers(expectedAnswer, 'de', acceptedAnswers)) {
+        const match = expected.trim().match(GERMAN_ARTICLE_PATTERN);
+        if (!match) continue;
+        const article = match[1].toLocaleLowerCase('de-DE');
+        const withoutArticle = match[2];
+        if (normalizeGermanAnswer(withoutArticle) === normalizedUser) return article;
+    }
+    return null;
 }
 
 function evaluateArabicWrittenAnswer(input: EvaluateWrittenAnswerInput): WrittenAnswerEvaluation {

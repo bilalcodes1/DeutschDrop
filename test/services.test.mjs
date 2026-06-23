@@ -14,10 +14,11 @@ import { buildYouglishDirectUrl } from '../dist/services/youglish.js';
 import { normalizeArabicSearch, normalizeGermanSearch, rankWordSearchResults } from '../dist/services/wordSearch.js';
 import { resolveEmojiVisual, validateManualVisual } from '../dist/services/gameVisualService.js';
 import { calculateGameXp, GAME_MAX_ATTEMPTS, GAME_QUESTION_LIMIT, GAME_UI_VERSION, isAcceptedGermanAnswer, normalizeSpeechTranscript, removeGermanArticle } from '../dist/services/gameSessionService.js';
-import { buildTrainingQuestion, formatAcceptedArabicAnswers, isAcceptedArabicAnswer, normalizeArabicTrainingAnswer, parseAcceptedArabicAnswers } from '../dist/commands/train.js';
+import { buildTrainingQuestion, formatAcceptedArabicAnswers, isAcceptedArabicAnswer, isValidGermanWritingWord, normalizeArabicTrainingAnswer, parseAcceptedArabicAnswers } from '../dist/commands/train.js';
 import {
     evaluateWrittenAnswer,
     formatExpectedAnswers,
+    getMissingGermanArticleHint,
     isAcceptedGermanAnswer as isAcceptedGermanWrittenAnswer,
     parseAcceptedAnswers,
 } from '../dist/services/trainingAnswerMatcher.js';
@@ -1590,7 +1591,6 @@ test('training supports typing missing-letter hint and mixed question types', ()
     const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
 
     assert.match(trainSource, /typing_de/);
-    assert.match(trainSource, /typing_ar/);
     assert.match(trainSource, /missing_letters/);
     assert.match(trainSource, /first_last_hint/);
     assert.match(trainSource, /example_context/);
@@ -1599,6 +1599,23 @@ test('training supports typing missing-letter hint and mixed question types', ()
     assert.match(trainSource, /handleTypedTrainingAnswer/);
     assert.match(trainSource, /train_quick/);
     assert.match(trainSource, /train_mixed/);
+});
+
+test('mixed vocabulary training prefers Arabic to German and never creates Arabic writing questions', () => {
+    const words = [
+        { word_id: 1, german: 'Auto', arabic: 'سيارة', example: 'Ich habe ein Auto.' },
+        { word_id: 2, german: 'Haus', arabic: 'بيت', example: null },
+        { word_id: 3, german: 'Baum', arabic: 'شجرة', example: null },
+        { word_id: 4, german: 'Buch', arabic: 'كتاب', example: null },
+    ];
+    const questions = Array.from({ length: 10 }, (_, index) => buildTrainingQuestion(words, words[index % words.length], 'mixed', index));
+    const arToDe = questions.filter(question => question.direction === 'ar_de').length;
+    const typingQuestions = questions.filter(question => question.type.startsWith('typing'));
+
+    assert.equal(arToDe, 7);
+    assert.equal(typingQuestions.every(question => question.type === 'typing_de'), true);
+    assert.equal(typingQuestions.every(question => question.direction === 'ar_de'), true);
+    assert.equal(typingQuestions.every(question => /[A-Za-zÄÖÜäöüß]/.test(question.answer)), true);
 });
 
 test('Arabic typed training normalization accepts safe spelling variants only', () => {
@@ -1667,26 +1684,37 @@ test('central parser keeps Arabic and German answer rules separate', () => {
     assert.equal(formatExpectedAnswers('يرمي/يقذف', 'ar'), 'يرمي / يقذف');
 });
 
-test('general training Arabic written question evaluates through central matcher', () => {
-    const question = buildTrainingQuestion([
-        { word_id: 1, german: 'Vase', arabic: 'المزهرية', example: null },
-        { word_id: 2, german: 'Auto', arabic: 'سيارة', example: null },
-        { word_id: 3, german: 'Haus', arabic: 'بيت', example: null },
-    ], { word_id: 1, german: 'Vase', arabic: 'المزهرية', example: null }, 'typing', 1);
-
-    assert.equal(question.direction, 'de_ar');
-    assert.equal(evaluateWrittenAnswer({ userAnswer: 'مزهرية', expectedAnswer: question.answer, answerLanguage: 'ar' }).accepted, true);
-});
-
-test('general training German written question evaluates through central matcher', () => {
+test('general writing training always asks Arabic prompt and evaluates German answer', () => {
     const question = buildTrainingQuestion([
         { word_id: 1, german: 'Straße', arabic: 'شارع', example: null },
         { word_id: 2, german: 'Auto', arabic: 'سيارة', example: null },
         { word_id: 3, german: 'Haus', arabic: 'بيت', example: null },
-    ], { word_id: 1, german: 'Straße', arabic: 'شارع', example: null }, 'typing', 0);
+    ], { word_id: 1, german: 'Straße', arabic: 'شارع', example: null }, 'typing', 1);
 
+    assert.equal(question.type, 'typing_de');
     assert.equal(question.direction, 'ar_de');
+    assert.equal(question.prompt, 'شارع');
+    assert.equal(question.answer, 'Straße');
     assert.equal(evaluateWrittenAnswer({ userAnswer: 'strasse', expectedAnswer: question.answer, answerLanguage: 'de' }).accepted, true);
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'شارع', expectedAnswer: question.answer, answerLanguage: 'de' }).accepted, false);
+});
+
+test('German writing article is strict and returns a missing article hint', () => {
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'Auto', expectedAnswer: 'das Auto', answerLanguage: 'de' }).accepted, false);
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'das Auto', expectedAnswer: 'das Auto', answerLanguage: 'de' }).accepted, true);
+    assert.equal(getMissingGermanArticleHint('Auto', 'das Auto'), 'das');
+    assert.equal(getMissingGermanArticleHint('der Auto', 'das Auto'), null);
+});
+
+test('German writing accepts configured German alternatives', () => {
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'PKW', expectedAnswer: 'Auto|PKW', answerLanguage: 'de' }).accepted, true);
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'سيارة', expectedAnswer: 'Auto|PKW', answerLanguage: 'de' }).accepted, false);
+});
+
+test('explicit German writing filters words missing either Arabic or German', () => {
+    assert.equal(isValidGermanWritingWord({ german: 'Haus', arabic: 'بيت' }), true);
+    assert.equal(isValidGermanWritingWord({ german: '', arabic: 'بيت' }), false);
+    assert.equal(isValidGermanWritingWord({ german: 'Haus', arabic: '' }), false);
 });
 
 test('collection writing and fast modes reuse train typed route and central matcher', () => {
@@ -1734,7 +1762,7 @@ test('collection training opens a mode picker before starting', () => {
     assert.match(trainSource, /showCollectionTrainingModePicker/);
     assert.match(trainSource, /train_col_mode:\$\{item\.id\}/);
     assert.match(sharingSource, /train_col_mode:\$\{collectionId\}/);
-    for (const label of ['✍️ كتابة', '🔘 اختيارات', '🎲 مختلط', '⚡ سريع']) {
+    for (const label of ['✍️ كتابة بالألمانية', '🔘 اختيارات', '🎲 مختلط', '⚡ سريع']) {
         assert.match(trainSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(trainSource, /train_col_start:\$\{collectionId\}:writing/);
@@ -1754,7 +1782,14 @@ test('collection training modes map to writing-only and multiple-choice-only que
 
     const writingQuestion = buildTrainingQuestion(words, words[0], 'typing', 0);
     assert.equal(writingQuestion.options.length, 0);
-    assert.ok(['typing_de', 'typing_ar'].includes(writingQuestion.type));
+    assert.equal(writingQuestion.type, 'typing_de');
+    assert.equal(writingQuestion.direction, 'ar_de');
+    assert.equal(writingQuestion.prompt, 'سيارة');
+    assert.equal(writingQuestion.answer, 'Auto');
+
+    const secondWritingQuestion = buildTrainingQuestion(words, words[1], 'typing', 1);
+    assert.equal(secondWritingQuestion.type, 'typing_de');
+    assert.equal(secondWritingQuestion.direction, 'ar_de');
 
     const choicesQuestion = buildTrainingQuestion(words, words[0], 'de_ar', 0);
     assert.equal(choicesQuestion.type, 'german_to_arabic');
@@ -1771,11 +1806,11 @@ test('collection training finish screen keeps same type restart and mode change 
 
     assert.match(trainSource, /collectionTrainingMode/);
     assert.match(trainSource, /collectionTrainingModeLabel/);
-    assert.match(trainSource, /🎛 النوع:/);
+    assert.match(trainSource, /🎯 النوع:/);
     assert.match(trainSource, /🔁 إعادة نفس النوع/);
-    assert.match(trainSource, /train_col_start:\$\{collectionId\}:\$\{collectionTrainingMode \?\? 'mixed'\}/);
+    assert.match(trainSource, /train_col_start:\$\{data\.collectionId\}:\$\{data\.collectionTrainingMode \?\? 'mixed'\}/);
     assert.match(trainSource, /🎛 تغيير نوع التدريب/);
-    assert.match(trainSource, /train_col_mode:\$\{collectionId\}/);
+    assert.match(trainSource, /train_col_mode:\$\{data\.collectionId\}/);
     assert.match(trainSource, /📚 اختيار مجموعة أخرى/);
 });
 
@@ -1852,7 +1887,8 @@ test('typed challenge answers use the central written matcher', () => {
 
     assert.match(challengeSource, /evaluateWrittenAnswer\(\{\s*userAnswer: answerText/s);
     assert.match(challengeSource, /expectedAnswer: active\.answer/);
-    assert.match(challengeSource, /answerLanguage: active\.direction === 'de_ar' \? 'ar' : 'de'/);
+    assert.match(challengeSource, /writtenAnswerLanguageForChallengeQuestion\(active\)/);
+    assert.match(challengeSource, /getMissingGermanArticleHint\(answerText, active\.answer\)/);
     assert.doesNotMatch(challengeSource, /normalizeAnswer\(answerText\) === normalizeAnswer\(active\.answer\)/);
 });
 
@@ -1989,7 +2025,7 @@ test('user-facing operations end with useful navigation buttons', () => {
     assert.match(addWordSource, /➕ إضافة كلمة أخرى/);
     assert.match(addWordSource, /📂 كلماتي/);
     assert.match(trainSource, /trainingFinishedKeyboard/);
-    assert.match(trainSource, /🔁 تدريب جديد/);
+    assert.match(trainSource, /🔁 إعادة نفس النوع/);
     assert.match(trainSource, /🔥 درّب الكلمات الغلط/);
     assert.match(aiSource, /showWordDetailPanel\(ctx, wordId, 'تم حفظ اقتراح الذكاء الاصطناعي ✅'\)/);
     assert.match(aiSource, /showWordDetailPanel\(ctx, wordId\)/);
@@ -2816,14 +2852,15 @@ test('collection challenge supports training-style modes without migrations', ()
     const repoSource = fs.readFileSync(new URL('../src/repositories/challengeRepository.ts', import.meta.url), 'utf8');
     const addWordSource = fs.readFileSync(new URL('../src/commands/addword.ts', import.meta.url), 'utf8');
 
-    for (const label of ['✅ اختيارات', '🎲 مختلط', '🧩 حروف ناقصة', '🇮🇶 عربي → ألماني', '🇩🇪 ألماني → عربي', '✍️ كتابة']) {
+    for (const label of ['✅ اختيارات', '🎲 مختلط', '🧩 حروف ناقصة', '🇮🇶 عربي → ألماني', '🇩🇪 ألماني → عربي', '✍️ كتابة بالألمانية']) {
         assert.match(challengeSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(challengeSource, /collection_challenge_mode_\$\{collectionId\}_missing/);
     assert.match(challengeSource, /challenge_collection_opp_\$\{collectionId\}_\$\{modeAlias\}_\$\{count\}_\$\{candidate\.user_id\}/);
     assert.match(challengeSource, /buildTrainingQuestion\(words, word, trainingMode, index\)/);
+    assert.match(challengeSource, /mode === 'typing' \? rawWords\.filter\(isValidGermanWritingWord\) : rawWords/);
     assert.match(challengeSource, /evaluateWrittenAnswer\(\{\s*userAnswer: answerText/s);
-    assert.match(challengeSource, /answerLanguage: active\.direction === 'de_ar' \? 'ar' : 'de'/);
+    assert.match(challengeSource, /writtenAnswerLanguageForChallengeQuestion\(active\)/);
     assert.match(challengeSource, /parseStoredChallengeOptions/);
     assert.match(challengeSource, /requiresMultipleChoiceDistractors/);
     assert.match(challengeSource, /هذا النوع يحتاج 3 كلمات على الأقل/);

@@ -21,6 +21,7 @@ import {
 import {
     evaluateWrittenAnswer,
     formatExpectedAnswers,
+    getMissingGermanArticleHint,
     isAcceptedArabicAnswer,
     isAcceptedGermanAnswer,
     parseAcceptedAnswers,
@@ -54,6 +55,7 @@ export interface TrainingSessionData {
     wrongWordIds: number[];
     startTime: number;
     planId?: number;
+    mode?: TrainingMode;
     collectionId?: number;
     collectionTitle?: string;
     collectionTrainingMode?: CollectionTrainingMode;
@@ -196,7 +198,7 @@ async function showTrainOptions(ctx: BotContext): Promise<void> {
         .text('📚 تدريب على مجموعة', 'train_collection_picker:page:1').row()
         .text('⚡ تدريب سريع', 'train_quick')
         .text('🎲 مختلط', 'train_mixed').row()
-        .text('✍️ كتابة', 'train_typing')
+        .text('✍️ كتابة بالألمانية', 'train_typing')
         .text('🧩 حروف ناقصة', 'train_missing').row()
         .text('🇩🇪 ألماني → عربي', 'train_de_ar').row()
         .text('🇮🇶 عربي → ألماني', 'train_ar_de').row()
@@ -258,7 +260,7 @@ async function showCollectionTrainingModePicker(ctx: BotContext, collectionId: n
     }
 
     const keyboard = new InlineKeyboard()
-        .text('✍️ كتابة', `train_col_start:${collectionId}:writing`)
+        .text('✍️ كتابة بالألمانية', `train_col_start:${collectionId}:writing`)
         .text('🔘 اختيارات', `train_col_start:${collectionId}:choices`).row()
         .text('🎲 مختلط', `train_col_start:${collectionId}:mixed`)
         .text('⚡ سريع', `train_col_start:${collectionId}:fast`).row()
@@ -286,7 +288,7 @@ function collectionTrainingModeToTrainingMode(mode: CollectionTrainingMode): Tra
 
 function collectionTrainingModeLabel(mode?: CollectionTrainingMode): string {
     const labels: Record<CollectionTrainingMode, string> = {
-        writing: 'كتابة',
+        writing: 'كتابة بالألمانية',
         choices: 'اختيارات',
         mixed: 'مختلط',
         fast: 'سريع',
@@ -330,14 +332,17 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
         await replaceWithText(ctx, '⏳ جاري تجهيز تدريب جديد...', mainMenuKeyboard());
     }
 
-    const words = mode === 'hard'
+    const rawWords = mode === 'hard'
         ? allWords.filter(w => isHardWord({ wrongCount: w.wrong_count, correctCount: w.correct_count, status: w.status, difficultyScore: w.difficulty_score, isHard: Boolean(w.stats_is_hard), consecutiveWrong: w.consecutive_wrong }))
         : allWords;
+    const words = mode === 'typing' ? rawWords.filter(isValidGermanWritingWord) : rawWords;
 
     if (words.length === 0) {
         await replaceWithText(
             ctx,
-            `تعذر بدء التدريب حالياً.\nتأكد أن عندك كلمات كافية.`,
+            mode === 'typing'
+                ? `ℹ️ لا توجد كلمات تحتوي ترجمة عربية صالحة للتدريب الكتابي.`
+                : `تعذر بدء التدريب حالياً.\nتأكد أن عندك كلمات كافية.`,
             trainingStartErrorKeyboard()
         );
         return;
@@ -373,6 +378,7 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
         answeredQuestionIndexes: [],
         wrongWordIds: [],
         startTime: Date.now(),
+        mode,
         ...(planId ? { planId } : {}),
         ...(collectionId ? { collectionId, collectionTitle, collectionTrainingMode } : {}),
     });
@@ -422,7 +428,7 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
         await replaceWithText(
             ctx,
             `✅ انتهى التدريب!\n\n📊 النتيجة: 0/0 (0%)\n❌ الأخطاء: 0\n🎯 XP: +0`,
-            trainingFinishedKeyboard(0)
+            trainingFinishedKeyboard({ wrongWordIds: [], mode: 'mixed' })
         );
         return;
     }
@@ -436,14 +442,15 @@ async function showTrainingQuestion(ctx: BotContext, userId: number): Promise<vo
         await deleteBotSession(ctx.db, userId, 'train');
         await recordTrainingSessionComplete(ctx.db, userId, { total, correct, wrong });
 
+        const typeText = `\n🎯 النوع: ${finishedTrainingModeLabel(session.data)}\n`;
         const collectionText = session.data.collectionTitle
-            ? `\n📚 المجموعة: ${session.data.collectionTitle}\n🎛 النوع: ${collectionTrainingModeLabel(session.data.collectionTrainingMode)}\n`
-            : '\n\n';
+            ? `\n📚 المجموعة: ${session.data.collectionTitle}${typeText}`
+            : typeText;
 
         await replaceWithText(
             ctx,
             `✅ انتهى التدريب!${collectionText}📊 النتيجة: ${correct}/${total} (${percent}%)\n❌ الأخطاء: ${wrong}\n🎯 XP: +${correct * 2}`,
-            trainingFinishedKeyboard(session.data.wrongWordIds.length ?? 0, session.data.collectionId, session.data.collectionTrainingMode)
+            trainingFinishedKeyboard(session.data)
         );
         return;
     }
@@ -636,9 +643,11 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
         }
         await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', session.data);
         const prefix = grade.verdict === 'almost' ? '🟡 قريب' : '❌ خطأ';
+        const articleHint = articleHintForTrainingQuestion(answerText, current);
         await replaceWithText(
             ctx,
             `${prefix}\n\nجوابك: *${answerText.trim()}*\nالصحيح: *${formatTrainingCorrectAnswer(current)}*` +
+            (articleHint ? `\n\n💡 لا تنسَ أداة التعريف: ${articleHint}` : '') +
             (grade.feedback ? `\n\n${grade.feedback}` : ''),
             new InlineKeyboard()
                 .text('🔊 نطق الصحيح', `tts:word:${current.word_id}:ctx:training_session`).row()
@@ -705,17 +714,17 @@ function isQuestionAnswered(data: TrainingSessionData, questionIndex: number): b
     return (data.answeredQuestionIndexes ?? []).includes(questionIndex);
 }
 
-function trainingFinishedKeyboard(hasWrongWords: number, collectionId?: number, collectionTrainingMode?: CollectionTrainingMode): InlineKeyboard {
+function trainingFinishedKeyboard(data: Pick<TrainingSessionData, 'wrongWordIds' | 'collectionId' | 'collectionTrainingMode' | 'mode'>): InlineKeyboard {
     const keyboard = new InlineKeyboard();
-    if (collectionId) {
-        keyboard.text('🔁 إعادة نفس النوع', `train_col_start:${collectionId}:${collectionTrainingMode ?? 'mixed'}`).row();
-        keyboard.text('🎛 تغيير نوع التدريب', `train_col_mode:${collectionId}`).row();
+    if (data.collectionId) {
+        keyboard.text('🔁 إعادة نفس النوع', `train_col_start:${data.collectionId}:${data.collectionTrainingMode ?? 'mixed'}`).row();
+        keyboard.text('🎛 تغيير نوع التدريب', `train_col_mode:${data.collectionId}`).row();
         keyboard.text('📚 اختيار مجموعة أخرى', 'train_collection_picker:page:1').row();
     } else {
-        keyboard.text('🔁 تدريب جديد', 'train_mixed').row();
+        keyboard.text('🔁 إعادة نفس النوع', trainingModeRestartCallback(data.mode ?? 'mixed')).row();
     }
-    if (hasWrongWords > 0) keyboard.text('🔥 درّب الكلمات الغلط', 'train_hard').row();
-    if (!collectionId) keyboard.text('📚 راجع الآن', 'menu_learn').row();
+    if ((data.wrongWordIds?.length ?? 0) > 0) keyboard.text('🔥 درّب الكلمات الغلط', 'train_hard').row();
+    if (!data.collectionId) keyboard.text('📚 راجع الآن', 'menu_learn').row();
     keyboard.text('🏠 الرئيسية', 'menu_main');
     return keyboard;
 }
@@ -808,18 +817,19 @@ export function buildTrainingQuestion(
 function chooseQuestionType(mode: TrainingMode, index: number, hasExample: boolean): TrainingQuestionType {
     if (mode === 'de_ar') return 'german_to_arabic';
     if (mode === 'ar_de') return 'arabic_to_german';
-    if (mode === 'typing') return index % 2 === 0 ? 'typing_de' : 'typing_ar';
+    if (mode === 'typing') return 'typing_de';
     if (mode === 'missing') return index % 2 === 0 ? 'missing_letters' : 'first_last_hint';
     const types: TrainingQuestionType[] = [
-        'multiple_choice',
-        'german_to_arabic',
         'arabic_to_german',
         'typing_de',
-        'typing_ar',
+        'multiple_choice',
+        'arabic_to_german',
+        'typing_de',
+        'german_to_arabic',
         'missing_letters',
         'first_last_hint',
-        ...(hasExample ? ['example_context' as TrainingQuestionType] : []),
-        'pictogram_recall',
+        'arabic_to_german',
+        hasExample ? 'example_context' : 'pictogram_recall',
     ];
     return types[index % types.length];
 }
@@ -851,6 +861,48 @@ function writtenAnswerLanguageForTrainingQuestion(question: TrainingQuestion): A
 
 function formatTrainingCorrectAnswer(question: TrainingQuestion): string {
     return formatExpectedAnswers(question.answer, writtenAnswerLanguageForTrainingQuestion(question));
+}
+
+function articleHintForTrainingQuestion(userAnswer: string, question: TrainingQuestion): string | null {
+    if (writtenAnswerLanguageForTrainingQuestion(question) !== 'de') return null;
+    return getMissingGermanArticleHint(userAnswer, question.answer);
+}
+
+export function isValidGermanWritingWord(word: { german?: string | null; arabic?: string | null }): boolean {
+    return Boolean(word.german?.trim() && word.arabic?.trim());
+}
+
+function finishedTrainingModeLabel(data: Pick<TrainingSessionData, 'mode' | 'collectionTrainingMode'>): string {
+    if (data.collectionTrainingMode) return collectionTrainingModeLabel(data.collectionTrainingMode);
+    return trainingModeLabel(data.mode ?? 'mixed');
+}
+
+function trainingModeLabel(mode: TrainingMode): string {
+    const labels: Record<TrainingMode, string> = {
+        mixed: 'مختلط',
+        typing: 'كتابة بالألمانية',
+        missing: 'حروف ناقصة',
+        de_ar: 'ألماني → عربي',
+        ar_de: 'عربي → ألماني',
+        hard: 'الكلمات الصعبة',
+        exam: 'اختبار مكثف',
+        plan: 'خطة المراجعة',
+    };
+    return labels[mode] ?? 'مختلط';
+}
+
+function trainingModeRestartCallback(mode: TrainingMode): string {
+    const callbacks: Record<TrainingMode, string> = {
+        mixed: 'train_mixed',
+        typing: 'train_typing',
+        missing: 'train_missing',
+        de_ar: 'train_de_ar',
+        ar_de: 'train_ar_de',
+        hard: 'train_hard',
+        exam: 'train_exam',
+        plan: 'review_due',
+    };
+    return callbacks[mode] ?? 'train_mixed';
 }
 
 export {

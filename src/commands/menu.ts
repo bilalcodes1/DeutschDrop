@@ -150,7 +150,7 @@ function trainCountKeyboard(): InlineKeyboard {
         .text('📚 تدريب على مجموعة', 'train_collection_picker:page:1').row()
         .text('⚡ تدريب سريع', 'train_quick')
         .text('🎲 مختلط', 'train_mixed').row()
-        .text('✍️ كتابة', 'train_typing')
+        .text('✍️ كتابة بالألمانية', 'train_typing')
         .text('🧩 حروف ناقصة', 'train_missing').row()
         .text('🇩🇪 ألماني → عربي', 'train_de_ar').row()
         .text('🇮🇶 عربي → ألماني', 'train_ar_de').row()

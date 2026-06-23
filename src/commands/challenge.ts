@@ -8,10 +8,10 @@ import { countCollectionsByUser, getCollectionById, getCollectionsByUser, getCol
 import { unlockAchievement } from '../services/achievements';
 import { competitionNotificationsEnabled, displayUserName, sendTelegramMessage } from '../services/notifications';
 import { addXp } from '../services/xpLevels';
-import { evaluateWrittenAnswer, formatExpectedAnswers } from '../services/trainingAnswerMatcher';
+import { evaluateWrittenAnswer, formatExpectedAnswers, getMissingGermanArticleHint, type AnswerLanguage } from '../services/trainingAnswerMatcher';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
-import { buildTrainingQuestion, questionLabel, type TrainingMode, type TrainingQuestion, type TrainingQuestionType } from './train';
+import { buildTrainingQuestion, isValidGermanWritingWord, questionLabel, type TrainingMode, type TrainingQuestion, type TrainingQuestionType } from './train';
 
 type CollectionChallengeMode = 'multiple_choice' | 'mixed' | 'missing' | 'ar_de' | 'de_ar' | 'typing';
 
@@ -194,7 +194,7 @@ async function showCollectionChallengeModes(ctx: BotContext, collectionId: numbe
         .text('🧩 حروف ناقصة', `collection_challenge_mode_${collectionId}_missing`).row()
         .text('🇮🇶 عربي → ألماني', `collection_challenge_mode_${collectionId}_ar_de`).row()
         .text('🇩🇪 ألماني → عربي', `collection_challenge_mode_${collectionId}_de_ar`).row()
-        .text('✍️ كتابة', `collection_challenge_mode_${collectionId}_typing`).row()
+        .text('✍️ كتابة بالألمانية', `collection_challenge_mode_${collectionId}_typing`).row()
         .text('⬅️ رجوع', `collection:view:${collectionId}:page:1`)
         .text('🏠 الرئيسية', 'menu_main'));
 }
@@ -350,16 +350,19 @@ async function createCollectionChallenge(ctx: BotContext, collectionId: number, 
         await replaceWithText(ctx, '⚠️ هذا التحدي غير متاح.', mainMenuKeyboard());
         return;
     }
-    const words = await getCollectionWords(ctx.db, collectionId, 100, 0);
+    const rawWords = await getCollectionWords(ctx.db, collectionId, 100, 0);
+    const words = mode === 'typing' ? rawWords.filter(isValidGermanWritingWord) : rawWords;
     if (words.length < count) {
-        await replaceWithText(ctx, `هذه المجموعة تحتوي ${words.length} كلمة فقط. اختر عدد أسئلة أقل أو أضف كلمات.`, new InlineKeyboard()
+        await replaceWithText(ctx, mode === 'typing'
+            ? `ℹ️ لا توجد كلمات كافية تحتوي ترجمة عربية صالحة لتحدي الكتابة بالألمانية.`
+            : `هذه المجموعة تحتوي ${words.length} كلمة فقط. اختر عدد أسئلة أقل أو أضف كلمات.`, new InlineKeyboard()
             .text('⬅️ رجوع', `collection:view:${collectionId}:page:1`)
             .text('🏠 الرئيسية', 'menu_main'));
         return;
     }
     if (requiresMultipleChoiceDistractors(mode) && words.length < 3) {
         await replaceWithText(ctx, 'هذا النوع يحتاج 3 كلمات على الأقل داخل المجموعة حتى تتكون خيارات كافية. جرّب كتابة أو أضف كلمات أكثر.', new InlineKeyboard()
-            .text('✍️ كتابة', `collection_challenge_mode_${collectionId}_typing`).row()
+            .text('✍️ كتابة بالألمانية', `collection_challenge_mode_${collectionId}_typing`).row()
             .text('⬅️ رجوع', `collection_challenge_count_${collectionId}`)
             .text('🏠 الرئيسية', 'menu_main'));
         return;
@@ -468,19 +471,23 @@ async function handleTypedChallengeAnswer(ctx: BotContext, current: ChallengeQue
     const active = session.data.questions[session.data.currentIndex];
     if (active.word_id !== current.word_id || active.options.length > 0) return;
 
+    const answerLanguage = writtenAnswerLanguageForChallengeQuestion(active);
     const evaluation = evaluateWrittenAnswer({
         userAnswer: answerText,
         expectedAnswer: active.answer,
-        answerLanguage: active.direction === 'de_ar' ? 'ar' : 'de',
+        answerLanguage,
     });
     const isCorrect = evaluation.accepted;
     if (isCorrect) session.data.correctCount++;
     session.data.currentIndex++;
     await saveBotSession(ctx.db, user.user_id, 'challenge', session.data, 120);
+    const articleHint = answerLanguage === 'de'
+        ? getMissingGermanArticleHint(answerText, active.answer)
+        : null;
     await showChallengeQuestion(
         ctx,
         user.user_id,
-        isCorrect ? '✅ صحيح!' : `❌ خطأ\nجوابك: *${answerText.trim()}*\nالصحيح: *${formatExpectedAnswers(active.answer, active.direction === 'de_ar' ? 'ar' : 'de')}*`
+        isCorrect ? '✅ صحيح!' : `❌ خطأ\nجوابك: *${answerText.trim()}*\nالصحيح: *${formatExpectedAnswers(active.answer, answerLanguage)}*${articleHint ? `\n\n💡 لا تنسَ أداة التعريف: ${articleHint}` : ''}`
     );
 }
 
@@ -637,9 +644,15 @@ function collectionChallengeModeLabel(mode: CollectionChallengeMode): string {
         missing: 'حروف ناقصة',
         ar_de: 'عربي → ألماني',
         de_ar: 'ألماني → عربي',
-        typing: 'كتابة',
+        typing: 'كتابة بالألمانية',
     };
     return labels[mode];
+}
+
+function writtenAnswerLanguageForChallengeQuestion(question: ChallengeQuestionData): AnswerLanguage {
+    if (question.type === 'typing_de' || question.type === 'missing_letters' || question.type === 'first_last_hint') return 'de';
+    if (question.type === 'typing_ar') return 'ar';
+    return question.direction === 'de_ar' ? 'ar' : 'de';
 }
 
 function collectionModeToTrainingMode(mode: CollectionChallengeMode): TrainingMode {
