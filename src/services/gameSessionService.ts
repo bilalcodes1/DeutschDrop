@@ -3,8 +3,20 @@ import type { Env, User, Word } from '../models';
 import { queryAll, queryOne, run } from '../db/queries';
 import { addXp, getTotalXp } from './xpLevels';
 import { getVisualForWord, getRequiredVisualForWord, type GameVisual } from './gameVisualService';
+import { getActiveWordImage, getCollectionImageReadiness, getImageModeWordsForCollection } from '../repositories/wordImageRepository';
 import { pickWinnerByScoreAndDuration } from '../repositories/challengeRepository';
 import { displayUserName, sendTelegramMessage, sendTemporaryTelegramMessage } from './notifications';
+import {
+    applyAdventureSpeechResult,
+    createInitialAdventureState,
+    isArticleNearMiss,
+    type AdventureDifficulty,
+    type AdventureMode,
+    type AdventureRoundState,
+    type AdventureSource,
+} from './adventureGame';
+import { assertSafeImageUrl } from './imageSearch/imageValidationService';
+import { claimAdventureRewardOnce, upsertAdventureProgress } from './adventureProgress';
 
 export const GAME_NOTIFICATION_DELETE_AFTER_SECONDS = 10;
 export const GAME_QUESTION_LIMIT = 100;
@@ -16,6 +28,7 @@ const GAME_CHALLENGE_TTL_HOURS = 24;
 
 export type GameChallengeSourceType = 'mine' | 'opponent' | 'mixed';
 export type GameChallengeRole = 'creator' | 'opponent';
+export type CollectionGameMode = 'speech_rocket' | AdventureMode;
 
 export interface PlayableCollection {
     id: number;
@@ -31,6 +44,9 @@ export interface GameQuestion {
     questionIndex: number;
     wordId: number;
     visual: GameVisual;
+    visualType?: 'emoji' | 'image';
+    imageAssetId?: number | null;
+    imageAttribution?: string | null;
     arabicMeaning: string;
     correctAnswer: string;
     answered?: boolean;
@@ -45,7 +61,9 @@ export interface GameQuestion {
 }
 
 export interface GameSessionData {
-    mode: 'speech_rocket';
+    mode: CollectionGameMode;
+    source?: AdventureSource;
+    adventure?: AdventureRoundState;
     speechLang: 'de-DE';
     collectionTitle: string;
     challengeId?: number;
@@ -116,15 +134,29 @@ export interface GameChallengeRecord {
 
 export interface PublicGameQuestion {
     questionIndex: number;
+    wordId: number;
+    visualType: 'emoji' | 'image';
     visualEmoji: string;
+    imageUrl?: string;
+    imageAttribution?: string | null;
     arabicMeaning: string;
+    correctPronunciationText: string;
     attemptsLeft: number;
     timeLimit: number;
     timeLimitSeconds: number;
 }
 
 export interface PublicGameState {
-    mode: 'speech_rocket';
+    mode: CollectionGameMode;
+    source?: AdventureSource;
+    difficulty?: AdventureDifficulty;
+    hearts?: number;
+    combo?: number;
+    bestCombo?: number;
+    bossHealth?: number;
+    playerHealth?: number;
+    world?: number;
+    stage?: number;
     speechLang: 'de-DE';
     collectionTitle: string;
     totalQuestions: number;
@@ -147,6 +179,9 @@ export interface PublicGameState {
     currentQuestion: PublicGameQuestion | null;
     failedQuestion?: {
         failedVisualEmoji: string;
+        failedVisualType?: 'emoji' | 'image';
+        failedImageUrl?: string;
+        failedImageAttribution?: string | null;
         failedArabicMeaning: string;
         correctAnswer: string;
         correctPronunciationText: string;
@@ -160,6 +195,18 @@ export class MissingGameVisualError extends Error {
         public readonly collectionId: number
     ) {
         super('missing_visual');
+    }
+}
+
+export class ImageModeNotReadyError extends Error {
+    constructor(
+        public readonly collection: PlayableCollection,
+        public readonly total: number,
+        public readonly selected: number,
+        public readonly excluded: number,
+        public readonly missing: number
+    ) {
+        super(selected <= 0 && missing === 0 ? 'image_mode_empty' : 'image_mode_not_ready');
     }
 }
 
@@ -291,15 +338,31 @@ export async function canUseCollectionForGame(db: D1Database, userId: number, co
     );
 }
 
-export async function createGameSession(db: D1Database, userId: number, collectionId: number): Promise<{ token: string; collection: PlayableCollection; totalQuestions: number }> {
+export interface CreateGameSessionOptions {
+    mode?: CollectionGameMode;
+    difficulty?: AdventureDifficulty;
+    limit?: number;
+    source?: AdventureSource;
+}
+
+export async function createGameSession(
+    db: D1Database,
+    userId: number,
+    collectionId: number,
+    options: CreateGameSessionOptions = {}
+): Promise<{ token: string; collection: PlayableCollection; totalQuestions: number }> {
     const collection = await canUseCollectionForGame(db, userId, collectionId);
     if (!collection) throw new Error('collection_not_allowed');
     if ((collection.word_count ?? 0) <= 0) throw new Error('collection_empty');
 
-    const words = await getCollectionWordsForGame(db, userId, collectionId, GAME_QUESTION_LIMIT);
+    const mode = options.mode ?? 'speech_rocket';
+    const limit = normalizeGameLimit(options.limit);
+    const words = mode === 'image_speech'
+        ? await getImageModeWordsOrThrow(db, userId, collection, limit)
+        : await getCollectionWordsForGame(db, userId, collectionId, limit);
     if (words.length === 0) throw new Error('collection_empty');
 
-    return createGameSessionFromWords(db, userId, collection, words);
+    return createGameSessionFromWords(db, userId, collection, words, undefined, { ...options, mode, limit });
 }
 
 async function createGameSessionFromWords(
@@ -307,11 +370,25 @@ async function createGameSessionFromWords(
     userId: number,
     collection: PlayableCollection,
     words: Word[],
-    challenge?: { challengeId: number; role: GameChallengeRole; opponentUserId: number; sourceType: GameChallengeSourceType }
+    challenge?: { challengeId: number; role: GameChallengeRole; opponentUserId: number; sourceType: GameChallengeSourceType },
+    options: CreateGameSessionOptions = {}
 ): Promise<{ token: string; tokenHash: string; collection: PlayableCollection; totalQuestions: number }> {
-    const questions = await buildQuestions(db, words);
+    const mode = options.mode ?? 'speech_rocket';
+    const difficulty = options.difficulty ?? 'normal';
+    const questions = await buildQuestions(db, collection.owner_user_id, collection.id, words, mode === 'image_speech');
     const data: GameSessionData = {
-        mode: 'speech_rocket',
+        mode,
+        source: options.source ?? (challenge ? 'collection' : 'collection'),
+        adventure: mode === 'speech_rocket'
+            ? undefined
+            : createInitialAdventureState({
+                source: options.source ?? 'collection',
+                collectionId: collection.id,
+                mode: mode as AdventureMode,
+                difficulty,
+                totalQuestions: questions.length,
+                rewardIdempotencyKey: crypto.randomUUID(),
+            }),
         speechLang: 'de-DE',
         collectionTitle: collection.title,
         challengeId: challenge?.challengeId,
@@ -350,7 +427,7 @@ async function createGameSessionFromWords(
 
 export async function getPublicGameState(db: D1Database, token: string): Promise<PublicGameState> {
     const session = await requireValidSession(db, token);
-    return toPublicState(session);
+    return toPublicState(session, token);
 }
 
 export async function createGameChallenge(
@@ -439,7 +516,7 @@ export async function startGameChallengeForUser(
         role,
         opponentUserId,
         sourceType: challenge.source_type,
-    });
+    }, { mode: 'speech_rocket', source: 'collection' });
 
     await run(
         db,
@@ -464,7 +541,7 @@ export async function answerGameQuestion(
 ): Promise<PublicGameState & { correct: boolean; tryAgain?: boolean; attemptsLeft?: number; correctAnswer?: string }> {
     const session = await requireValidSession(db, token);
     if (session.finished === 1) {
-        const state = toPublicState(session);
+        const state = toPublicState(session, token);
         return { ...state, correct: false, correctAnswer: state.failedQuestion?.correctAnswer };
     }
 
@@ -477,7 +554,13 @@ export async function answerGameQuestion(
     const spokenAnswers = [transcript, ...alternatives, interimTranscript].map(normalizeRawTranscript).filter(Boolean);
     const safeReason = answerReason.slice(0, 40);
     const isNoSpeech = spokenAnswers.length === 0 && (safeReason === 'no_speech' || safeReason === 'speech_error');
-    const correct = spokenAnswers.some(answer => isAcceptedGermanAnswer(answer, question.correctAnswer));
+    const isAdventure = data.mode !== 'speech_rocket';
+    const difficulty = data.adventure?.difficulty ?? 'normal';
+    const near = isAdventure
+        && spokenAnswers.some(answer => isArticleNearMiss(answer, question.correctAnswer, difficulty));
+    const correct = isAdventure
+        ? !near && spokenAnswers.some(answer => isAcceptedGermanAnswerStrict(answer, question.correctAnswer))
+        : spokenAnswers.some(answer => isAcceptedGermanAnswer(answer, question.correctAnswer));
     question.answerReason = safeReason;
     question.confidence = normalizeConfidence(confidence);
     question.interimTranscript = interimTranscript.slice(0, 120);
@@ -487,7 +570,7 @@ export async function answerGameQuestion(
             await updateSessionData(db, session.token_hash, data, 0, session.xp_awarded);
             const updated: GameSessionRecord = { ...session, session_data: JSON.stringify(data), finished: 0 };
             return {
-                ...toPublicState(updated),
+                ...toPublicState(updated, token),
                 correct: false,
                 tryAgain: true,
                 attemptsLeft: Math.max(0, GAME_MAX_ATTEMPTS - (question.attemptsMade ?? 0)),
@@ -499,6 +582,18 @@ export async function answerGameQuestion(
     question.transcript = transcript;
     question.alternatives = alternatives.slice(0, 3);
     question.isCorrect = correct;
+    if (near) {
+        question.answerReason = 'near_article';
+        await updateSessionData(db, session.token_hash, data, 0, session.xp_awarded);
+        const updated: GameSessionRecord = { ...session, session_data: JSON.stringify(data), finished: 0 };
+        return {
+            ...toPublicState(updated, token),
+            correct: false,
+            tryAgain: true,
+            attemptsLeft: Math.max(0, GAME_MAX_ATTEMPTS - (question.attemptsMade ?? 0)),
+            correctAnswer: question.correctAnswer,
+        };
+    }
     if (correct) question.noSpeechCount = 0;
     if (correct) {
         question.answered = true;
@@ -507,7 +602,19 @@ export async function answerGameQuestion(
         data.streak += 1;
         data.bestStreak = Math.max(data.bestStreak, data.streak);
         data.heightMeters += heightGainForCorrect(data.correctCount, data.streak);
-        data.score = calculateGameScore(data.heightMeters, data.correctCount);
+        if (data.adventure) {
+            const adventureResult = applyAdventureSpeechResult(data.adventure, question.wordId, 'correct', {
+                firstAttempt: question.attemptsMade <= 1,
+                hinted: false,
+                responseMs: 0,
+                hardWord: data.mode === 'hard_words',
+            });
+            data.adventure = adventureResult.state;
+            data.score = data.adventure.score;
+            data.bestStreak = Math.max(data.bestStreak, data.adventure.bestCombo);
+        } else {
+            data.score = calculateGameScore(data.heightMeters, data.correctCount);
+        }
         data.currentIndex += 1;
         data.gameWon = data.currentIndex >= data.questions.length;
     } else {
@@ -518,7 +625,7 @@ export async function answerGameQuestion(
             await updateSessionData(db, session.token_hash, data, 0, session.xp_awarded);
             const updated: GameSessionRecord = { ...session, session_data: JSON.stringify(data), finished: 0 };
             return {
-                ...toPublicState(updated),
+                ...toPublicState(updated, token),
                 correct: false,
                 tryAgain: true,
                 attemptsLeft,
@@ -527,6 +634,15 @@ export async function answerGameQuestion(
 
         question.answered = true;
         data.streak = 0;
+        if (data.adventure) {
+            const adventureResult = applyAdventureSpeechResult(data.adventure, question.wordId, safeReason === 'speech_error' ? 'technical_failure' : 'incorrect', {
+                firstAttempt: false,
+                hinted: false,
+                responseMs: 0,
+            });
+            data.adventure = adventureResult.state;
+            data.score = data.adventure.score;
+        }
         data.gameOver = true;
         data.gameWon = false;
         data.failedQuestion = question;
@@ -540,7 +656,7 @@ export async function answerGameQuestion(
 
     const updated: GameSessionRecord = { ...session, session_data: JSON.stringify(data), finished };
     return {
-        ...toPublicState(updated),
+        ...toPublicState(updated, token),
         correct,
         ...(correct ? {} : { correctAnswer: question.correctAnswer }),
     };
@@ -559,7 +675,12 @@ export async function restartGameSession(db: D1Database, token: string): Promise
         data.xpGained = 0;
         await updateSessionData(db, session.token_hash, data, 1, 1);
     }
-    const next = await createGameSession(db, session.user_id, session.collection_id);
+    const next = await createGameSession(db, session.user_id, session.collection_id, {
+        mode: data.mode,
+        difficulty: data.adventure?.difficulty,
+        source: data.source,
+        limit: data.totalQuestions,
+    });
     return { token: next.token, totalQuestions: next.totalQuestions };
 }
 
@@ -573,7 +694,7 @@ export async function finishGameSession(db: D1Database, token: string, env?: Env
     data.finishReason = sanitizeFinishReason(finishReason);
 
     if (session.xp_awarded === 1) {
-        return toPublicState(session);
+        return toPublicState(session, token);
     }
 
     const completedWords = data.completedWords ?? data.correctCount;
@@ -610,13 +731,36 @@ export async function finishGameSession(db: D1Database, token: string, env?: Env
                 finish_reason: data.finishReason,
                 result: data.challengeId ? 'pending' : null,
                 attempts_used: Object.values(data.attemptsByWord ?? {}).reduce((sum, value) => sum + Number(value || 0), 0),
-                mode: 'speech_rocket',
+                mode: data.mode,
                 game_session: session.token_hash,
             },
             allowDailyCap: true,
         });
         const after = await getTotalXp(db, session.user_id);
         xpGained = Math.max(0, after - before);
+    }
+
+    if (getChanges(claimed) > 0 && data.adventure) {
+        const rewardKey = data.adventure.rewardIdempotencyKey || `${session.token_hash}:${data.adventure.world}:${data.adventure.stage}`;
+        const rewardClaimed = await claimAdventureRewardOnce(
+            db,
+            session.user_id,
+            rewardKey,
+            data.adventure.mode === 'boss' ? 'adventure_boss' : 'adventure_round',
+            session.token_hash,
+            xpGained
+        );
+        if (rewardClaimed) {
+            await upsertAdventureProgress(
+                db,
+                session.user_id,
+                String(data.adventure.world),
+                data.adventure.stage,
+                data.gameWon ? 3 : Math.max(0, Math.min(2, Math.floor((data.correctCount / Math.max(1, data.totalQuestions)) * 3))),
+                data.score,
+                data.adventure.mode === 'boss' && data.gameWon
+            );
+        }
     }
 
     data.xpGained = xpGained;
@@ -630,7 +774,42 @@ export async function finishGameSession(db: D1Database, token: string, env?: Env
     } else if (getChanges(claimed) > 0 && env) {
         await sendGameFinishNotification(db, env, session.user_id, data, xpGained, ctx);
     }
-    return toPublicState({ ...session, session_data: JSON.stringify(data), finished: 1, xp_awarded: 1 });
+    return toPublicState({ ...session, session_data: JSON.stringify(data), finished: 1, xp_awarded: 1 }, token);
+}
+
+export async function getGameQuestionImageResponse(db: D1Database, env: Env, token: string, wordId: number): Promise<Response> {
+    const session = await requireValidSession(db, token);
+    const data = parseSessionData(session);
+    const question = data.questions.find(item => item.wordId === wordId);
+    if (!question || question.visualType !== 'image') throw new Error('question_not_found');
+    const image = await getActiveWordImage(db, session.user_id, session.collection_id, wordId);
+    if (!image || image.state !== 'selected') throw new Error('image_not_found');
+    if (image.storage_type === 'legacy' || image.hotlink_url?.startsWith('legacy:')) {
+        throw new Error('image_not_found');
+    }
+    if (image.storage_type === 'r2') {
+        if (!env.WORD_IMAGES || !image.r2_key) throw new Error('image_not_found');
+        const object = await env.WORD_IMAGES.get(image.r2_key);
+        if (!object) throw new Error('image_not_found');
+        return new Response(object.body, {
+            headers: {
+                'Content-Type': object.httpMetadata?.contentType || 'image/jpeg',
+                'Cache-Control': 'private, max-age=300',
+            },
+        });
+    }
+    if (image.hotlink_url) {
+        const safeUrl = assertSafeImageUrl(image.hotlink_url, allowedImageRedirectHosts(image.provider ?? 'legacy'));
+        return Response.redirect(safeUrl.toString(), 302);
+    }
+    throw new Error('image_not_found');
+}
+
+function allowedImageRedirectHosts(provider: string): string[] {
+    if (provider === 'pexels') return ['pexels.com', 'images.pexels.com'];
+    if (provider === 'pixabay') return ['pixabay.com', 'cdn.pixabay.com'];
+    if (provider === 'unsplash') return ['unsplash.com', 'images.unsplash.com'];
+    return [];
 }
 
 export async function getCollectionWordsForGame(db: D1Database, userId: number, collectionId: number, limit = GAME_QUESTION_LIMIT): Promise<Word[]> {
@@ -727,6 +906,35 @@ async function getWordsByIdsForGame(db: D1Database, wordIds: number[]): Promise<
     );
     const byId = new Map(rows.map(word => [word.word_id, word]));
     return ids.map(id => byId.get(id)).filter((word): word is Word => Boolean(word));
+}
+
+async function getImageModeWordsOrThrow(
+    db: D1Database,
+    userId: number,
+    collection: PlayableCollection,
+    limit: number
+): Promise<Word[]> {
+    const readiness = await getCollectionImageReadiness(db, userId, collection.id);
+    if (!readiness.isReady) {
+        throw new ImageModeNotReadyError(
+            collection,
+            readiness.totalWords,
+            readiness.selectedWords,
+            readiness.excludedWords,
+            readiness.missingWords
+        );
+    }
+    const words = await getImageModeWordsForCollection(db, userId, collection.id, limit);
+    if (words.length === 0) {
+        throw new ImageModeNotReadyError(collection, readiness.totalWords, readiness.selectedWords, readiness.excludedWords, readiness.missingWords);
+    }
+    return words as unknown as Word[];
+}
+
+function normalizeGameLimit(limit?: number): number {
+    if (!Number.isFinite(limit ?? NaN)) return GAME_QUESTION_LIMIT;
+    if (limit === -1) return GAME_QUESTION_LIMIT;
+    return Math.max(1, Math.min(GAME_QUESTION_LIMIT, Math.trunc(limit ?? GAME_QUESTION_LIMIT)));
 }
 
 async function assertWordsHaveVisuals(db: D1Database, words: Word[], collectionId: number): Promise<void> {
@@ -831,14 +1039,28 @@ async function requireValidSession(db: D1Database, token: string): Promise<GameS
     return session;
 }
 
-async function buildQuestions(db: D1Database, words: Word[]): Promise<GameQuestion[]> {
+async function buildQuestions(
+    db: D1Database,
+    imageUserId: number,
+    collectionId: number,
+    words: Word[],
+    requireImages = false
+): Promise<GameQuestion[]> {
     const questions: GameQuestion[] = [];
     for (const [index, word] of words.entries()) {
         const visual = await getVisualForWord(db, word);
+        const image = await getActiveWordImage(db, imageUserId, collectionId, word.word_id);
+        const hasImage = Boolean(image && (image.storage_type === 'r2' || image.storage_type === 'hotlink' || image.storage_type === 'telegram'));
+        if (requireImages && !hasImage) {
+            throw new Error('image_mode_word_missing');
+        }
         questions.push({
             questionIndex: index,
             wordId: word.word_id,
             visual,
+            visualType: hasImage ? 'image' : 'emoji',
+            imageAssetId: hasImage ? image?.asset_id ?? null : null,
+            imageAttribution: hasImage ? image?.attribution_text ?? null : null,
             arabicMeaning: word.arabic,
             correctAnswer: word.german,
         });
@@ -846,7 +1068,7 @@ async function buildQuestions(db: D1Database, words: Word[]): Promise<GameQuesti
     return questions;
 }
 
-function toPublicState(session: GameSessionRecord): PublicGameState {
+function toPublicState(session: GameSessionRecord, token?: string): PublicGameState {
     const data = parseSessionData(session);
     normalizeGameData(data);
     const question = session.finished === 1 || data.gameOver ? null : data.questions[data.currentIndex] ?? null;
@@ -855,7 +1077,16 @@ function toPublicState(session: GameSessionRecord): PublicGameState {
     const score = data.score ?? calculateGameScore(data.heightMeters, data.correctCount);
     const finishedAt = data.finishedAt ?? new Date().toISOString();
     return {
-        mode: 'speech_rocket',
+        mode: data.mode,
+        source: data.source,
+        difficulty: data.adventure?.difficulty,
+        hearts: data.adventure?.hearts,
+        combo: data.adventure?.combo,
+        bestCombo: data.adventure?.bestCombo,
+        bossHealth: data.adventure?.bossHealth,
+        playerHealth: data.adventure?.playerHealth,
+        world: data.adventure?.world,
+        stage: data.adventure?.stage,
         speechLang: 'de-DE',
         collectionTitle: data.collectionTitle,
         totalQuestions: data.totalQuestions,
@@ -875,10 +1106,13 @@ function toPublicState(session: GameSessionRecord): PublicGameState {
         xpGained: data.xpGained ?? 0,
         durationMs: calculateDurationMs(data.startedAt, finishedAt),
         isChallenge: Boolean(data.challengeId),
-        currentQuestion: question ? publicQuestion(question) : null,
+        currentQuestion: question ? publicQuestion(question, token) : null,
         failedQuestion: data.failedQuestion
             ? {
                 failedVisualEmoji: data.failedQuestion.visual.value,
+                failedVisualType: data.failedQuestion.visualType ?? 'emoji',
+                failedImageUrl: imageUrlForQuestion(data.failedQuestion, token),
+                failedImageAttribution: data.failedQuestion.imageAttribution ?? null,
                 failedArabicMeaning: data.failedQuestion.arabicMeaning ?? 'المعنى',
                 correctAnswer: data.failedQuestion.correctAnswer,
                 correctPronunciationText: data.failedQuestion.correctAnswer,
@@ -888,16 +1122,26 @@ function toPublicState(session: GameSessionRecord): PublicGameState {
     };
 }
 
-function publicQuestion(question: GameQuestion): PublicGameQuestion {
+function publicQuestion(question: GameQuestion, token?: string): PublicGameQuestion {
     const timeLimit = timeLimitForQuestion(question.questionIndex);
     return {
         questionIndex: question.questionIndex,
+        wordId: question.wordId,
+        visualType: question.visualType ?? 'emoji',
         visualEmoji: question.visual.value,
+        imageUrl: imageUrlForQuestion(question, token),
+        imageAttribution: question.imageAttribution ?? null,
         arabicMeaning: question.arabicMeaning ?? 'المعنى',
+        correctPronunciationText: question.correctAnswer,
         attemptsLeft: Math.max(0, GAME_MAX_ATTEMPTS - (question.attemptsMade ?? 0)),
         timeLimit,
         timeLimitSeconds: timeLimit,
     };
+}
+
+function imageUrlForQuestion(question: GameQuestion, token?: string): string | undefined {
+    if ((question.visualType ?? 'emoji') !== 'image' || !token) return undefined;
+    return `/game/api/image?token=${encodeURIComponent(token)}&wordId=${encodeURIComponent(String(question.wordId))}`;
 }
 
 function parseSessionData(session: GameSessionRecord): GameSessionData {
@@ -932,6 +1176,12 @@ export function isAcceptedGermanAnswer(answer: string, correctAnswer: string): b
         ...safeSpeechVariants(correctWithoutArticle),
     ]);
     return accepted.has(normalizedAnswer) || accepted.has(answerWithoutArticle);
+}
+
+export function isAcceptedGermanAnswerStrict(answer: string, correctAnswer: string): boolean {
+    const normalizedAnswer = normalizeSpeechTranscript(answer);
+    const normalizedCorrect = normalizeGermanSpeechAnswer(correctAnswer);
+    return normalizedAnswer === normalizedCorrect || safeSpeechVariants(normalizedCorrect).includes(normalizedAnswer);
 }
 
 export function normalizeSpeechTranscript(answer: string): string {

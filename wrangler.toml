@@ -20,6 +20,9 @@ OPENROUTER_MODEL = "openrouter/free"
 ZAI_MODEL = "glm-4.5-air"
 MISTRAL_MODEL = "mistral-small-latest"
 COHERE_MODEL = "command-r7b-12-2024"
+IMAGE_PROVIDER_ORDER = "pexels,pixabay,unsplash,legacy"
+IMAGE_SEARCH_CACHE_TTL_SECONDS = "86400"
+IMAGE_MAX_DOWNLOAD_BYTES = "1500000"
 
 [ai]
 binding = "AI"
@@ -34,6 +37,10 @@ migrations_dir = "src/db/migrations"
 [[r2_buckets]]
 binding = "GOETHE_AUDIO"
 bucket_name = "deutschdrop-goethe-audio"
+
+[[r2_buckets]]
+binding = "WORD_IMAGES"
+bucket_name = "deutschdrop-word-images"
 
 # Cron triggers for scheduled jobs
 [triggers]

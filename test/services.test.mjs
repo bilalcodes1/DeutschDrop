@@ -3014,7 +3014,7 @@ test('collection game is visible from main menu and collection pages', () => {
     assert.match(gameSource, /⚔️ تحدي شخص/);
     assert.match(gameSource, /showGameCollections\(ctx, user\.user_id, 1\)/);
     assert.match(gameSource, /game:collections:page:/);
-    assert.match(gameSource, /createGameSession\(ctx\.db, userId, collectionId\)/);
+    assert.match(gameSource, /createGameSession\(ctx\.db, userId, collectionId, \{ mode, limit, difficulty, source: 'collection' \}\)/);
     assert.match(gameSource, /url\('🌐 فتح اللعبة بالمتصفح', url\)/);
     assert.match(gameSource, /GAME_UI_VERSION/);
     assert.match(gameSource, /Safari أو Chrome/);
@@ -3153,12 +3153,13 @@ test('collection underwater worm routes reject missing token and never trust cli
     assert.match(htmlSource, /setRecoveryButton\(true\)/);
     assert.match(htmlSource, /voice-waves/);
     assert.match(htmlSource, /يستمع بالألمانية/);
-    assert.match(htmlSource, /قل الكلمة المناسبة للمعنى/);
+    assert.match(htmlSource, /انطق الكلمة الألمانية/);
     assert.match(htmlSource, /meaning\(question\.arabicMeaning\)/);
     assert.doesNotMatch(htmlSource, /meaning\(question\.correctAnswer\)|escapeHtml\(question\.correctAnswer\)/);
     const renderPlayBlock = htmlSource.slice(htmlSource.indexOf('function renderPlay'), htmlSource.indexOf('function startQuestionTimer'));
     assert.match(renderPlayBlock, /meaning\(question\.arabicMeaning\)/);
-    assert.doesNotMatch(renderPlayBlock, /visualEmoji|image_url|pictogram|ARASAAC/i);
+    assert.match(renderPlayBlock, /question\.visualType === 'image'/);
+    assert.doesNotMatch(renderPlayBlock, /escapeHtml\(question\.correctAnswer\)/);
     assert.doesNotMatch(htmlSource, /id="micBtn"|\.mic\s*\{/);
     assert.match(htmlSource, /activeRecognition\.lang = 'de-DE'/);
     assert.match(htmlSource, /if \(activeRecognition\.lang !== 'de-DE'\) activeRecognition\.lang = 'de-DE'/);
@@ -3204,7 +3205,8 @@ test('collection underwater worm routes reject missing token and never trust cli
     assert.match(htmlSource, /المجموعة/);
     assert.match(htmlSource, /\(completedWords \+ 1\) \+ ' \/ ' \+ totalWords/);
     assert.doesNotMatch(htmlSource, /totalWords \+ ' \/ ' \+ \(completedWords \+ 1\)/);
-    assert.match(htmlSource, /المحاولات/);
+    assert.match(htmlSource, /القلوب/);
+    assert.match(htmlSource, /Combo/);
     assert.match(htmlSource, /timer-fill/);
     assert.match(htmlSource, /حاول مرة ثانية/);
     assert.match(htmlSource, /ما سمعتك بوضوح/);
@@ -3236,7 +3238,8 @@ test('collection underwater worm routes reject missing token and never trust cli
     assert.doesNotMatch(htmlSource, /options\.map|data-answer|Telegram\.WebApp|web_app|choices|image_url/i);
     assert.match(serviceSource, /answerGameQuestion/);
     assert.match(serviceSource, /restartGameSession/);
-    assert.match(serviceSource, /createGameSession\(db, session\.user_id, session\.collection_id\)/);
+    assert.match(serviceSource, /createGameSession\(db, session\.user_id, session\.collection_id, \{/);
+    assert.match(serviceSource, /mode: data\.mode/);
     assert.match(serviceSource, /if \(data\.challengeId\) throw new Error\('restart_not_allowed'\)/);
     assert.match(serviceSource, /isAcceptedGermanAnswer/);
     assert.match(serviceSource, /gameOver = true/);
@@ -3351,7 +3354,7 @@ test('collection game finish awards capped XP once through addXp', () => {
     assert.match(serviceSource, /duration_ms: calculateDurationMs/);
     assert.match(serviceSource, /submitGameChallengeSessionResult/);
     assert.match(serviceSource, /allowDailyCap: true/);
-    assert.match(serviceSource, /metadata:[\s\S]*collection_id:[\s\S]*correct_count:[\s\S]*total_count:[\s\S]*total_words:[\s\S]*completed_words:[\s\S]*failed_word_id:[\s\S]*height_meters:[\s\S]*score:[\s\S]*attempts_used:[\s\S]*mode: 'speech_rocket'[\s\S]*game_session:/);
+    assert.match(serviceSource, /metadata:[\s\S]*collection_id:[\s\S]*correct_count:[\s\S]*total_count:[\s\S]*total_words:[\s\S]*completed_words:[\s\S]*failed_word_id:[\s\S]*height_meters:[\s\S]*score:[\s\S]*attempts_used:[\s\S]*mode: data\.mode[\s\S]*game_session:/);
     assert.match(serviceSource, /WHERE token_hash = \? AND xp_awarded = 0/);
     assert.match(serviceSource, /if \(getChanges\(claimed\) > 0 && xpBase > 0\)/);
     assert.match(serviceSource, /const isTerminal = session\.finished === 1 \|\| data\.gameOver \|\| data\.currentIndex >= data\.totalQuestions/);

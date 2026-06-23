@@ -379,6 +379,44 @@ export function renderCollectionGameHtml(): string {
       line-height: 1.16;
       overflow-wrap: anywhere;
     }
+    .meaning-bubble.has-image {
+      padding: clamp(13px, 4vw, 22px);
+    }
+    .question-image {
+      position: relative;
+      z-index: 1;
+      width: min(82%, 188px);
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      display: block;
+      border-radius: 28px;
+      margin: 0 auto 9px;
+      background: rgba(255,255,255,.75);
+      border: 5px solid rgba(255,255,255,.7);
+      box-shadow: 0 16px 28px rgba(4, 61, 95, .2);
+    }
+    .image-caption {
+      position: relative;
+      z-index: 1;
+      max-width: 100%;
+      font-size: clamp(15px, 4.2vw, 22px);
+      font-weight: 1000;
+      line-height: 1.12;
+      overflow-wrap: anywhere;
+    }
+    .image-attribution {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 10px;
+      z-index: 1;
+      color: rgba(6, 70, 109, .72);
+      font-size: 10px;
+      font-weight: 900;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     @keyframes bubble-float {
       0%, 100% { transform: translateY(0); }
       50% { transform: translateY(-10px); }
@@ -901,6 +939,9 @@ export function renderCollectionGameHtml(): string {
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'": '&#39;'}[c]));
     }
+    function escapeAttr(value) {
+      return escapeHtml(value);
+    }
     function isSpeechSupported() {
       return Boolean(Recognition);
     }
@@ -1181,10 +1222,10 @@ export function renderCollectionGameHtml(): string {
       const totalWords = state.totalWords || state.totalQuestions || 0;
       app.innerHTML = '<section class="screen"><div class="panel">' +
         '<div class="result-worm">' + wormMarkup('', 1) + '</div>' +
-        '<h1>Underwater Worm Speaking Game</h1>' +
+        '<h1>DeutschDrop Adventure</h1>' +
         '<p class="sub">' + escapeHtml(state.collectionTitle) + '</p>' +
         '<p class="sub">عدد الكلمات: ' + totalWords + '</p>' +
-        '<p class="notice">ستظهر فقاعة فيها المعنى العربي فقط. انطق الكلمة الألمانية حتى تأكل الدودة الفقاعة.</p>' +
+        '<p class="notice">انطق، قاتل، وتعلّم. لا يظهر الألماني قبل إجابتك.</p>' +
         '<p class="notice">إذا المايكروفون لا يعمل، افتح الرابط في Safari أو Chrome.</p>' +
         '<button class="primary" id="startBtn">🎙 تفعيل المايكروفون وابدأ</button>' +
         '</div></section>';
@@ -1215,21 +1256,30 @@ export function renderCollectionGameHtml(): string {
       const completedWords = state.completedWords ?? state.correctCount ?? 0;
       const attemptsLeft = question.attemptsLeft ?? 3;
       const bubbleStyle = bubblePositionStyle(question.questionIndex);
+      const hearts = state.hearts ?? attemptsLeft;
+      const combo = state.combo ?? state.bestStreak ?? 0;
+      const bubbleContent = question.visualType === 'image' && question.imageUrl
+        ? '<img class="question-image" src="' + escapeAttr(question.imageUrl) + '" alt="صورة السؤال">' + (state.mode === 'image_speech' ? '' : '<div class="image-caption">' + meaning(question.arabicMeaning) + '</div>') + (question.imageAttribution ? '<div class="image-attribution">' + escapeHtml(question.imageAttribution) + '</div>' : '')
+        : '<div class="meaning-text">' + meaning(question.arabicMeaning) + '</div>';
       app.innerHTML = '<section class="game">' +
         '<div class="hud">' +
         '<div class="hud-pill"><div class="hud-value" id="scoreValue">⭐ ' + state.score + '</div><div class="hud-label">النقاط</div></div>' +
-        '<div class="hud-pill"><div class="hud-value">🐚 ' + (completedWords + 1) + ' / ' + totalWords + '</div><div class="hud-label">المجموعة</div></div>' +
-        '<div class="hud-pill"><div class="hud-value" id="attemptsValue">❤️ ' + attemptsLeft + '</div><div class="hud-label">المحاولات</div></div>' +
-        '<div class="hud-pill listening-chip" id="listenChip"><div class="hud-value">🎙 de-DE</div><div class="hud-label">يستمع بالألمانية</div></div>' +
+        '<div class="hud-pill"><div class="hud-value">📊 ' + (completedWords + 1) + ' / ' + totalWords + '</div><div class="hud-label">التقدم</div></div>' +
+        '<div class="hud-pill"><div class="hud-value" id="attemptsValue">❤️ ' + hearts + '</div><div class="hud-label">القلوب</div></div>' +
+        '<div class="hud-pill listening-chip" id="listenChip"><div class="hud-value">🔥 ' + combo + '</div><div class="hud-label">Combo</div></div>' +
         '</div>' +
         '<div class="timer"><div class="timer-fill" id="timerFill"></div></div>' +
         '<div class="playfield">' +
-        '<div class="meaning-bubble bubble-spawn" id="meaningBubble" style="' + bubbleStyle + '"><div class="meaning-text">' + meaning(question.arabicMeaning) + '</div><div class="pop-particles" id="popParticles">' + Array.from({ length: 12 }, (_, i) => '<i style="--angle:' + (i * 30) + 'deg;--distance:' + (52 + i * 5) + 'px"></i>').join('') + Array.from({ length: 7 }, (_, i) => '<b class="success-sparkle" style="--x:' + ((i - 3) * 22) + 'px;--y:' + (-28 - i * 8) + 'px;--delay:' + (i * .035) + 's"></b>').join('') + '</div></div>' +
+        '<div class="meaning-bubble bubble-spawn' + (question.visualType === 'image' ? ' has-image' : '') + '" id="meaningBubble" style="' + bubbleStyle + '">' + bubbleContent + '<div class="pop-particles" id="popParticles">' + Array.from({ length: 12 }, (_, i) => '<i style="--angle:' + (i * 30) + 'deg;--distance:' + (52 + i * 5) + 'px"></i>').join('') + Array.from({ length: 7 }, (_, i) => '<b class="success-sparkle" style="--x:' + ((i - 3) * 22) + 'px;--y:' + (-28 - i * 8) + 'px;--delay:' + (i * .035) + 's"></b>').join('') + '</div></div>' +
         wormMarkup('', completedWords) +
         '</div>' +
-        '<div class="controls"><div class="status" id="status">' + escapeHtml(message) + '</div><div class="bottom-actions"><button class="voice-action hidden" id="micRecoverBtn">🎙 فعّل المايكروفون</button><button class="mini-action" id="leaveBtn">حفظ وخروج</button></div><div class="hint">قل الكلمة المناسبة للمعنى · يستمع بالألمانية <span id="listeningIndicator" aria-hidden="true"></span></div></div>' +
+        '<div class="controls"><div class="status" id="status">' + escapeHtml(message) + '</div><div class="bottom-actions"><button class="voice-action" id="speakNowBtn">🎙 انطق الآن</button><button class="mini-action" id="soundBtn">🔊 اسمع النطق</button><button class="mini-action" id="hintBtn">💡 تلميح</button><button class="mini-action" id="pauseBtn">⏸ إيقاف مؤقت</button><button class="mini-action" id="leaveBtn">❌ إنهاء الجولة</button><button class="voice-action hidden" id="micRecoverBtn">🎙 فعّل المايكروفون</button></div><div class="hint">يستمع بالألمانية <span id="listeningIndicator" aria-hidden="true"></span></div></div>' +
         '</section>';
       document.getElementById('micRecoverBtn').onclick = enableMicrophoneAndListen;
+      document.getElementById('speakNowBtn').onclick = () => listen();
+      document.getElementById('soundBtn').onclick = () => speakGerman(question.correctPronunciationText || '');
+      document.getElementById('hintBtn').onclick = () => setStatus('💡 أول حرف: ' + escapeHtml(String(question.correctPronunciationText || '').slice(0, 1) || '؟'));
+      document.getElementById('pauseBtn').onclick = () => { clearTimers(); stopListening(); setStatus('متوقف مؤقتاً. اضغط انطق الآن للمتابعة.'); };
       document.getElementById('leaveBtn').onclick = leaveGame;
       startQuestionTimer(question.timeLimit || 10);
       requestAnimationFrame(() => startWormIdleMovement('worm-idle'));

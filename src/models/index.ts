@@ -5,6 +5,7 @@
 export interface Env {
     DB: D1Database;
     GOETHE_AUDIO?: R2Bucket;
+    WORD_IMAGES?: R2Bucket;
     AI?: { run(model: string, input: unknown): Promise<unknown> };
     TELEGRAM_BOT_TOKEN: string;
     PUBLIC_BASE_URL?: string;
@@ -35,6 +36,12 @@ export interface Env {
     ZAI_BASE_URL?: string;
     MISTRAL_MODEL?: string;
     COHERE_MODEL?: string;
+    PEXELS_API_KEY?: string;
+    PIXABAY_API_KEY?: string;
+    UNSPLASH_ACCESS_KEY?: string;
+    IMAGE_PROVIDER_ORDER?: string;
+    IMAGE_SEARCH_CACHE_TTL_SECONDS?: string;
+    IMAGE_MAX_DOWNLOAD_BYTES?: string;
     GOETHE_PACK_MAX_COMPRESSED_BYTES?: string;
     GOETHE_PACK_MAX_UNCOMPRESSED_BYTES?: string;
     GOETHE_PACK_MAX_FILES?: string;

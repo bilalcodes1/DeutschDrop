@@ -1,5 +1,5 @@
 import type { Env } from '../models';
-import { GAME_UI_VERSION, answerGameQuestion, finishGameSession, getPublicGameState, restartGameSession } from '../services/gameSessionService';
+import { GAME_UI_VERSION, answerGameQuestion, finishGameSession, getGameQuestionImageResponse, getPublicGameState, restartGameSession } from '../services/gameSessionService';
 import { renderCollectionGameHtml } from './html';
 
 export async function handleGameRoute(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response | null> {
@@ -19,6 +19,20 @@ export async function handleGameRoute(request: Request, env: Env, ctx?: Executio
     if (url.pathname === '/game/api/session' && request.method === 'GET') {
         const token = url.searchParams.get('token') ?? '';
         return jsonResult(async () => getPublicGameState(env.DB, token));
+    }
+
+    if (url.pathname === '/game/api/image' && request.method === 'GET') {
+        const token = url.searchParams.get('token') ?? '';
+        const wordId = Number(url.searchParams.get('wordId') ?? 0);
+        try {
+            return await getGameQuestionImageResponse(env.DB, env, token, wordId);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'image_not_found';
+            return Response.json({ error: message === 'expired_token' ? 'expired_token' : 'image_not_found' }, {
+                status: message === 'expired_token' ? 410 : 404,
+                headers: { 'Cache-Control': 'no-store' },
+            });
+        }
     }
 
     if (url.pathname === '/game/api/answer' && request.method === 'POST') {
@@ -89,7 +103,7 @@ function statusForError(message: string): number {
     if (message === 'missing_token' || message === 'bad_json') return 400;
     if (message === 'invalid_token' || message === 'collection_not_allowed') return 401;
     if (message === 'expired_token') return 410;
-    if (message === 'question_mismatch' || message === 'question_not_found' || message === 'restart_not_allowed' || message === 'game_challenge_completed') return 409;
+    if (message === 'question_mismatch' || message === 'question_not_found' || message === 'restart_not_allowed' || message === 'game_challenge_completed' || message === 'image_mode_not_ready' || message === 'image_mode_empty' || message === 'image_mode_word_missing') return 409;
     if (message === 'game_challenge_unavailable' || message === 'game_challenge_opponent_unavailable') return 404;
     return 500;
 }
@@ -108,6 +122,9 @@ function safeGameError(message: string): string {
         'game_challenge_unavailable',
         'game_challenge_completed',
         'game_challenge_opponent_unavailable',
+        'image_mode_not_ready',
+        'image_mode_empty',
+        'image_mode_word_missing',
     ]);
     return allowed.has(message) ? message : 'game_error';
 }

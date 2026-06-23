@@ -586,6 +586,20 @@ async function showAdminStats(ctx: BotContext): Promise<void> {
     const pendingProofs = await countPendingSupportProofs(ctx.db);
     const activeSupporters = await countActiveSupporters(ctx.db);
     const banned = users.filter(user => user.is_banned).length;
+    const imageStats = await ctx.db.prepare(
+        `SELECT
+            COUNT(*) AS assets_count,
+            COALESCE(SUM(CASE WHEN provider = 'manual_upload' THEN 1 ELSE 0 END), 0) AS manual_uploads,
+            COALESCE(SUM(CASE WHEN file_size IS NOT NULL THEN file_size ELSE 0 END), 0) AS estimated_stored_bytes
+         FROM image_assets
+         WHERE status = 'active' AND deleted_at IS NULL`
+    ).first<{ assets_count: number; manual_uploads: number; estimated_stored_bytes: number }>().catch(() => null);
+    const selectedImages = await ctx.db.prepare(
+        `SELECT COUNT(*) AS count FROM user_word_images WHERE state = 'selected' AND deleted_at IS NULL`
+    ).first<{ count: number }>().catch(() => null);
+    const excludedImages = await ctx.db.prepare(
+        `SELECT COUNT(*) AS count FROM user_word_images WHERE state = 'excluded' AND deleted_at IS NULL`
+    ).first<{ count: number }>().catch(() => null);
 
     await replaceWithText(
         ctx,
@@ -596,7 +610,13 @@ async function showAdminStats(ctx: BotContext): Promise<void> {
         `إثباتات الدعم pending: *${pendingProofs}*\n` +
         `الداعمون النشطون: *${activeSupporters}*\n` +
         `المحظورون: *${banned}*\n` +
-        `التدريبات/المراجعات اليوم: *${reviewsToday?.count ?? 0}*`,
+        `التدريبات/المراجعات اليوم: *${reviewsToday?.count ?? 0}*\n\n` +
+        `🖼 صور Adventure\n` +
+        `assets: *${imageStats?.assets_count ?? 0}*\n` +
+        `selected: *${selectedImages?.count ?? 0}*\n` +
+        `manual uploads: *${imageStats?.manual_uploads ?? 0}*\n` +
+        `excluded words: *${excludedImages?.count ?? 0}*\n` +
+        `estimated bytes: *${imageStats?.estimated_stored_bytes ?? 0}*`,
         adminPanelKeyboard(),
         'Markdown'
     );

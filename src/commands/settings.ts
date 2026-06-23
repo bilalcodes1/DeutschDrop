@@ -199,7 +199,7 @@ export function registerSettingsCommand(bot: Bot<BotContext>): void {
 
     bot.callbackQuery(/^notification_time_(morning|afternoon|evening)$/, async (ctx) => {
         await ctx.editMessageText(
-            'تغيير وقت الإشعار من داخل البوت TODO.\nحالياً استخدم الأوقات الافتراضية أو إعدادات Wrangler لاحقاً.',
+            'تغيير وقت الإشعار من داخل البوت غير متاح حالياً.\nحالياً استخدم الأوقات الافتراضية أو إعدادات Wrangler لاحقاً.',
             { reply_markup: settingsNavigationKeyboard() }
         );
         await ctx.answerCallbackQuery();

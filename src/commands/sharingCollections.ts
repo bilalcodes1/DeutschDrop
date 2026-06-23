@@ -1212,6 +1212,7 @@ async function showCollection(ctx: BotContext, userId: number, collectionId: num
             keyboard.text('🎯 تدرب على هذه المجموعة', `train_col_mode:${collectionId}`).row();
         }
         keyboard.text('🫧 العب بهذه المجموعة', `game:start_collection:${collectionId}`).row();
+        keyboard.text('🖼 صور الكلمات', `wi:dash:${collectionId}`).row();
         if (total > 0) {
             keyboard.text('⚔️ تحدي على هذه المجموعة', `collection_challenge_count_${collectionId}`).row();
         }

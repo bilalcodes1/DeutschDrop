@@ -9,6 +9,12 @@ import { getLeaderboardByPeriod, type LeaderboardPeriod } from './services/xpLev
 import { cleanupExpiredTemporaryMessages } from './services/temporaryMessageCleanup';
 import { processPendingImports } from './services/csvImportBackground';
 import { processPendingGoetheImports } from './services/goetheImportService';
+import {
+    deleteExpiredImageSearchCache,
+    listSoftDeletedUnreferencedAssets,
+    markImageAssetStorageDeleted,
+    markOrphanImageAssets,
+} from './repositories/wordImageRepository';
 import { Bot } from 'grammy';
 import { handleGameRoute } from './game/routes';
 
@@ -53,6 +59,7 @@ export default {
         try {
             await deleteExpiredBotSessions(env.DB);
             await cleanupExpiredTemporaryMessages(env);
+            await cleanupWordImageMaintenance(env);
 
             switch (jobName) {
                 case 'check_due_reviews': {
@@ -191,6 +198,25 @@ async function runCheckDueReviews(env: Env): Promise<void> {
     }
 
     await runTimedDailySummaries(env);
+}
+
+async function cleanupWordImageMaintenance(env: Env): Promise<void> {
+    try {
+        await deleteExpiredImageSearchCache(env.DB);
+        await markOrphanImageAssets(env.DB, 24);
+
+        if (!env.WORD_IMAGES) return;
+        const assets = await listSoftDeletedUnreferencedAssets(env.DB, 20);
+        for (const asset of assets) {
+            if (asset.storage_type !== 'r2' || !asset.r2_key) continue;
+            await env.WORD_IMAGES.delete(asset.r2_key).catch(() => undefined);
+            await markImageAssetStorageDeleted(env.DB, asset.id);
+        }
+    } catch (error) {
+        console.warn('word_image_cleanup_failed', {
+            message: error instanceof Error ? error.message : String(error),
+        });
+    }
 }
 
 async function runDailySummary(env: Env): Promise<void> {

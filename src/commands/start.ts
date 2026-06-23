@@ -26,6 +26,11 @@ export function registerStartCommand(bot: Bot<BotContext>): void {
             return;
         }
 
+        await deleteBotSession(ctx.db, user.user_id, 'word_image_search');
+        await deleteBotSession(ctx.db, user.user_id, 'word_image_results');
+        await deleteBotSession(ctx.db, user.user_id, 'awaiting_manual_word_image_upload');
+        await deleteBotSession(ctx.db, user.user_id, 'word_image_prepare_missing');
+
         await ctx.reply(`مرحباً مجدداً ${user.display_name}! 👋`);
         await showMainMenu(ctx);
     });
