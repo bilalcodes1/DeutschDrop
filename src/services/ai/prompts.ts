@@ -72,20 +72,66 @@ export function buildPrompt(taskType: AiTaskType, input: AiTaskInput): string {
     }
 
     if (taskType === 'generate_life_sentence') {
-        return `${RULES}\n\nالمهمة: حوّل موقفاً عربياً حقيقياً من يوم المستخدم إلى جملة ألمانية طبيعية وشائعة.\n` +
-            `قواعد صارمة:\n` +
-            `- حافظ على معنى المستخدم ولا تخترع حدثاً مختلفاً.\n` +
-            `- german إلزامي وجملة ألمانية طبيعية لا تتجاوز 20 كلمة إلا للضرورة.\n` +
-            `- arabic ترجمة عربية دقيقة للجملة الألمانية.\n` +
-            `- pronunciation_ar لفظ مبسط بحروف عربية للجملة الألمانية.\n` +
-            `- memory_hint تلميح قصير للتذكر.\n` +
-            `- keywords بين 1 و5 عناصر بصيغة {"german":"...","arabic":"..."}.\n` +
-            `- level يجب أن يكون A1 أو A2 أو B1 حسب target_level ومعنى الجملة.\n` +
-            `- tense يكون present أو past أو future أو mixed.\n` +
-            `- لا تستخدم Markdown ولا code fences ولا شرح خارج JSON.\n` +
+        return `${RULES}\n\nالمهمة: أنت محول دقيق من موقف عربي حقيقي إلى جملة ألمانية تعليمية.\n` +
+            `هذه التعليمات مستقلة عن أي مزود أو موديل.\n` +
+            `ممنوع تماماً:\n` +
+            `- اختراع أشخاص أو أسباب أو أماكن أو مشاعر.\n` +
+            `- تغيير الزمن أو النفي أو عدد الأشخاص.\n` +
+            `- استبدال الحدث بحدث قريب.\n` +
+            `- تحسين القصة على حساب المعنى.\n` +
+            `- تقديم نصائح أو الرد على محتوى الجملة.\n` +
+            `المطلوب:\n` +
+            `- افهم المعنى الحرفي المقصود وصغه بألمانية طبيعية وشائعة.\n` +
+            `- بسّط الجملة حسب target_level.\n` +
+            `- لا تضف معلومة غير موجودة ولا تحذف معلومة مهمة.\n` +
+            `- إذا النص غامض فعلاً، لا تخمّن؛ اسأل سؤال توضيح عربي واحد.\n` +
+            `- source_arabic يجب أن يساوي original_arabic بعد trim.\n` +
+            `- german لا تتجاوز 20 كلمة إلا عند الضرورة.\n` +
+            `- level فقط A1 أو A2 أو B1، confidence رقم بين 0 و1، keywords من 1 إلى 5.\n\n` +
+            `أمثلة صحيحة:\n` +
+            `Input: شفت صرصر بالحمام البارحه\n` +
+            `Output german: Gestern habe ich eine Kakerlake im Badezimmer gesehen.\n` +
+            `لا تحولها إلى: نظفت الحمام، أو خفت من الحشرة، أو وجدت حشرة في البيت.\n\n` +
+            `Input: كملت الدرس العاشر\n` +
+            `Output german: Ich habe die zehnte Lektion abgeschlossen.\n` +
+            `لا تضف اليوم أو بنجاح أو مع صديقي.\n\n` +
+            `Input: اليوم راح نتعشى بالمطعم\n` +
+            `Output german: Heute essen wir im Restaurant zu Abend.\n` +
+            `حافظ على: اليوم، نحن، العشاء، المطعم.\n\n` +
+            `Input: ما نمت زين البارحه\n` +
+            `Output german: Ich habe letzte Nacht nicht gut geschlafen.\n` +
+            `حافظ على النفي.\n\n` +
+            `Input: راح اروح للحلاق باجر\n` +
+            `Output german: Morgen gehe ich zum Friseur.\n` +
+            `حافظ على المستقبل والزمن.\n\n` +
             `المدخل: ${safeInput}\n` +
-            `الإخراج JSON فقط:\n` +
-            `{"german":"Heute war es sehr heiß.","arabic":"اليوم كان الجو حاراً جداً.","pronunciation_ar":"هويته فار إس زير هايس","memory_hint":"heiß تعني حار","keywords":[{"german":"heiß","arabic":"حار"}],"level":"A1","tense":"present","notes":""}`;
+            `إذا واضح، الإخراج JSON فقط:\n` +
+            `{"status":"ok","source_arabic":"النص الأصلي نفسه","understood_meaning_ar":"إعادة صياغة عربية قصيرة ودقيقة لما فهمته","german":"...","arabic":"...","pronunciation_ar":"...","memory_hint":"...","keywords":[{"german":"Wort","arabic":"المعنى"}],"level":"A1","tense":"present","confidence":0.95}\n` +
+            `إذا غامض، الإخراج JSON فقط:\n` +
+            `{"status":"clarify","source_arabic":"النص الأصلي نفسه","clarification_question_ar":"سؤال عربي واحد واضح"}`;
+    }
+
+    if (taskType === 'validate_life_sentence') {
+        return `${RULES}\n\nالمهمة: تحقق من أن جملة ألمانية مولدة تحفظ معنى موقف عربي أصلي بدقة.\n` +
+            `لا تحسّن الجملة إلا إذا وجدت مشكلة معنى واضحة.\n` +
+            `افحص:\n` +
+            `- الفاعل وعدد الأشخاص.\n` +
+            `- الحدث الأساسي.\n` +
+            `- الزمن.\n` +
+            `- النفي.\n` +
+            `- المكان.\n` +
+            `- عدم اختراع تفاصيل.\n` +
+            `إذا actor أو action تغيرا: repair أو clarify.\n` +
+            `إذا الزمن تغير: repair.\n` +
+            `إذا النفي اختفى: repair.\n` +
+            `إذا أضيفت تفاصيل: repair.\n` +
+            `إذا النص غامض ولا يمكن إصلاحه بدون تخمين: clarify.\n` +
+            `لا تقبل pass إذا back_translation_arabic لا تحفظ المعنى.\n` +
+            `المدخل: ${safeInput}\n` +
+            `الإخراج JSON فقط، واحد من هذه الأشكال:\n` +
+            `{"verdict":"pass","issues":[],"preserves_actor":true,"preserves_action":true,"preserves_time":true,"preserves_negation":true,"preserves_place":true,"invented_details":false}\n` +
+            `{"verdict":"repair","issues":["تم تغيير الزمن"],"repaired":{"german":"...","arabic":"...","pronunciation_ar":"...","memory_hint":"...","keywords":[{"german":"...","arabic":"..."}],"level":"A1","tense":"present"}}\n` +
+            `{"verdict":"clarify","clarification_question_ar":"سؤال عربي واحد واضح"}`;
     }
 
     return `${RULES}\n\nالمهمة: صنّف مستوى الكلمة الألمانية A1/A2/B1 أو Unknown مع سبب قصير بالعربي.\n` +

@@ -60,7 +60,8 @@ import {
 } from '../services/lifeSentences';
 import { synthesizeGermanTts } from '../services/tts/ttsRouter';
 import { normalizeTtsText } from '../services/tts/types';
-import { recordTemporaryMessage } from '../repositories/temporaryMessageRepository';
+import { evaluateWrittenAnswer } from '../services/trainingAnswerMatcher';
+import { ACTIVE_TEMP_TTL_SECONDS, recordTemporaryMessage } from '../repositories/temporaryMessageRepository';
 import { replaceWithText } from './wordPanel';
 
 type LifeSource = 'bot_ai' | 'external_chatgpt' | 'manual';
@@ -74,6 +75,12 @@ interface LifePreviewSession {
     draft: LifeSentenceDraft;
     sourceType: LifeSource;
     saved?: boolean;
+}
+
+interface LifeClarificationSession {
+    sourceType: LifeSource;
+    originalInput: string;
+    clarificationQuestion: string;
 }
 
 interface LifeEditSession {
@@ -101,7 +108,6 @@ interface LifeShareNameSession {
 }
 
 const LIFE_PAGE_SIZE = 5;
-const LIFE_AUDIO_TTL_SECONDS = 45;
 
 export function registerLifeCommand(bot: Bot<BotContext>): void {
     bot.command('life', async (ctx) => {
@@ -140,6 +146,11 @@ export function registerLifeCommand(bot: Bot<BotContext>): void {
     bot.callbackQuery('life:regen', async (ctx) => {
         await ctx.answerCallbackQuery();
         await regenerateLifePreview(ctx);
+    });
+
+    bot.callbackQuery('life:misunderstood', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await restartLifeFromMisunderstood(ctx);
     });
 
     bot.callbackQuery('life:edit:g', async (ctx) => {
@@ -453,6 +464,12 @@ async function startLifeAdd(ctx: BotContext): Promise<void> {
 }
 
 async function handleLifeText(ctx: BotContext, user: User, text: string): Promise<boolean> {
+    const clarification = await getBotSession<LifeClarificationSession>(ctx.db, user.user_id, 'awaiting_life_clarification');
+    if (clarification) {
+        await generateLifeFromText(ctx, user, clarification.data.originalInput, clarification.data.sourceType, text);
+        return true;
+    }
+
     const original = await getBotSession<LifeOriginalSession>(ctx.db, user.user_id, 'awaiting_life_original_arabic');
     if (original) {
         await generateLifeFromText(ctx, user, text, original.data.sourceType);
@@ -539,7 +556,7 @@ async function handleLifeText(ctx: BotContext, user: User, text: string): Promis
     return false;
 }
 
-async function generateLifeFromText(ctx: BotContext, user: User, text: string, sourceType: LifeSource): Promise<void> {
+async function generateLifeFromText(ctx: BotContext, user: User, text: string, sourceType: LifeSource, clarificationAnswer?: string): Promise<void> {
     const input = validateLifeOriginalInput(text);
     if (!input.ok) {
         await replaceWithText(ctx, input.message, cancelHomeKeyboard());
@@ -547,12 +564,26 @@ async function generateLifeFromText(ctx: BotContext, user: User, text: string, s
     }
     const settings = await getUserSettings(ctx.db, user.user_id);
     await replaceWithText(ctx, '⏳ أحوّل موقفك إلى جملة ألمانية طبيعية...', cancelHomeKeyboard());
-    const result = await generateLifeSentenceWithAi(ctx.env, ctx.db, user.user_id, input.value, (settings?.german_level ?? 'A1') as 'A1' | 'A2' | 'B1');
+    const result = await generateLifeSentenceWithAi(ctx.env, ctx.db, user.user_id, input.value, (settings?.german_level ?? 'A1') as 'A1' | 'A2' | 'B1', false, clarificationAnswer);
     if (!result.ok) {
+        if (result.status === 'clarify' && result.clarificationQuestion) {
+            await deleteBotSession(ctx.db, user.user_id, 'awaiting_life_original_arabic');
+            await saveBotSession<LifeClarificationSession>(ctx.db, user.user_id, 'awaiting_life_clarification', {
+                sourceType,
+                originalInput: result.originalArabic ?? input.value,
+                clarificationQuestion: result.clarificationQuestion,
+            }, 20);
+            await replaceWithText(
+                ctx,
+                `أحتاج توضيح بسيط حتى لا أخمّن المعنى:\n\n${result.clarificationQuestion}`,
+                new InlineKeyboard().text('✏️ أعد كتابة الموقف', 'life:add').row().text('📋 استخدم ChatGPT', 'life:ext').row().text('❌ إلغاء', 'life:cancel')
+            );
+            return;
+        }
         await replaceWithText(
             ctx,
-            `تعذر التوليد حالياً.\n\n${result.status}`,
-            new InlineKeyboard().text('🔁 إعادة المحاولة', 'life:add').row().text('📋 استخدم ChatGPT', 'life:ext').row().text('❌ إلغاء', 'life:cancel')
+            `❌ ${result.status}`,
+            new InlineKeyboard().text('✏️ أعد كتابة الموقف', 'life:add').row().text('🔄 حاول مرة أخرى', 'life:add').row().text('📋 استخدم ChatGPT', 'life:ext').row().text('❌ إلغاء', 'life:cancel')
         );
         return;
     }
@@ -562,6 +593,7 @@ async function generateLifeFromText(ctx: BotContext, user: User, text: string, s
 
 async function saveLifeDraftSession(ctx: BotContext, userId: number, draft: LifeSentenceDraft, sourceType: LifeSource): Promise<void> {
     await deleteBotSession(ctx.db, userId, 'awaiting_life_original_arabic');
+    await deleteBotSession(ctx.db, userId, 'awaiting_life_clarification');
     await deleteBotSession(ctx.db, userId, 'awaiting_life_external_result');
     await saveBotSession<LifePreviewSession>(ctx.db, userId, 'life_preview', { draft, sourceType }, 60);
 }
@@ -605,6 +637,26 @@ async function regenerateLifePreview(ctx: BotContext): Promise<void> {
     const session = await getBotSession<LifePreviewSession>(ctx.db, user.user_id, 'life_preview');
     if (!session) return;
     await generateLifeFromText(ctx, user, session.data.draft.original_arabic, session.data.sourceType);
+}
+
+async function restartLifeFromMisunderstood(ctx: BotContext): Promise<void> {
+    const user = await currentUser(ctx);
+    if (!user) return;
+    const session = await getBotSession<LifePreviewSession>(ctx.db, user.user_id, 'life_preview');
+    if (!session) {
+        await startLifeAdd(ctx);
+        return;
+    }
+    await deleteBotSession(ctx.db, user.user_id, 'life_preview');
+    await saveBotSession<LifeOriginalSession>(ctx.db, user.user_id, 'awaiting_life_original_arabic', {
+        sourceType: session.data.sourceType,
+        retryOf: session.data.draft.original_arabic,
+    }, 30);
+    await replaceWithText(
+        ctx,
+        `تمام، اكتب الموقف مرة ثانية بوضوح أكثر.\n\nالموقف السابق:\n${session.data.draft.original_arabic}`,
+        cancelHomeKeyboard()
+    );
 }
 
 async function startLifePreviewEdit(ctx: BotContext, field: 'german' | 'arabic'): Promise<void> {
@@ -1291,7 +1343,12 @@ async function handleLifeTrainingAnswer(
         await deleteBotSession(ctx.db, user.user_id, sessionType);
         return;
     }
-    const isCorrect = normalizeGermanLifeAnswer(answer) === normalizeGermanLifeAnswer(session.answer);
+    const evaluation = evaluateWrittenAnswer({
+        userAnswer: answer,
+        expectedAnswer: session.answer,
+        answerLanguage: 'de',
+    });
+    const isCorrect = evaluation.accepted;
     const stats = reviewLifeSentenceStats(sentence, isCorrect);
     await updateLifeSentenceReview(ctx.db, user.user_id, sentence.id, { isCorrect, ...stats });
     await deleteBotSession(ctx.db, user.user_id, sessionType);
@@ -1323,7 +1380,7 @@ async function sendLifeTts(ctx: BotContext, germanText: string): Promise<void> {
             kind: 'life_tts',
             text: null,
             deletePolicy: 'after_ttl',
-            ttlSeconds: LIFE_AUDIO_TTL_SECONDS,
+            ttlSeconds: ACTIVE_TEMP_TTL_SECONDS,
         }).catch(() => undefined);
     }
 }
@@ -1337,7 +1394,7 @@ async function currentUser(ctx: BotContext, reply = true): Promise<User | null> 
 }
 
 async function clearLifeSessions(ctx: BotContext, userId: number): Promise<void> {
-    for (const type of ['awaiting_life_original_arabic', 'awaiting_life_external_result', 'awaiting_life_german_edit', 'awaiting_life_arabic_edit', 'life_preview', 'life_search'] as const) {
+    for (const type of ['awaiting_life_original_arabic', 'awaiting_life_clarification', 'awaiting_life_external_result', 'awaiting_life_german_edit', 'awaiting_life_arabic_edit', 'life_preview', 'life_search'] as const) {
         await deleteBotSession(ctx.db, userId, type);
     }
     await clearLifeTrainingSessions(ctx, userId);
@@ -1351,6 +1408,7 @@ async function clearLifeTrainingSessions(ctx: BotContext, userId: number): Promi
 
 function previewText(draft: LifeSentenceDraft): string {
     return `🧠 جملة من حياتك\n\n` +
+        (draft.understood_meaning_ar ? `📝 فهمت موقفك هكذا:\n${draft.understood_meaning_ar}\n\n` : '') +
         `🇩🇪 ${draft.german}\n` +
         `🇮🇶 ${draft.arabic}\n\n` +
         `🔊 النطق: ${draft.pronunciation_ar ?? '-'}\n\n` +
@@ -1362,6 +1420,7 @@ function previewText(draft: LifeSentenceDraft): string {
 function previewKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
         .text('✅ حفظ وفتح التدريبات', 'life:save').row()
+        .text('✏️ لم تفهم قصدي', 'life:misunderstood').row()
         .text('✏️ تعديل الفكرة', 'life:add').row()
         .text('✏️ تعديل الألماني', 'life:edit:g')
         .text('✏️ تعديل العربي', 'life:edit:a').row()
@@ -1436,16 +1495,6 @@ function modeAlias(mode: LifeTrainingSession['mode']): 'w' | 'l' | 'o' | 'f' {
 function chooseMixedLifeMode(): LifeTrainingSession['mode'] {
     const modes: Array<LifeTrainingSession['mode']> = ['writing', 'listening', 'order', 'gap'];
     return modes[Math.floor(Date.now() / 1000) % modes.length];
-}
-
-function normalizeGermanLifeAnswer(value: string): string {
-    return value
-        .trim()
-        .toLocaleLowerCase('de-DE')
-        .replace(/ß/g, 'ss')
-        .replace(/[^\p{Letter}\p{Number}\s]/gu, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
 }
 
 const EXTERNAL_CHATGPT_PROMPT = `أنا أتعلم اللغة الألمانية.

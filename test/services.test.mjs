@@ -14,7 +14,13 @@ import { buildYouglishDirectUrl } from '../dist/services/youglish.js';
 import { normalizeArabicSearch, normalizeGermanSearch, rankWordSearchResults } from '../dist/services/wordSearch.js';
 import { resolveEmojiVisual, validateManualVisual } from '../dist/services/gameVisualService.js';
 import { calculateGameXp, GAME_MAX_ATTEMPTS, GAME_QUESTION_LIMIT, GAME_UI_VERSION, isAcceptedGermanAnswer, normalizeSpeechTranscript, removeGermanArticle } from '../dist/services/gameSessionService.js';
-import { buildTrainingQuestion, isAcceptedArabicAnswer, normalizeArabicTrainingAnswer } from '../dist/commands/train.js';
+import { buildTrainingQuestion, formatAcceptedArabicAnswers, isAcceptedArabicAnswer, normalizeArabicTrainingAnswer, parseAcceptedArabicAnswers } from '../dist/commands/train.js';
+import {
+    evaluateWrittenAnswer,
+    formatExpectedAnswers,
+    isAcceptedGermanAnswer as isAcceptedGermanWrittenAnswer,
+    parseAcceptedAnswers,
+} from '../dist/services/trainingAnswerMatcher.js';
 
 test('parseWordCsv handles quoted commas and examples', () => {
     const parsed = parseWordCsv('German,Arabic,Example\nHaus,بيت,"Das Haus ist groß, aber alt."\nAuto,سيارة,');
@@ -1606,19 +1612,113 @@ test('Arabic typed training normalization accepts safe spelling variants only', 
     assert.equal(isAcceptedArabicAnswer('منزل', 'بيت|منزل'), true);
     assert.equal(isAcceptedArabicAnswer('شجرة', 'بيت/منزل،دار'), false);
     assert.equal(isAcceptedArabicAnswer('مركبة', 'سيارة'), false);
+    assert.deepEqual(parseAcceptedArabicAnswers('بيت | منزل / دار، مسكن; مأوى\nسكن'), ['بيت', 'منزل', 'دار', 'مسكن', 'مأوى', 'سكن']);
+    assert.equal(isAcceptedArabicAnswer('يرمي', 'يرمي/يقذف'), true);
+    assert.equal(isAcceptedArabicAnswer('يقذف', 'يرمي/يقذف'), true);
+    assert.equal(isAcceptedArabicAnswer('يرمي يقذف', 'يرمي/يقذف'), true);
+    assert.equal(isAcceptedArabicAnswer('يقذف يرمي', 'يرمي/يقذف'), true);
+    assert.equal(isAcceptedArabicAnswer('يرمي يكتب', 'يرمي/يقذف'), false);
+    assert.equal(isAcceptedArabicAnswer('مزهرية', 'المزهرية'), true);
+    assert.equal(isAcceptedArabicAnswer('ميرسيدس', 'ماركة ميرسيدس'), true);
+    assert.equal(isAcceptedArabicAnswer('أحمد', 'احمد'), true);
+    assert.equal(isAcceptedArabicAnswer('المدرسة', 'مدرسة'), true);
+    assert.equal(isAcceptedArabicAnswer('المفعول به', 'المفعول به غير المباشر'), false);
+    assert.equal(isAcceptedArabicAnswer('غير المباشر', 'المفعول به غير المباشر'), false);
+    assert.equal(isAcceptedArabicAnswer('المفعول به غير المباشر', 'المفعول به غير المباشر'), true);
+    assert.equal(isAcceptedArabicAnswer('المفعول به غير المباشر', 'المفعول به غير المباسر'), true);
+    assert.equal(isAcceptedArabicAnswer('المفعول به', 'المفعول به غير المباسر'), false);
+    assert.equal(formatAcceptedArabicAnswers('يرمي/يقذف/يرمي'), 'يرمي / يقذف');
 });
 
-test('typed Arabic training uses strict local Arabic normalization instead of fuzzy AI grading', () => {
-    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+test('central written matcher accepts Arabic normalized spelling', () => {
+    const result = evaluateWrittenAnswer({ userAnswer: 'سياره', expectedAnswer: 'سيارة', answerLanguage: 'ar' });
+    assert.equal(result.accepted, true);
+    assert.equal(result.matchType, 'normalized');
+    assert.equal(result.normalizedUserAnswer, 'سياره');
+});
 
-    assert.match(trainSource, /shouldUseArabicTrainingNormalization\(current\)/);
-    assert.match(trainSource, /question\.direction === 'de_ar' && question\.options\.length === 0/);
-    assert.match(trainSource, /isAcceptedArabicAnswer\(answerText, current\.answer\)/);
-    assert.match(trainSource, /splitArabicTrainingAnswers/);
-    assert.match(trainSource, /\.replace\(\/\[أإآٱ\]\/g, 'ا'\)/);
-    assert.match(trainSource, /\.replace\(\/ى\/g, 'ي'\)/);
-    assert.match(trainSource, /\.replace\(\/\[ؤئء\]\/g, ''\)/);
-    assert.match(trainSource, /\.replace\(\/و\{2,\}\/g, 'و'\)/);
+test('central written matcher accepts Arabic safe descriptor differences', () => {
+    const result = evaluateWrittenAnswer({ userAnswer: 'ميرسيدس', expectedAnswer: 'ماركة ميرسيدس', answerLanguage: 'ar' });
+    assert.equal(result.accepted, true);
+    assert.equal(result.matchType, 'safe_descriptor');
+});
+
+test('central written matcher accepts Arabic registered alternatives', () => {
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'يرمي', expectedAnswer: 'يرمي/يقذف', answerLanguage: 'ar' }).accepted, true);
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'يقذف', expectedAnswer: 'يرمي/يقذف', answerLanguage: 'ar' }).accepted, true);
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'يرمي يقذف', expectedAnswer: 'يرمي/يقذف', answerLanguage: 'ar' }).accepted, true);
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'يقذف يرمي', expectedAnswer: 'يرمي/يقذف', answerLanguage: 'ar' }).accepted, true);
+});
+
+test('central written matcher rejects Arabic semantically incomplete answers', () => {
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'يرمي يكتب', expectedAnswer: 'يرمي/يقذف', answerLanguage: 'ar' }).accepted, false);
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'المفعول به', expectedAnswer: 'المفعول به غير المباشر', answerLanguage: 'ar' }).accepted, false);
+});
+
+test('central written matcher accepts German normalization and alternatives only', () => {
+    assert.equal(isAcceptedGermanWrittenAnswer('STRASSE!', 'Straße'), true);
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'Auto', expectedAnswer: 'Haus|Auto', answerLanguage: 'de' }).matchType, 'alternative');
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'ماركة Auto', expectedAnswer: 'Auto', answerLanguage: 'de' }).accepted, false);
+});
+
+test('central parser keeps Arabic and German answer rules separate', () => {
+    assert.deepEqual(parseAcceptedAnswers('بيت / دار، منزل', 'ar'), ['بيت', 'دار', 'منزل']);
+    assert.deepEqual(parseAcceptedAnswers('gehen|laufen;rennen', 'de'), ['gehen', 'laufen', 'rennen']);
+    assert.equal(formatExpectedAnswers('يرمي/يقذف', 'ar'), 'يرمي / يقذف');
+});
+
+test('general training Arabic written question evaluates through central matcher', () => {
+    const question = buildTrainingQuestion([
+        { word_id: 1, german: 'Vase', arabic: 'المزهرية', example: null },
+        { word_id: 2, german: 'Auto', arabic: 'سيارة', example: null },
+        { word_id: 3, german: 'Haus', arabic: 'بيت', example: null },
+    ], { word_id: 1, german: 'Vase', arabic: 'المزهرية', example: null }, 'typing', 1);
+
+    assert.equal(question.direction, 'de_ar');
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'مزهرية', expectedAnswer: question.answer, answerLanguage: 'ar' }).accepted, true);
+});
+
+test('general training German written question evaluates through central matcher', () => {
+    const question = buildTrainingQuestion([
+        { word_id: 1, german: 'Straße', arabic: 'شارع', example: null },
+        { word_id: 2, german: 'Auto', arabic: 'سيارة', example: null },
+        { word_id: 3, german: 'Haus', arabic: 'بيت', example: null },
+    ], { word_id: 1, german: 'Straße', arabic: 'شارع', example: null }, 'typing', 0);
+
+    assert.equal(question.direction, 'ar_de');
+    assert.equal(evaluateWrittenAnswer({ userAnswer: 'strasse', expectedAnswer: question.answer, answerLanguage: 'de' }).accepted, true);
+});
+
+test('collection writing and fast modes reuse train typed route and central matcher', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    assert.match(trainSource, /train_col_start:\(\\d\+\):\(writing\|choices\|mixed\|fast\)/);
+    assert.match(trainSource, /collectionTrainingMode\?: CollectionTrainingMode/);
+    assert.match(trainSource, /evaluateWrittenAnswer\(\{\s*userAnswer: answerText/s);
+});
+
+test('mixed quick due review and hard word written questions use the train session matcher', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    for (const callback of ['train_quick', 'train_mixed', 'train_hard', 'train_exam']) {
+        assert.match(trainSource, new RegExp(callback));
+    }
+    assert.match(trainSource, /startReviewPlanTraining\(ctx/);
+    assert.match(trainSource, /startTraining\(ctx, Math\.min\(plan\.batch_size/);
+    assert.match(trainSource, /'plan', plan\.id/);
+    assert.match(trainSource, /handleTypedTrainingAnswer\(ctx, current, ctx\.message\.text\)/);
+    assert.match(trainSource, /writtenAnswerLanguageForTrainingQuestion\(current\)/);
+});
+
+test('typed training command uses the central matcher instead of AI grading', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const matcherSource = fs.readFileSync(new URL('../src/services/trainingAnswerMatcher.ts', import.meta.url), 'utf8');
+
+    assert.match(trainSource, /evaluateWrittenAnswer\(\{/);
+    assert.match(trainSource, /writtenAnswerLanguageForTrainingQuestion\(current\)/);
+    assert.doesNotMatch(trainSource, /gradeTrainingAnswer\(ctx/);
+    assert.match(trainSource, /formatTrainingCorrectAnswer/);
+    assert.match(matcherSource, /answerLanguage === 'ar'/);
+    assert.match(matcherSource, /evaluateGermanWrittenAnswer/);
+    assert.match(matcherSource, /evaluateArabicWrittenAnswer/);
 });
 
 test('main training menu contains train collection button', () => {
@@ -1729,37 +1829,85 @@ test('training score tracks answered correct wrong counts and duplicate answers'
     assert.doesNotMatch(trainSource, /6\/10|60%/);
 });
 
-test('typed training local grading handles German case and Arabic punctuation safely', () => {
+test('legacy training grader delegates local checks to central written matcher', () => {
     const graderSource = fs.readFileSync(new URL('../src/services/trainingAnswerGrader.ts', import.meta.url), 'utf8');
 
-    assert.match(graderSource, /toLocaleLowerCase\('de-DE'\)/);
-    assert.match(graderSource, /replace\(\/ß\/g, 'ss'\)/);
-    assert.match(graderSource, /replace\(\/\[\\u064B-\\u065F\\u0670\]\/g, ''\)/);
-    assert.match(graderSource, /replace\(\/\[أإآٱ\]\/g, 'ا'\)/);
-    assert.match(graderSource, /replace\(\/ى\/g, 'ي'\)/);
-    assert.match(graderSource, /replace\(\/ة\/g, 'ه'\)/);
-    assert.match(graderSource, /correctWithoutParentheses === user/);
-    assert.match(graderSource, /isSingleArabicToken\(correct\) && isSingleArabicToken\(user\)/);
+    assert.match(graderSource, /evaluateWrittenAnswer\(\{/);
+    assert.match(graderSource, /answerLanguage: direction === 'de_ar' \? 'ar' : 'de'/);
+    assert.doesNotMatch(graderSource, /normalizeGermanAnswer\(correctAnswer\) === normalizeGermanAnswer\(userAnswer\)/);
+    assert.doesNotMatch(graderSource, /correctWithoutParentheses === user/);
 });
 
-test('typed training uses AI grading only after uncertain local check', () => {
+test('central written matcher remains the only written-training entrypoint in train source', () => {
     const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
-    const graderSource = fs.readFileSync(new URL('../src/services/trainingAnswerGrader.ts', import.meta.url), 'utf8');
-    const aiTypes = fs.readFileSync(new URL('../src/services/ai/aiTypes.ts', import.meta.url), 'utf8');
-    const aiUsage = fs.readFileSync(new URL('../src/services/ai/aiUsage.ts', import.meta.url), 'utf8');
-    const prompts = fs.readFileSync(new URL('../src/services/ai/prompts.ts', import.meta.url), 'utf8');
 
-    assert.match(trainSource, /gradeTrainingAnswer/);
-    assert.match(graderSource, /gradeTrainingAnswerLocal/);
-    assert.match(graderSource, /if \(local !== 'uncertain'\)/);
-    assert.match(graderSource, /runAiTask<AiGradeResult>/);
-    assert.match(graderSource, /confidence.*>= 0\.75/s);
-    assert.match(graderSource, /verdict === 'almost'/);
-    assert.match(graderSource, /source: 'fallback'/);
-    assert.match(aiTypes, /grade_training_answer/);
-    assert.match(aiUsage, /grade_training_answer:\s*50/);
-    assert.match(prompts, /قيّم جواب تدريب كتابي/);
-    assert.match(prompts, /لا تكن صارماً في capital letters/);
+    assert.match(trainSource, /evaluateWrittenAnswer/);
+    assert.match(trainSource, /answerLanguage: writtenAnswerLanguageForTrainingQuestion\(current\)/);
+    assert.doesNotMatch(trainSource, /normalizeAnswer\(answerText\) === normalizeAnswer\(current\.answer\)/);
+    assert.doesNotMatch(trainSource, /isAcceptedArabicAnswer\(answerText, current\.answer\)/);
+});
+
+test('typed challenge answers use the central written matcher', () => {
+    const challengeSource = fs.readFileSync(new URL('../src/commands/challenge.ts', import.meta.url), 'utf8');
+
+    assert.match(challengeSource, /evaluateWrittenAnswer\(\{\s*userAnswer: answerText/s);
+    assert.match(challengeSource, /expectedAnswer: active\.answer/);
+    assert.match(challengeSource, /answerLanguage: active\.direction === 'de_ar' \? 'ar' : 'de'/);
+    assert.doesNotMatch(challengeSource, /normalizeAnswer\(answerText\) === normalizeAnswer\(active\.answer\)/);
+});
+
+test('Life writing listening gap and mixed written answers use the central German matcher', () => {
+    const lifeSource = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
+
+    for (const sessionType of ['life_training_writing', 'life_training_listening', 'life_training_gap']) {
+        assert.match(lifeSource, new RegExp(sessionType));
+    }
+    assert.match(lifeSource, /chooseMixedLifeMode/);
+    assert.match(lifeSource, /evaluateWrittenAnswer\(\{\s*userAnswer: answer/s);
+    assert.match(lifeSource, /answerLanguage: 'de'/);
+    assert.doesNotMatch(lifeSource, /normalizeGermanLifeAnswer\(answer\) === normalizeGermanLifeAnswer\(session\.answer\)/);
+});
+
+test('Goethe text_input answers use the central German matcher', () => {
+    const goetheCommandSource = fs.readFileSync(new URL('../src/commands/goethe.ts', import.meta.url), 'utf8');
+    const goetheServiceSource = fs.readFileSync(new URL('../src/services/goetheTrainingService.ts', import.meta.url), 'utf8');
+
+    assert.match(goetheCommandSource, /active\.question\?\.format !== 'text_input'/);
+    assert.match(goetheServiceSource, /evaluateWrittenAnswer\(\{\s*userAnswer: answer/s);
+    assert.match(goetheServiceSource, /acceptedAnswers: parseGoetheAcceptedAnswers/);
+    assert.match(goetheServiceSource, /answerLanguage: 'de'/);
+    assert.doesNotMatch(goetheServiceSource, /normalizeGermanText\(value\) === normalized/);
+});
+
+test('game answer route is speech-based and keeps its speech matcher separate from written training', () => {
+    const gameRoutesSource = fs.readFileSync(new URL('../src/game/routes.ts', import.meta.url), 'utf8');
+    const gameServiceSource = fs.readFileSync(new URL('../src/services/gameSessionService.ts', import.meta.url), 'utf8');
+
+    assert.match(gameRoutesSource, /\/game\/api\/answer/);
+    assert.match(gameServiceSource, /spokenAnswers\.some/);
+    assert.match(gameServiceSource, /normalizeSpeechTranscript/);
+});
+
+test('accepted normalized written answers still flow into XP and SRS updates', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const updateBlock = trainSource.slice(trainSource.indexOf('async function handleTypedTrainingAnswer'), trainSource.indexOf('async function advanceTraining'));
+
+    assert.match(updateBlock, /const isCorrect = grade\.isCorrect/);
+    assert.match(updateBlock, /if \(isCorrect\) \{[\s\S]*addXp/);
+    assert.match(updateBlock, /recordReview\(ctx\.db, user\.user_id, current\.word_id, isCorrect/);
+    assert.match(updateBlock, /updateWordLearningAfterAnswer\(ctx\.db, \{[\s\S]*isCorrect/);
+});
+
+test('old direct written-answer comparisons are absent from written training routes', () => {
+    const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
+    const challengeSource = fs.readFileSync(new URL('../src/commands/challenge.ts', import.meta.url), 'utf8');
+    const lifeSource = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
+    const goetheServiceSource = fs.readFileSync(new URL('../src/services/goetheTrainingService.ts', import.meta.url), 'utf8');
+
+    assert.doesNotMatch(trainSource, /answerText\)\s*===/);
+    assert.doesNotMatch(challengeSource, /answerText\)\s*===/);
+    assert.doesNotMatch(lifeSource, /session\.answer\)\s*===/);
+    assert.doesNotMatch(goetheServiceSource, /accepted\.some\(value => normalize/);
 });
 
 test('training text answers have priority over stale word edit and support flows', () => {
@@ -1993,7 +2141,7 @@ test('deleted users re-register and active users drive challenges', () => {
     assert.match(challengeSource, /hasOpenChallengeBetween/);
     assert.match(challengeRepo, /waiting_opponent/);
     assert.match(challengeRepo, /expired/);
-    assert.doesNotMatch(challengeSource, /قبول|رفض|accepted|rejected|pending_acceptance/);
+    assert.doesNotMatch(challengeSource, /قبول|رفض|rejected|pending_acceptance/);
 });
 
 test('active announcement is rendered in main menu and can be cleared', () => {
@@ -2081,6 +2229,36 @@ test('AI prompts require strict JSON and Iraqi Arabic learning output', () => {
     assert.match(promptsSource, /"pronunciation_ar"/);
     assert.match(promptsSource, /"short_explanation"/);
     assert.match(promptsSource, /"level"/);
+});
+
+test('Life AI generation and verification are provider-neutral and guarded', () => {
+    const aiTypes = fs.readFileSync(new URL('../src/services/ai/aiTypes.ts', import.meta.url), 'utf8');
+    const aiUsage = fs.readFileSync(new URL('../src/services/ai/aiUsage.ts', import.meta.url), 'utf8');
+    const prompts = fs.readFileSync(new URL('../src/services/ai/prompts.ts', import.meta.url), 'utf8');
+    const lifeService = fs.readFileSync(new URL('../src/services/lifeSentences.ts', import.meta.url), 'utf8');
+    const lifeCommand = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
+    const router = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
+
+    assert.match(aiTypes, /validate_life_sentence/);
+    assert.match(aiUsage, /validate_life_sentence:\s*20/);
+    assert.match(prompts, /محول دقيق من موقف عربي حقيقي/);
+    assert.match(prompts, /اختراع أشخاص أو أسباب أو أماكن أو مشاعر/);
+    assert.match(prompts, /شفت صرصر بالحمام البارحه/);
+    assert.match(prompts, /كملت الدرس العاشر/);
+    assert.match(prompts, /اليوم راح نتعشى بالمطعم/);
+    assert.match(prompts, /ما نمت زين البارحه/);
+    assert.match(prompts, /راح اروح للحلاق باجر/);
+    assert.match(prompts, /"status":"ok"/);
+    assert.match(prompts, /"status":"clarify"/);
+    assert.match(prompts, /"verdict":"pass"/);
+    assert.match(prompts, /"verdict":"repair"/);
+    assert.match(lifeService, /validateLifeGenerationResult/);
+    assert.match(lifeService, /validateLifeVerificationResult/);
+    assert.match(lifeService, /verifyLifeCandidate/);
+    assert.match(lifeService, /countUsage: false/);
+    assert.match(lifeCommand, /awaiting_life_clarification/);
+    assert.match(lifeCommand, /لم أفهم قصدي|لم تفهم قصدي/);
+    assert.match(router, /if \(options\.countUsage !== false\)/);
 });
 
 test('AI coach saves word changes only after user confirmation', () => {
@@ -2644,7 +2822,8 @@ test('collection challenge supports training-style modes without migrations', ()
     assert.match(challengeSource, /collection_challenge_mode_\$\{collectionId\}_missing/);
     assert.match(challengeSource, /challenge_collection_opp_\$\{collectionId\}_\$\{modeAlias\}_\$\{count\}_\$\{candidate\.user_id\}/);
     assert.match(challengeSource, /buildTrainingQuestion\(words, word, trainingMode, index\)/);
-    assert.match(challengeSource, /normalizeAnswer\(answerText\) === normalizeAnswer\(active\.answer\)/);
+    assert.match(challengeSource, /evaluateWrittenAnswer\(\{\s*userAnswer: answerText/s);
+    assert.match(challengeSource, /answerLanguage: active\.direction === 'de_ar' \? 'ar' : 'de'/);
     assert.match(challengeSource, /parseStoredChallengeOptions/);
     assert.match(challengeSource, /requiresMultipleChoiceDistractors/);
     assert.match(challengeSource, /هذا النوع يحتاج 3 كلمات على الأقل/);

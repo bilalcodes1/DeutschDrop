@@ -1,6 +1,8 @@
 import type { BotContext } from '../bot/context';
 import type { Word } from '../models';
 import { runAiTask } from './ai/aiRouter';
+import { evaluateWrittenAnswer, normalizeGermanAnswer } from './trainingAnswerMatcher';
+import { normalizeArabicTrainingAnswer } from './arabicAnswerMatcher';
 
 export interface TrainingGradeResult {
     isCorrect: boolean;
@@ -84,45 +86,11 @@ export async function gradeTrainingAnswer(ctx: BotContext, input: GradeInput): P
 }
 
 export function gradeTrainingAnswerLocal(correctAnswer: string, userAnswer: string, direction: 'de_ar' | 'ar_de'): boolean | 'uncertain' {
-    if (direction === 'ar_de') {
-        return normalizeGermanAnswer(correctAnswer) === normalizeGermanAnswer(userAnswer);
-    }
-
-    const correct = normalizeArabicAnswer(correctAnswer);
-    const user = normalizeArabicAnswer(userAnswer);
-    if (correct === user) return true;
-
-    const correctWithoutParentheses = normalizeArabicAnswer(correctAnswer.replace(/[()（）]/g, ' '));
-    if (correctWithoutParentheses === user) return true;
-
-    if (hasParentheticalMeaning(correctAnswer) && correctWithoutParentheses === user) return true;
-    if (isSingleArabicToken(correct) && isSingleArabicToken(user)) return false;
-
-    return 'uncertain';
-}
-
-export function normalizeGermanAnswer(value: string): string {
-    return value
-        .trim()
-        .toLocaleLowerCase('de-DE')
-        .replace(/ß/g, 'ss')
-        .replace(/[.,!?;:،؛؟]+$/g, '')
-        .replace(/[^\p{Letter}\p{Number}\s]/gu, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-export function normalizeArabicAnswer(value: string): string {
-    return value
-        .trim()
-        .replace(/[\u064B-\u065F\u0670]/g, '')
-        .replace(/[()（）]/g, ' ')
-        .replace(/[أإآٱ]/g, 'ا')
-        .replace(/ى/g, 'ي')
-        .replace(/ة/g, 'ه')
-        .replace(/[.,!?;:،؛؟"']/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+    return evaluateWrittenAnswer({
+        userAnswer,
+        expectedAnswer: correctAnswer,
+        answerLanguage: direction === 'de_ar' ? 'ar' : 'de',
+    }).accepted;
 }
 
 function validateAiGradeResult(result: AiGradeResult): boolean {
@@ -133,10 +101,4 @@ function validateAiGradeResult(result: AiGradeResult): boolean {
     return result.confidence >= 0 && result.confidence <= 1;
 }
 
-function hasParentheticalMeaning(value: string): boolean {
-    return /\(.+?\)|（.+?）/.test(value);
-}
-
-function isSingleArabicToken(value: string): boolean {
-    return value.split(/\s+/).filter(Boolean).length === 1;
-}
+export { normalizeArabicTrainingAnswer as normalizeArabicAnswer, normalizeGermanAnswer };

@@ -15,6 +15,7 @@ import {
     type GoetheSession,
     type GoetheSessionQuestionDetail,
 } from '../repositories/goetheRepository.js';
+import { evaluateWrittenAnswer } from './trainingAnswerMatcher.js';
 import { addXp } from './xpLevels.js';
 
 export type GoetheMode = 'challenge' | 'missed_call' | 'speed' | 'weakness' | 'mock';
@@ -182,27 +183,15 @@ function isGoetheAnswerCorrect(question: GoetheSessionQuestionDetail, selectedAn
     const answer = selectedAnswer.trim();
     if (question.format === 'mcq_single') return answer.toUpperCase() === question.correct_answer.toUpperCase();
     if (question.format === 'true_false') return answer.toLowerCase() === question.correct_answer.toLowerCase();
-    const accepted = parseAcceptedAnswers(question.accepted_answers_json, question.correct_answer);
-    const normalized = normalizeGermanText(answer);
-    return accepted.some(value => normalizeGermanText(value) === normalized);
+    return evaluateWrittenAnswer({
+        userAnswer: answer,
+        expectedAnswer: question.correct_answer,
+        acceptedAnswers: parseGoetheAcceptedAnswers(question.accepted_answers_json, question.correct_answer),
+        answerLanguage: 'de',
+    }).accepted;
 }
 
-function normalizeGermanText(input: string): string {
-    return String(input ?? '')
-        .normalize('NFKC')
-        .toLocaleLowerCase('de-DE')
-        .replace(/[’‘`´]/g, "'")
-        .replace(/ä/g, 'ae')
-        .replace(/ö/g, 'oe')
-        .replace(/ü/g, 'ue')
-        .replace(/ß/g, 'ss')
-        .replace(/[^a-z0-9'\s-]/g, ' ')
-        .replace(/[-_]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function parseAcceptedAnswers(raw: string | null, fallback: string): string[] {
+function parseGoetheAcceptedAnswers(raw: string | null, fallback: string): string[] {
     if (raw) {
         try {
             const parsed = JSON.parse(raw);

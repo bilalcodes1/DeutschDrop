@@ -9,11 +9,23 @@ import { isHardWord, selectTrainingWords } from '../services/srs';
 import { addXp } from '../services/xpLevels';
 import { checkAchievements } from '../services/achievements';
 import { incrementDailyTask } from '../services/dailyTasks';
-import { gradeTrainingAnswer } from '../services/trainingAnswerGrader';
 import { updateWordLearningAfterAnswer } from '../services/adaptiveReview';
 import { buildYouglishDirectUrl } from '../services/youglish';
 import { ACTIVE_TEMP_TTL_SECONDS, recordTemporaryMessage } from '../repositories/temporaryMessageRepository';
 import { recordCorrectTrainingAnswer, recordTrainingSessionComplete } from '../services/dailyQuestHooks';
+import {
+    formatAcceptedArabicAnswers,
+    normalizeArabicTrainingAnswer,
+    parseAcceptedArabicAnswers,
+} from '../services/arabicAnswerMatcher';
+import {
+    evaluateWrittenAnswer,
+    formatExpectedAnswers,
+    isAcceptedArabicAnswer,
+    isAcceptedGermanAnswer,
+    parseAcceptedAnswers,
+    type AnswerLanguage,
+} from '../services/trainingAnswerMatcher';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
 import type { TrainExplainSession } from './aiCoach';
@@ -533,7 +545,7 @@ async function handleTrainAnswer(ctx: BotContext, questionIndex: number, wordId:
         await saveBotSession<TrainingSessionData>(ctx.db, user.user_id, 'train', session.data);
         await replaceWithText(
             ctx,
-            `❌ خطأ\n\nالصحيح: *${current.answer}*`,
+            `❌ خطأ\n\nالصحيح: *${formatTrainingCorrectAnswer(current)}*`,
             new InlineKeyboard()
                 .text('🔊 نطق الصحيح', `tts:word:${wordId}:ctx:training_session`).row()
                 .text('🤖 اشرح لي', 'train_explain').row()
@@ -559,20 +571,21 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
     }
 
     const word = await getWordById(ctx.db, current.word_id);
-    const grade = shouldUseArabicTrainingNormalization(current)
-        ? {
-            isCorrect: isAcceptedArabicAnswer(answerText, current.answer),
-            verdict: isAcceptedArabicAnswer(answerText, current.answer) ? 'correct' as const : 'wrong' as const,
-            source: 'local' as const,
-        }
-        : await gradeTrainingAnswer(ctx, {
-            questionType: current.type,
-            direction: current.direction,
-            correctAnswer: current.answer,
-            userAnswer: answerText,
-            word,
-            userId: user.user_id,
-        });
+    const evaluation = evaluateWrittenAnswer({
+        userAnswer: answerText,
+        expectedAnswer: current.answer,
+        answerLanguage: writtenAnswerLanguageForTrainingQuestion(current),
+    });
+    const grade: {
+        isCorrect: boolean;
+        verdict: 'correct' | 'almost' | 'wrong';
+        source: 'local';
+        feedback?: string;
+    } = {
+        isCorrect: evaluation.accepted,
+        verdict: evaluation.accepted ? 'correct' as const : 'wrong' as const,
+        source: 'local' as const,
+    };
     const isCorrect = grade.isCorrect;
     markQuestionAnswered(session.data, current, isCorrect);
 
@@ -625,7 +638,7 @@ async function handleTypedTrainingAnswer(ctx: BotContext, current: TrainingQuest
         const prefix = grade.verdict === 'almost' ? '🟡 قريب' : '❌ خطأ';
         await replaceWithText(
             ctx,
-            `${prefix}\n\nجوابك: *${answerText.trim()}*\nالصحيح: *${current.answer}*` +
+            `${prefix}\n\nجوابك: *${answerText.trim()}*\nالصحيح: *${formatTrainingCorrectAnswer(current)}*` +
             (grade.feedback ? `\n\n${grade.feedback}` : ''),
             new InlineKeyboard()
                 .text('🔊 نطق الصحيح', `tts:word:${current.word_id}:ctx:training_session`).row()
@@ -832,38 +845,23 @@ export function normalizeAnswer(value: string): string {
     return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('de-DE');
 }
 
-function shouldUseArabicTrainingNormalization(question: TrainingQuestion): boolean {
-    return question.direction === 'de_ar' && question.options.length === 0;
+function writtenAnswerLanguageForTrainingQuestion(question: TrainingQuestion): AnswerLanguage {
+    return question.direction === 'de_ar' ? 'ar' : 'de';
 }
 
-export function isAcceptedArabicAnswer(userAnswer: string, correctAnswer: string): boolean {
-    const userOptions = splitArabicTrainingAnswers(userAnswer).map(normalizeArabicTrainingAnswer).filter(Boolean);
-    const correctOptions = splitArabicTrainingAnswers(correctAnswer).map(normalizeArabicTrainingAnswer).filter(Boolean);
-    if (userOptions.length === 0 || correctOptions.length === 0) return false;
-    return userOptions.some(user => correctOptions.includes(user));
+function formatTrainingCorrectAnswer(question: TrainingQuestion): string {
+    return formatExpectedAnswers(question.answer, writtenAnswerLanguageForTrainingQuestion(question));
 }
 
-function splitArabicTrainingAnswers(value: string): string[] {
-    return value.split(/[|/،]/g).map(item => item.trim()).filter(Boolean);
-}
-
-export function normalizeArabicTrainingAnswer(value: string): string {
-    return value
-        .trim()
-        .replace(/[\u064B-\u065F\u0670]/g, '')
-        .replace(/\u0640/g, '')
-        .replace(/[أإآٱ]/g, 'ا')
-        .replace(/ى/g, 'ي')
-        .replace(/[ؤئء]/g, '')
-        .replace(/و{2,}/g, 'و')
-        .replace(/ي{2,}/g, 'ي')
-        .replace(/[()[\]{}.,!?;:،؛؟"'“”‘’]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .split(' ')
-        .map(token => token.replace(/[ةه]$/g, 'ه'))
-        .join(' ');
-}
+export {
+    evaluateWrittenAnswer,
+    formatAcceptedArabicAnswers,
+    isAcceptedArabicAnswer,
+    isAcceptedGermanAnswer,
+    normalizeArabicTrainingAnswer,
+    parseAcceptedAnswers,
+    parseAcceptedArabicAnswers,
+};
 
 function buildDistractors(
     words: Array<{ word_id: number; german: string; arabic: string }>,

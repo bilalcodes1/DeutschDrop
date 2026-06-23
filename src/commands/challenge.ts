@@ -8,9 +8,10 @@ import { countCollectionsByUser, getCollectionById, getCollectionsByUser, getCol
 import { unlockAchievement } from '../services/achievements';
 import { competitionNotificationsEnabled, displayUserName, sendTelegramMessage } from '../services/notifications';
 import { addXp } from '../services/xpLevels';
+import { evaluateWrittenAnswer, formatExpectedAnswers } from '../services/trainingAnswerMatcher';
 import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
-import { buildTrainingQuestion, normalizeAnswer, questionLabel, type TrainingMode, type TrainingQuestion, type TrainingQuestionType } from './train';
+import { buildTrainingQuestion, questionLabel, type TrainingMode, type TrainingQuestion, type TrainingQuestionType } from './train';
 
 type CollectionChallengeMode = 'multiple_choice' | 'mixed' | 'missing' | 'ar_de' | 'de_ar' | 'typing';
 
@@ -467,14 +468,19 @@ async function handleTypedChallengeAnswer(ctx: BotContext, current: ChallengeQue
     const active = session.data.questions[session.data.currentIndex];
     if (active.word_id !== current.word_id || active.options.length > 0) return;
 
-    const isCorrect = normalizeAnswer(answerText) === normalizeAnswer(active.answer);
+    const evaluation = evaluateWrittenAnswer({
+        userAnswer: answerText,
+        expectedAnswer: active.answer,
+        answerLanguage: active.direction === 'de_ar' ? 'ar' : 'de',
+    });
+    const isCorrect = evaluation.accepted;
     if (isCorrect) session.data.correctCount++;
     session.data.currentIndex++;
     await saveBotSession(ctx.db, user.user_id, 'challenge', session.data, 120);
     await showChallengeQuestion(
         ctx,
         user.user_id,
-        isCorrect ? '✅ صحيح!' : `❌ خطأ\nجوابك: *${answerText.trim()}*\nالصحيح: *${active.answer}*`
+        isCorrect ? '✅ صحيح!' : `❌ خطأ\nجوابك: *${answerText.trim()}*\nالصحيح: *${formatExpectedAnswers(active.answer, active.direction === 'de_ar' ? 'ar' : 'de')}*`
     );
 }
 

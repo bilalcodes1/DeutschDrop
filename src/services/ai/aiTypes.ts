@@ -1,6 +1,6 @@
 import type { Env } from '../../models';
 
-export type AiTaskType = 'generate_example_and_pronunciation' | 'generate_pronunciation' | 'explain_answer' | 'classify_level' | 'grade_training_answer' | 'generate_life_sentence';
+export type AiTaskType = 'generate_example_and_pronunciation' | 'generate_pronunciation' | 'explain_answer' | 'classify_level' | 'grade_training_answer' | 'generate_life_sentence' | 'validate_life_sentence';
 export type AiProviderName = 'cloudflareAi' | 'groqCloud' | 'openrouter' | 'zai' | 'mistral' | 'cohere' | 'gemini' | 'kimi';
 export type AiStatus = 'ok' | 'AI_DISABLED' | 'RATE_LIMITED' | 'AI_RATE_LIMITED' | 'AI_UNAVAILABLE';
 
@@ -43,11 +43,20 @@ export interface GradeTrainingAnswerInput {
 export interface GenerateLifeSentenceInput {
     original_arabic: string;
     target_level: 'A1' | 'A2' | 'B1';
+    clarification_answer?: string | null;
     retry?: boolean;
     regenerate?: boolean;
 }
 
-export type AiTaskInput = GenerateExampleInput | GeneratePronunciationInput | ExplainAnswerInput | ClassifyLevelInput | GradeTrainingAnswerInput | GenerateLifeSentenceInput;
+export interface ValidateLifeSentenceInput {
+    original_arabic: string;
+    understood_meaning_ar: string;
+    german: string;
+    back_translation_arabic: string;
+    target_level: 'A1' | 'A2' | 'B1';
+}
+
+export type AiTaskInput = GenerateExampleInput | GeneratePronunciationInput | ExplainAnswerInput | ClassifyLevelInput | GradeTrainingAnswerInput | GenerateLifeSentenceInput | ValidateLifeSentenceInput;
 
 export interface AiTaskResult<T = unknown> {
     status: AiStatus;
@@ -82,4 +91,5 @@ export interface RunAiOptions {
     userId: number;
     bypassCache?: boolean;
     validateResult?: (result: unknown) => boolean;
+    countUsage?: boolean;
 }

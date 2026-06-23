@@ -59,7 +59,7 @@ export async function runAiTask<T>(
         }
     }
 
-    if (!await canUseAiTask(db, options.userId, taskType)) return { status: 'RATE_LIMITED' };
+    if (options.countUsage !== false && !await canUseAiTask(db, options.userId, taskType)) return { status: 'RATE_LIMITED' };
 
     const prompt = buildPrompt(taskType, input);
     let attemptedProviders = 0;
@@ -87,7 +87,7 @@ export async function runAiTask<T>(
                 continue;
             }
             await setCachedAiResult(db, taskType, inputHash, provider.name, result);
-            await incrementAiUsage(db, options.userId, taskType);
+            if (options.countUsage !== false) await incrementAiUsage(db, options.userId, taskType);
             return { status: 'ok', result, provider: provider.name, model: response.model };
         } catch (error) {
             safeProviderWarn(provider.name, 'UNKNOWN');

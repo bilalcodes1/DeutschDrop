@@ -17,7 +17,9 @@ import {
     shuffledSentenceWords,
     validateLifeSearchQuery,
     validateLifeDraft,
+    validateLifeGenerationResult,
     validateLifeOriginalInput,
+    validateLifeVerificationResult,
 } from '../dist/services/lifeSentences.js';
 import {
     countCopiedLifeSentencesByUser,
@@ -188,6 +190,125 @@ Level: A1`);
     assert.equal(parsed?.keywords.length, 2);
     assert.equal(parseExternalLifeResult('Arabic: فقط عربي'), null);
     assert.equal(parseExternalKeywords('heiß=حار, Tee = شاي | gut - جيد').length, 3);
+});
+
+test('life AI generation schema accepts only source-preserving JSON', () => {
+    const valid = {
+        status: 'ok',
+        source_arabic: 'شفت صرصر بالحمام البارحه',
+        understood_meaning_ar: 'رأيت صرصوراً في الحمام البارحة.',
+        german: 'Gestern habe ich eine Kakerlake im Badezimmer gesehen.',
+        arabic: 'رأيت صرصوراً في الحمام البارحة.',
+        pronunciation_ar: 'غيسترن هابه إخ آينه كاكرلاكه إم بادِتسيمر گِزين',
+        memory_hint: 'Kakerlake تعني صرصور',
+        keywords: [{ german: 'Kakerlake', arabic: 'صرصور' }],
+        level: 'A2',
+        tense: 'past',
+        confidence: 0.95,
+    };
+    assert.equal(validateLifeGenerationResult(valid, 'شفت صرصر بالحمام البارحه')?.status, 'ok');
+    assert.equal(validateLifeDraft(valid, 'شفت صرصر بالحمام البارحه')?.understood_meaning_ar, 'رأيت صرصوراً في الحمام البارحة.');
+    assert.equal(validateLifeGenerationResult({ ...valid, german: '' }, 'شفت صرصر بالحمام البارحه'), null);
+    assert.equal(validateLifeGenerationResult({ ...valid, arabic: '' }, 'شفت صرصر بالحمام البارحه'), null);
+    assert.equal(validateLifeGenerationResult({ ...valid, source_arabic: 'نص مختلف' }, 'شفت صرصر بالحمام البارحه'), null);
+    assert.equal(validateLifeGenerationResult({ ...valid, level: 'C1' }, 'شفت صرصر بالحمام البارحه'), null);
+    assert.equal(validateLifeGenerationResult({ ...valid, confidence: 1.5 }, 'شفت صرصر بالحمام البارحه'), null);
+    assert.equal(validateLifeGenerationResult({ ...valid, confidence: 0.2 }, 'شفت صرصر بالحمام البارحه'), null);
+});
+
+test('life AI generation handles clarify and realistic examples', () => {
+    const clarify = validateLifeGenerationResult({
+        status: 'clarify',
+        source_arabic: 'رحت يمه البارحه',
+        clarification_question_ar: 'من تقصد بكلمة «يمه»، وإلى أين ذهبت؟',
+    }, 'رحت يمه البارحه');
+    assert.equal(clarify?.status, 'clarify');
+
+    const cases = [
+        ['كملت الدرس العاشر', 'أنهيت الدرس العاشر.', 'Ich habe die zehnte Lektion abgeschlossen.', 'past'],
+        ['اليوم راح نتعشى بالمطعم', 'سنتناول العشاء في المطعم اليوم.', 'Heute essen wir im Restaurant zu Abend.', 'future'],
+        ['ما نمت زين البارحه', 'لم أنم جيداً البارحة.', 'Ich habe letzte Nacht nicht gut geschlafen.', 'past'],
+        ['راح اروح للحلاق باجر', 'سأذهب إلى الحلاق غداً.', 'Morgen gehe ich zum Friseur.', 'future'],
+    ];
+    for (const [source, understood, german, tense] of cases) {
+        const result = validateLifeGenerationResult({
+            status: 'ok',
+            source_arabic: source,
+            understood_meaning_ar: understood,
+            german,
+            arabic: understood,
+            pronunciation_ar: 'لفظ ألماني مبسط',
+            memory_hint: 'تلميح',
+            keywords: [{ german: german.split(' ')[0], arabic: 'كلمة' }],
+            level: 'A1',
+            tense,
+            confidence: 0.9,
+        }, source);
+        assert.equal(result?.status, 'ok');
+    }
+});
+
+test('life AI verifier accepts pass and rejects changed meaning before preview', () => {
+    assert.equal(validateLifeVerificationResult({
+        verdict: 'pass',
+        issues: [],
+        preserves_actor: true,
+        preserves_action: true,
+        preserves_time: true,
+        preserves_negation: true,
+        preserves_place: true,
+        invented_details: false,
+    })?.verdict, 'pass');
+
+    assert.equal(validateLifeVerificationResult({
+        verdict: 'pass',
+        issues: ['تم تغيير الفاعل'],
+        preserves_actor: false,
+        preserves_action: true,
+        preserves_time: true,
+        preserves_negation: true,
+        preserves_place: true,
+        invented_details: false,
+    }), null);
+
+    assert.equal(validateLifeVerificationResult({
+        verdict: 'pass',
+        issues: ['تم اختراع تفاصيل'],
+        preserves_actor: true,
+        preserves_action: true,
+        preserves_time: true,
+        preserves_negation: true,
+        preserves_place: true,
+        invented_details: true,
+    }), null);
+});
+
+test('life AI verifier repair and clarification are schema checked', () => {
+    const repair = validateLifeVerificationResult({
+        verdict: 'repair',
+        issues: ['حذف النفي'],
+        repaired: {
+            german: 'Ich habe letzte Nacht nicht gut geschlafen.',
+            arabic: 'لم أنم جيداً البارحة.',
+            pronunciation_ar: 'إخ هابه لتسته ناخت نِشت گوت گِشلافن',
+            memory_hint: 'nicht تعني لا',
+            keywords: [{ german: 'nicht', arabic: 'لا' }],
+            level: 'A1',
+            tense: 'past',
+        },
+    });
+    assert.equal(repair?.verdict, 'repair');
+    assert.equal(validateLifeVerificationResult({ verdict: 'repair', issues: [], repaired: { german: '', arabic: 'x' } }), null);
+    assert.equal(validateLifeVerificationResult({ verdict: 'clarify', clarification_question_ar: 'شنو تقصد؟' })?.verdict, 'clarify');
+});
+
+test('life AI generation limits attempts repair and verifier usage', () => {
+    const source = fs.readFileSync(new URL('../src/services/lifeSentences.ts', import.meta.url), 'utf8');
+    assert.match(source, /for \(let attempt = 0; attempt < 2; attempt\+\+\)/);
+    assert.match(source, /let repairUsed = false/);
+    assert.match(source, /if \(verified\.repairAttempted\) repairUsed = true/);
+    assert.match(source, /verifyLifeCandidate\([\s\S]*!repairUsed\)/);
+    assert.match(source, /countUsage: false/);
 });
 
 test('life input validation rejects empty long and emoji-only input', () => {
@@ -471,11 +592,24 @@ test('life report constraints reject malformed reason and keep source visible', 
 
 test('life TTS command path records temporary audio without leaking German in caption', () => {
     const lifeSource = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
-    assert.match(lifeSource, /ttlSeconds: LIFE_AUDIO_TTL_SECONDS/);
-    assert.match(lifeSource, /const LIFE_AUDIO_TTL_SECONDS = 45/);
+    const tempRepoSource = fs.readFileSync(new URL('../src/repositories/temporaryMessageRepository.ts', import.meta.url), 'utf8');
+    assert.match(tempRepoSource, /ACTIVE_TEMP_TTL_SECONDS = 5/);
+    assert.match(lifeSource, /ACTIVE_TEMP_TTL_SECONDS, recordTemporaryMessage/);
+    assert.match(lifeSource, /ttlSeconds: ACTIVE_TEMP_TTL_SECONDS/);
     assert.match(lifeSource, /kind: 'life_tts'/);
+    assert.doesNotMatch(lifeSource, /LIFE_AUDIO_TTL_SECONDS/);
+    assert.doesNotMatch(lifeSource, /ttlSeconds: 45/);
     assert.doesNotMatch(lifeSource, /caption:/);
     assert.doesNotMatch(lifeSource, /setTimeout/);
+});
+
+test('life audio TTL is shared across preview details public and listening paths', () => {
+    const lifeSource = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
+    assert.match(lifeSource, /listenToLifePreview[\s\S]*sendLifeTts\(ctx, session\.data\.draft\.german\)/);
+    assert.match(lifeSource, /listenToPublicLifeSentence[\s\S]*sendLifeTts\(ctx, sentence\.german_text\)/);
+    assert.match(lifeSource, /listenToLifeSentenceByShareCode[\s\S]*sendLifeTts\(ctx, sentence\.german_text\)/);
+    assert.match(lifeSource, /life:train:l/);
+    assert.match(lifeSource, /recordTemporaryMessage[\s\S]*kind: 'life_tts'[\s\S]*ttlSeconds: ACTIVE_TEMP_TTL_SECONDS/);
 });
 
 test('life ordering callbacks use indexes and keep callback data short', () => {
@@ -546,9 +680,11 @@ test('life command wiring exposes menu gate settings preview training and safe c
     for (const callback of ['life:add', 'life:ext', 'life:save', 'life:regen', 'life:edit:g', 'life:edit:a', 'life:today', 'life:due', 'life:stats', 'life:settings', 'life:gate:on', 'life:gate:off']) {
         assert.match(lifeSource, new RegExp(callback.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
-    for (const state of ['awaiting_life_original_arabic', 'awaiting_life_external_result', 'awaiting_life_german_edit', 'awaiting_life_arabic_edit', 'life_training_writing', 'life_training_listening', 'life_training_order', 'life_training_gap']) {
+    for (const state of ['awaiting_life_original_arabic', 'awaiting_life_clarification', 'awaiting_life_external_result', 'awaiting_life_german_edit', 'awaiting_life_arabic_edit', 'life_training_writing', 'life_training_listening', 'life_training_order', 'life_training_gap']) {
         assert.match(lifeSource, new RegExp(state));
     }
+    assert.match(lifeSource, /life:misunderstood/);
+    assert.match(lifeSource, /📝 فهمت موقفك هكذا/);
     assert.match(lifeSource, /synthesizeGermanTts/);
     assert.match(lifeSource, /softDeleteLifeSentence/);
     assert.match(lifeSource, /shownGerman: mode !== 'listening'/);
@@ -566,6 +702,10 @@ test('life migration and AI task are wired without new providers', () => {
     assert.match(migration, /UNIQUE\(user_id, gate_date\)/);
     assert.match(migration, /idx_life_sentences_user_next_review/);
     assert.match(aiTypes, /generate_life_sentence/);
-    assert.match(prompts, /حوّل موقفاً عربياً حقيقياً/);
+    assert.match(aiTypes, /validate_life_sentence/);
+    assert.match(prompts, /محول دقيق من موقف عربي حقيقي/);
+    assert.match(prompts, /source_arabic يجب أن يساوي original_arabic/);
+    assert.match(prompts, /validate_life_sentence/);
+    assert.match(prompts, /verdict/);
     assert.doesNotMatch(router, /lifeProvider|speechmatics|new Provider/);
 });

@@ -18,6 +18,7 @@ import { addXp } from './xpLevels';
 
 export interface LifeSentenceDraft {
     original_arabic: string;
+    understood_meaning_ar?: string | null;
     german: string;
     arabic: string;
     pronunciation_ar?: string | null;
@@ -25,7 +26,58 @@ export interface LifeSentenceDraft {
     keywords: Array<{ german: string; arabic: string }>;
     level: LifeLevel;
     tense?: string | null;
+    confidence?: number | null;
 }
+
+export type GenerateLifeSentenceResult =
+    | { ok: true; draft: LifeSentenceDraft }
+    | { ok: false; status: string; clarificationQuestion?: string; originalArabic?: string };
+
+interface LifeGenerationOk {
+    status: 'ok';
+    source_arabic: string;
+    understood_meaning_ar: string;
+    german: string;
+    arabic: string;
+    pronunciation_ar: string;
+    memory_hint?: string | null;
+    keywords: Array<{ german: string; arabic: string }>;
+    level: LifeLevel;
+    tense: string;
+    confidence: number;
+}
+
+interface LifeGenerationClarify {
+    status: 'clarify';
+    source_arabic: string;
+    clarification_question_ar: string;
+}
+
+type LifeGenerationResult = LifeGenerationOk | LifeGenerationClarify;
+
+interface LifeVerificationPass {
+    verdict: 'pass';
+    issues: string[];
+    preserves_actor: boolean;
+    preserves_action: boolean;
+    preserves_time: boolean;
+    preserves_negation: boolean;
+    preserves_place: boolean;
+    invented_details: boolean;
+}
+
+interface LifeVerificationRepair {
+    verdict: 'repair';
+    issues: string[];
+    repaired: Omit<LifeGenerationOk, 'status' | 'source_arabic' | 'understood_meaning_ar' | 'confidence'> & { confidence?: number };
+}
+
+interface LifeVerificationClarify {
+    verdict: 'clarify';
+    clarification_question_ar: string;
+}
+
+type LifeVerificationResult = LifeVerificationPass | LifeVerificationRepair | LifeVerificationClarify;
 
 export interface LifeGateStatus {
     enabled: boolean;
@@ -109,6 +161,10 @@ export function validateLifeOriginalInput(text: string): { ok: true; value: stri
 export function validateLifeDraft(raw: unknown, originalArabic: string): LifeSentenceDraft | null {
     if (!raw || typeof raw !== 'object') return null;
     const value = raw as Record<string, unknown>;
+    if (value.status === 'ok') {
+        const generated = validateLifeGenerationResult(value, originalArabic);
+        return generated?.status === 'ok' ? lifeDraftFromGeneration(generated, originalArabic) : null;
+    }
     const german = cleanText(value.german);
     const arabic = cleanText(value.arabic);
     if (!german || !arabic) return null;
@@ -119,6 +175,7 @@ export function validateLifeDraft(raw: unknown, originalArabic: string): LifeSen
     const keywords = normalizeLifeKeywords(value.keywords);
     return {
         original_arabic: originalArabic,
+        understood_meaning_ar: cleanOptionalText(value.understood_meaning_ar),
         german,
         arabic,
         pronunciation_ar: pronunciation,
@@ -126,6 +183,7 @@ export function validateLifeDraft(raw: unknown, originalArabic: string): LifeSen
         keywords,
         level,
         tense,
+        confidence: typeof value.confidence === 'number' && Number.isFinite(value.confidence) ? value.confidence : null,
     };
 }
 
@@ -135,35 +193,58 @@ export async function generateLifeSentenceWithAi(
     userId: number,
     originalArabic: string,
     targetLevel: LifeLevel,
-    regenerate = false
-): Promise<{ ok: true; draft: LifeSentenceDraft } | { ok: false; status: string }> {
+    regenerate = false,
+    clarificationAnswer?: string | null
+): Promise<GenerateLifeSentenceResult> {
     const normalized = validateLifeOriginalInput(originalArabic);
     if (!normalized.ok) return { ok: false, status: normalized.message };
 
+    let repairUsed = false;
     for (let attempt = 0; attempt < 2; attempt++) {
-        const ai = await runAiTask<unknown>(
+        const ai = await runAiTask<LifeGenerationResult>(
             env,
             db,
             'generate_life_sentence',
             {
                 original_arabic: normalized.value,
                 target_level: targetLevel,
+                clarification_answer: clarificationAnswer?.trim() || null,
                 retry: attempt > 0,
                 regenerate,
             },
             {
                 userId,
                 bypassCache: regenerate || attempt > 0,
-                validateResult: result => Boolean(validateLifeDraft(result, normalized.value)),
+                validateResult: result => Boolean(validateLifeGenerationResult(result, normalized.value)),
             }
         );
         if (ai.result) {
-            const draft = validateLifeDraft(ai.result, normalized.value);
-            if (draft) return { ok: true, draft };
+            const generated = validateLifeGenerationResult(ai.result, normalized.value);
+            if (generated?.status === 'clarify') {
+                return {
+                    ok: false,
+                    status: 'clarify',
+                    clarificationQuestion: generated.clarification_question_ar,
+                    originalArabic: normalized.value,
+                };
+            }
+            if (generated?.status === 'ok') {
+                const verified = await verifyLifeCandidate(env, db, userId, normalized.value, targetLevel, generated, !repairUsed);
+                if (verified.repairAttempted) repairUsed = true;
+                if (verified.ok) return { ok: true, draft: verified.draft };
+                if (verified.clarificationQuestion) {
+                    return {
+                        ok: false,
+                        status: 'clarify',
+                        clarificationQuestion: verified.clarificationQuestion,
+                        originalArabic: normalized.value,
+                    };
+                }
+            }
         }
     }
 
-    return { ok: false, status: 'تعذر توليد جملة مناسبة حالياً. جرّب إعادة المحاولة أو استخدم ChatGPT الخارجي.' };
+    return { ok: false, status: 'لم أستطع إنشاء جملة دقيقة من هذا الموقف.\n\nجرّب كتابته بصورة أوضح، أو استخدم خيار ChatGPT الخارجي.' };
 }
 
 export function parseExternalLifeResult(text: string, originalArabic = ''): LifeSentenceDraft | null {
@@ -187,6 +268,191 @@ export function parseExternalLifeResult(text: string, originalArabic = ''): Life
 
 export function parseLifeJsonText(text: string, originalArabic: string): LifeSentenceDraft | null {
     return validateLifeDraft(parseJsonResult(text), originalArabic);
+}
+
+export function validateLifeGenerationResult(raw: unknown, originalArabic: string): LifeGenerationResult | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const value = raw as Record<string, unknown>;
+    const status = cleanText(value.status);
+    const sourceArabic = cleanText(value.source_arabic);
+    if (!sourceArabicMatches(sourceArabic, originalArabic)) return null;
+    if (status === 'clarify') {
+        const question = cleanText(value.clarification_question_ar);
+        return question ? { status: 'clarify', source_arabic: sourceArabic, clarification_question_ar: question } : null;
+    }
+    if (status !== 'ok') return null;
+    const understood = cleanText(value.understood_meaning_ar);
+    const german = cleanText(value.german);
+    const arabic = cleanText(value.arabic);
+    const pronunciation = cleanText(value.pronunciation_ar);
+    const level = normalizeLifeLevel(cleanText(value.level));
+    const confidence = typeof value.confidence === 'number' && Number.isFinite(value.confidence) ? value.confidence : NaN;
+    const keywords = normalizeLifeKeywords(value.keywords);
+    if (!understood || !german || !arabic || !pronunciation || !level || keywords.length === 0) return null;
+    if (confidence < 0.55 || confidence > 1) return null;
+    const wordCount = german.split(/\s+/).filter(Boolean).length;
+    if (wordCount > 24) return null;
+    return {
+        status: 'ok',
+        source_arabic: sourceArabic,
+        understood_meaning_ar: understood,
+        german,
+        arabic,
+        pronunciation_ar: pronunciation,
+        memory_hint: cleanOptionalText(value.memory_hint),
+        keywords,
+        level,
+        tense: cleanOptionalText(value.tense) ?? 'mixed',
+        confidence,
+    };
+}
+
+export function validateLifeVerificationResult(raw: unknown): LifeVerificationResult | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const value = raw as Record<string, unknown>;
+    const verdict = cleanText(value.verdict);
+    if (verdict === 'clarify') {
+        const question = cleanText(value.clarification_question_ar);
+        return question ? { verdict: 'clarify', clarification_question_ar: question } : null;
+    }
+    const issues = Array.isArray(value.issues) ? value.issues.map(cleanText).filter(Boolean).slice(0, 5) : [];
+    if (verdict === 'pass') {
+        const pass: LifeVerificationPass = {
+            verdict: 'pass',
+            issues,
+            preserves_actor: value.preserves_actor === true,
+            preserves_action: value.preserves_action === true,
+            preserves_time: value.preserves_time !== false,
+            preserves_negation: value.preserves_negation !== false,
+            preserves_place: value.preserves_place !== false,
+            invented_details: value.invented_details === true,
+        };
+        return pass.preserves_actor && pass.preserves_action && !pass.invented_details ? pass : null;
+    }
+    if (verdict === 'repair') {
+        const repaired = validateRepairedLifeDraft(value.repaired);
+        return repaired ? { verdict: 'repair', issues, repaired } : null;
+    }
+    return null;
+}
+
+async function verifyLifeCandidate(
+    env: Env,
+    db: D1Database,
+    userId: number,
+    originalArabic: string,
+    targetLevel: LifeLevel,
+    generated: LifeGenerationOk,
+    allowRepair: boolean
+): Promise<{ ok: true; draft: LifeSentenceDraft; repairAttempted?: boolean } | { ok: false; clarificationQuestion?: string; repairAttempted?: boolean }> {
+    const first = await runLifeVerification(env, db, userId, originalArabic, targetLevel, generated);
+    if (first?.verdict === 'pass') return { ok: true, draft: lifeDraftFromGeneration(generated, originalArabic) };
+    if (first?.verdict === 'clarify') return { ok: false, clarificationQuestion: first.clarification_question_ar };
+    if (first?.verdict !== 'repair' || !allowRepair) return { ok: false };
+
+    const repaired = generationFromRepair(first.repaired, generated, originalArabic);
+    if (!repaired) return { ok: false, repairAttempted: true };
+    const final = await runLifeVerification(env, db, userId, originalArabic, targetLevel, repaired);
+    if (final?.verdict === 'pass') return { ok: true, draft: lifeDraftFromGeneration(repaired, originalArabic), repairAttempted: true };
+    if (final?.verdict === 'clarify') return { ok: false, clarificationQuestion: final.clarification_question_ar, repairAttempted: true };
+    return { ok: false, repairAttempted: true };
+}
+
+async function runLifeVerification(
+    env: Env,
+    db: D1Database,
+    userId: number,
+    originalArabic: string,
+    targetLevel: LifeLevel,
+    candidate: LifeGenerationOk
+): Promise<LifeVerificationResult | null> {
+    const verification = await runAiTask<LifeVerificationResult>(
+        env,
+        db,
+        'validate_life_sentence',
+        {
+            original_arabic: originalArabic,
+            understood_meaning_ar: candidate.understood_meaning_ar,
+            german: candidate.german,
+            back_translation_arabic: candidate.arabic,
+            target_level: targetLevel,
+        },
+        {
+            userId,
+            bypassCache: true,
+            countUsage: false,
+            validateResult: result => Boolean(validateLifeVerificationResult(result)),
+        }
+    );
+    return verification.result ? validateLifeVerificationResult(verification.result) : null;
+}
+
+function lifeDraftFromGeneration(value: LifeGenerationOk, originalArabic: string): LifeSentenceDraft {
+    return {
+        original_arabic: originalArabic,
+        understood_meaning_ar: value.understood_meaning_ar,
+        german: value.german,
+        arabic: value.arabic,
+        pronunciation_ar: value.pronunciation_ar,
+        memory_hint: value.memory_hint ?? null,
+        keywords: value.keywords,
+        level: value.level,
+        tense: value.tense,
+        confidence: value.confidence,
+    };
+}
+
+function generationFromRepair(
+    repaired: LifeVerificationRepair['repaired'],
+    original: LifeGenerationOk,
+    originalArabic: string
+): LifeGenerationOk | null {
+    return validateLifeGenerationResult({
+        status: 'ok',
+        source_arabic: originalArabic,
+        understood_meaning_ar: original.understood_meaning_ar,
+        german: repaired.german,
+        arabic: repaired.arabic,
+        pronunciation_ar: repaired.pronunciation_ar,
+        memory_hint: repaired.memory_hint,
+        keywords: repaired.keywords,
+        level: repaired.level,
+        tense: repaired.tense,
+        confidence: typeof repaired.confidence === 'number' ? repaired.confidence : Math.min(original.confidence, 0.85),
+    }, originalArabic) as LifeGenerationOk | null;
+}
+
+function validateRepairedLifeDraft(raw: unknown): LifeVerificationRepair['repaired'] | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const value = raw as Record<string, unknown>;
+    const german = cleanText(value.german);
+    const arabic = cleanText(value.arabic);
+    const pronunciation = cleanText(value.pronunciation_ar);
+    const level = normalizeLifeLevel(cleanText(value.level));
+    const keywords = normalizeLifeKeywords(value.keywords);
+    if (!german || !arabic || !pronunciation || !level || keywords.length === 0) return null;
+    return {
+        german,
+        arabic,
+        pronunciation_ar: pronunciation,
+        memory_hint: cleanOptionalText(value.memory_hint),
+        keywords,
+        level,
+        tense: cleanOptionalText(value.tense) ?? 'mixed',
+        confidence: typeof value.confidence === 'number' && Number.isFinite(value.confidence) ? value.confidence : 0.8,
+    };
+}
+
+function sourceArabicMatches(sourceArabic: string, originalArabic: string): boolean {
+    return normalizeSourceArabic(sourceArabic) === normalizeSourceArabic(originalArabic);
+}
+
+function normalizeSourceArabic(value: string): string {
+    return value
+        .trim()
+        .replace(/[\u064B-\u065F\u0670]/g, '')
+        .replace(/\u0640/g, '')
+        .replace(/\s+/g, ' ');
 }
 
 export function parseExternalKeywords(value: string): Array<{ german: string; arabic: string }> {
