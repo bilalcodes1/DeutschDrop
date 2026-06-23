@@ -36,7 +36,7 @@ import { ADVENTURE_DIFFICULTIES, ADVENTURE_MODES, type AdventureDifficulty } fro
 import { upsertManualVisual, validateManualVisual } from '../services/gameVisualService';
 import { downloadImageBytes } from '../services/imageSearch/imageDownloadService';
 import { extensionForMime } from '../services/imageSearch/imageValidationService';
-import { downloadTelegramPhoto } from '../services/imageSearch/manualUploadImageService';
+import { downloadTelegramPhoto, getTelegramImageMaxBytes, imageUploadErrorDetails, selectBestTelegramPhotoSize } from '../services/imageSearch/manualUploadImageService';
 import { searchWordImages } from '../services/imageSearch/imageSearchRouter';
 import type { NormalizedImageResult } from '../services/imageSearch/imageSearchTypes';
 import type { WordImageProvider } from '../repositories/wordImageRepository';
@@ -125,8 +125,12 @@ export function registerGameCommand(bot: Bot<BotContext>): void {
         if (!user) return next();
         const session = await getBotSession<WordImageUploadSession>(ctx.db, user.user_id, 'awaiting_manual_word_image_upload');
         if (!session) return next();
-        const photo = ctx.message.photo?.[ctx.message.photo.length - 1];
-        if (!photo?.file_id) return next();
+        const maxBytes = getTelegramImageMaxBytes(ctx.env);
+        const photo = selectBestTelegramPhotoSize(ctx.message.photo ?? [], maxBytes);
+        if (!photo?.file_id) {
+            await replyImageUploadError(ctx, 'WORD_IMAGE_UPLOAD_TOO_LARGE', user.user_id, session.data.collectionId, session.data.wordId);
+            return;
+        }
         await handleManualImageUpload(ctx, user.user_id, session.data.collectionId, session.data.wordId, photo.file_id);
     });
 
@@ -645,8 +649,6 @@ async function showWordImageWordMenu(
     }
     if (state?.state === 'excluded') {
         keyboard.text('↩️ إلغاء الاستبعاد', `wi:restore:${collectionId}:${wordId}`).row();
-    } else if (!active) {
-        keyboard.text('⏭ استبعاد من مود الصور', `wi:exclude:${collectionId}:${wordId}`).row();
     }
     keyboard.text('🔙 رجوع', `wi:dash:${collectionId}`).text('🏠 الرئيسية', 'menu_main');
     await replaceWithText(ctx, text, keyboard);
@@ -677,7 +679,7 @@ async function showWordImageResults(
         await replaceWithText(ctx, `ℹ️ هذه الكلمة لا تملك صورة تعليمية واضحة.\n\nيمكنك:\n🔎 البحث يدوياً\n📤 رفع صورة\n⏭ استبعادها من مود الصور`, new InlineKeyboard()
             .text('🔎 البحث يدوياً', `wi:search:${collectionId}:${wordId}`).row()
             .text('📤 رفع صورة', `wi:upload:${collectionId}:${wordId}`).row()
-            .text('⏭ استبعادها', `wi:exclude:${collectionId}:${wordId}`).row()
+            .text('⏭ استبعادها من مود الصور', `wi:exclude:${collectionId}:${wordId}`).row()
             .text('🔙 رجوع', `wi:word:${collectionId}:${wordId}`)
             .text('🏠 الرئيسية', 'menu_main'));
         return;
@@ -885,12 +887,16 @@ async function handleManualImageUpload(ctx: BotContext, userId: number, collecti
     let r2Key: string | null = null;
     try {
         const downloaded = await downloadTelegramPhoto(ctx.env, fileId);
-        if (!ctx.env.WORD_IMAGES) throw new Error('word_images_r2_missing');
+        if (!ctx.env.WORD_IMAGES) throw new Error('WORD_IMAGE_UPLOAD_R2_FAILED');
         r2Key = wordImageR2Key(userId, collectionId, wordId, downloaded.mimeType);
-        await ctx.env.WORD_IMAGES.put(r2Key, downloaded.bytes, {
-            httpMetadata: { contentType: downloaded.mimeType },
-            customMetadata: { user_id: String(userId), collection_id: String(collectionId), word_id: String(wordId), provider: 'manual_upload' },
-        });
+        try {
+            await ctx.env.WORD_IMAGES.put(r2Key, downloaded.bytes, {
+                httpMetadata: { contentType: downloaded.mimeType },
+                customMetadata: { user_id: String(userId), collection_id: String(collectionId), word_id: String(wordId), provider: 'manual_upload' },
+            });
+        } catch {
+            throw new Error('WORD_IMAGE_UPLOAD_R2_FAILED');
+        }
         const assetId = await createImageAsset(ctx.db, {
             ownerUserId: userId,
             provider: 'manual_upload',
@@ -906,14 +912,53 @@ async function handleManualImageUpload(ctx: BotContext, userId: number, collecti
         await selectWordImage(ctx.db, userId, collectionId, wordId, assetId);
         await deleteBotSession(ctx.db, userId, 'awaiting_manual_word_image_upload');
         await continueAfterImageDecision(ctx, userId, collectionId, 'تم حفظ الصورة المرفوعة ✅');
-    } catch {
+    } catch (error) {
         if (r2Key && ctx.env.WORD_IMAGES) {
             await ctx.env.WORD_IMAGES.delete(r2Key).catch(() => undefined);
         }
-        await ctx.reply('تعذر حفظ الصورة. تأكد أنها JPEG / PNG / WebP وبحجم مناسب.', {
-            reply_markup: new InlineKeyboard().text('⬅️ رجوع', `wi:word:${collectionId}:${wordId}`).text('🏠 الرئيسية', 'menu_main'),
-        });
+        await replyImageUploadError(ctx, imageUploadErrorCode(error), userId, collectionId, wordId, imageUploadErrorDetails(error));
     }
+}
+
+async function replyImageUploadError(
+    ctx: BotContext,
+    code: string,
+    userId: number,
+    collectionId: number,
+    wordId: number,
+    details: { mimeType?: string | null; byteCount?: number | null } = {}
+): Promise<void> {
+    const stage = normalizeUploadErrorCode(code);
+    console.warn('word_image_upload_failed', {
+        userId,
+        collectionId,
+        wordId,
+        stage,
+        mimeType: details.mimeType ?? null,
+        byteCount: details.byteCount ?? null,
+    });
+
+    const text = stage === 'WORD_IMAGE_UPLOAD_TOO_LARGE'
+        ? '⚠️ حجم الصورة أكبر من الحد المسموح.\nأرسل نسخة أصغر من الصورة.'
+        : stage === 'WORD_IMAGE_UPLOAD_UNSUPPORTED_SIGNATURE'
+            ? '⚠️ الصورة ليست بصيغة مدعومة.\nأرسل صورة JPEG أو PNG أو WebP.'
+            : '⚠️ تعذر حفظ الصورة حالياً.\nلم يتم تغيير الصورة السابقة، حاول مرة أخرى.';
+    await ctx.reply(text, {
+        reply_markup: new InlineKeyboard().text('⬅️ رجوع', `wi:word:${collectionId}:${wordId}`).text('🏠 الرئيسية', 'menu_main'),
+    });
+}
+
+function imageUploadErrorCode(error: unknown): string {
+    return error instanceof Error ? error.message : 'WORD_IMAGE_UPLOAD_D1_FAILED';
+}
+
+function normalizeUploadErrorCode(code: string): string {
+    if (code === 'image_too_large') return 'WORD_IMAGE_UPLOAD_TOO_LARGE';
+    if (code === 'empty_image_body' || code === 'unsupported_image_signature' || code === 'unsupported_image_mime' || code === 'image_mime_mismatch') {
+        return 'WORD_IMAGE_UPLOAD_UNSUPPORTED_SIGNATURE';
+    }
+    if (code.startsWith('WORD_IMAGE_UPLOAD_')) return code;
+    return 'WORD_IMAGE_UPLOAD_D1_FAILED';
 }
 
 interface CreatedImageAsset {
