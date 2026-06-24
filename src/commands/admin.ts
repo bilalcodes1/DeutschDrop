@@ -405,7 +405,6 @@ function adminPanelKeyboard(): InlineKeyboard {
         .text('👥 المستخدمون', 'admin_users_0').row()
         .text('📢 إرسال تبليغ', 'admin_broadcast_start').row()
         .text('📌 تثبيت رسالة داخل البوت', 'admin_announcement_start').row()
-        .text('🛡 مركز الإشراف', 'adm:mod').row()
         .text('📚 إدارة المصادر', 'admin_sources').row()
         .text('🩺 صحة البوت', 'admin_health')
         .text('🛠 فحص قاعدة البيانات', 'admin_db_check').row()

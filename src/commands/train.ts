@@ -31,7 +31,6 @@ import { mainMenuKeyboard } from './menu';
 import { replaceWithText } from './wordPanel';
 import type { TrainExplainSession } from './aiCoach';
 import { getCollectionsByUser, countCollectionsByUser, getCollectionById } from '../repositories/wordSharingRepository';
-import { ensureLifeGateOrShow } from './life';
 
 export interface TrainingQuestion {
     question_index: number;
@@ -192,8 +191,6 @@ export function registerTrainCommand(bot: Bot<BotContext>): void {
 }
 
 async function showTrainOptions(ctx: BotContext): Promise<void> {
-    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
-    if (user && !await ensureLifeGateOrShow(ctx, user, 'menu_train')) return;
     const keyboard = new InlineKeyboard()
         .text('📚 تدريب على مجموعة', 'train_collection_picker:page:1').row()
         .text('⚡ تدريب سريع', 'train_quick')
@@ -304,8 +301,6 @@ async function startTraining(ctx: BotContext, count: number, mode: TrainingMode,
         await ctx.reply('يرجى استخدام /start أولاً.');
         return;
     }
-    if (!await ensureLifeGateOrShow(ctx, user, 'menu_train')) return;
-
     let collectionTitle: string | undefined;
 
     if (collectionId) {

@@ -174,7 +174,7 @@ test('public start flow asks new users for display name and stores registration 
 test('registered start flow skips name prompt and shows main menu', () => {
     const source = fs.readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf8');
     assert.match(source, /if \(!user\.display_name\?\.trim\(\)\)/);
-    assert.match(source, /مرحباً مجدداً/);
+    assert.match(source, /START جاهز دائماً/);
     assert.match(source, /showMainMenu\(ctx\)/);
 });
 
@@ -1892,16 +1892,12 @@ test('typed challenge answers use the central written matcher', () => {
     assert.doesNotMatch(challengeSource, /normalizeAnswer\(answerText\) === normalizeAnswer\(active\.answer\)/);
 });
 
-test('Life writing listening gap and mixed written answers use the central German matcher', () => {
-    const lifeSource = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
+test('Life sentence command source is removed from written training routes', () => {
+    const removedLifeCommand = new URL('../src/commands/life.ts', import.meta.url);
+    const sessionSource = fs.readFileSync(new URL('../src/repositories/sessionRepository.ts', import.meta.url), 'utf8');
 
-    for (const sessionType of ['life_training_writing', 'life_training_listening', 'life_training_gap']) {
-        assert.match(lifeSource, new RegExp(sessionType));
-    }
-    assert.match(lifeSource, /chooseMixedLifeMode/);
-    assert.match(lifeSource, /evaluateWrittenAnswer\(\{\s*userAnswer: answer/s);
-    assert.match(lifeSource, /answerLanguage: 'de'/);
-    assert.doesNotMatch(lifeSource, /normalizeGermanLifeAnswer\(answer\) === normalizeGermanLifeAnswer\(session\.answer\)/);
+    assert.equal(fs.existsSync(removedLifeCommand), false);
+    assert.doesNotMatch(sessionSource, /life_training_writing|life_training_listening|life_training_gap|awaiting_life/);
 });
 
 test('Goethe text_input answers use the central German matcher', () => {
@@ -1937,12 +1933,10 @@ test('accepted normalized written answers still flow into XP and SRS updates', (
 test('old direct written-answer comparisons are absent from written training routes', () => {
     const trainSource = fs.readFileSync(new URL('../src/commands/train.ts', import.meta.url), 'utf8');
     const challengeSource = fs.readFileSync(new URL('../src/commands/challenge.ts', import.meta.url), 'utf8');
-    const lifeSource = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
     const goetheServiceSource = fs.readFileSync(new URL('../src/services/goetheTrainingService.ts', import.meta.url), 'utf8');
 
     assert.doesNotMatch(trainSource, /answerText\)\s*===/);
     assert.doesNotMatch(challengeSource, /answerText\)\s*===/);
-    assert.doesNotMatch(lifeSource, /session\.answer\)\s*===/);
     assert.doesNotMatch(goetheServiceSource, /accepted\.some\(value => normalize/);
 });
 
@@ -2267,33 +2261,17 @@ test('AI prompts require strict JSON and Iraqi Arabic learning output', () => {
     assert.match(promptsSource, /"level"/);
 });
 
-test('Life AI generation and verification are provider-neutral and guarded', () => {
+test('Life AI generation and verification tasks are removed', () => {
     const aiTypes = fs.readFileSync(new URL('../src/services/ai/aiTypes.ts', import.meta.url), 'utf8');
     const aiUsage = fs.readFileSync(new URL('../src/services/ai/aiUsage.ts', import.meta.url), 'utf8');
     const prompts = fs.readFileSync(new URL('../src/services/ai/prompts.ts', import.meta.url), 'utf8');
-    const lifeService = fs.readFileSync(new URL('../src/services/lifeSentences.ts', import.meta.url), 'utf8');
-    const lifeCommand = fs.readFileSync(new URL('../src/commands/life.ts', import.meta.url), 'utf8');
     const router = fs.readFileSync(new URL('../src/services/ai/aiRouter.ts', import.meta.url), 'utf8');
 
-    assert.match(aiTypes, /validate_life_sentence/);
-    assert.match(aiUsage, /validate_life_sentence:\s*20/);
-    assert.match(prompts, /محول دقيق من موقف عربي حقيقي/);
-    assert.match(prompts, /اختراع أشخاص أو أسباب أو أماكن أو مشاعر/);
-    assert.match(prompts, /شفت صرصر بالحمام البارحه/);
-    assert.match(prompts, /كملت الدرس العاشر/);
-    assert.match(prompts, /اليوم راح نتعشى بالمطعم/);
-    assert.match(prompts, /ما نمت زين البارحه/);
-    assert.match(prompts, /راح اروح للحلاق باجر/);
-    assert.match(prompts, /"status":"ok"/);
-    assert.match(prompts, /"status":"clarify"/);
-    assert.match(prompts, /"verdict":"pass"/);
-    assert.match(prompts, /"verdict":"repair"/);
-    assert.match(lifeService, /validateLifeGenerationResult/);
-    assert.match(lifeService, /validateLifeVerificationResult/);
-    assert.match(lifeService, /verifyLifeCandidate/);
-    assert.match(lifeService, /countUsage: false/);
-    assert.match(lifeCommand, /awaiting_life_clarification/);
-    assert.match(lifeCommand, /لم أفهم قصدي|لم تفهم قصدي/);
+    assert.doesNotMatch(aiTypes, /generate_life_sentence|validate_life_sentence/);
+    assert.doesNotMatch(aiUsage, /generate_life_sentence|validate_life_sentence/);
+    assert.doesNotMatch(prompts, /محول دقيق من موقف عربي حقيقي|اختراع أشخاص أو أسباب أو أماكن أو مشاعر/);
+    assert.equal(fs.existsSync(new URL('../src/services/lifeSentences.ts', import.meta.url)), false);
+    assert.equal(fs.existsSync(new URL('../src/commands/life.ts', import.meta.url)), false);
     assert.match(router, /if \(options\.countUsage !== false\)/);
 });
 

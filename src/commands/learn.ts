@@ -11,7 +11,6 @@ import { updateWordLearningAfterAnswer } from '../services/adaptiveReview';
 import { buildYouglishDirectUrl } from '../services/youglish';
 import { recordCorrectReviewAnswer } from '../services/dailyQuestHooks';
 import { replaceWithText } from './wordPanel';
-import { ensureLifeGateOrShow } from './life';
 
 interface LearnSessionData {
     words: Array<{ word_id: number; german: string; arabic: string; example: string | null; pronunciation_ar: string | null; pronunciation_latin?: string | null; status: string; ease_factor: number; interval: number; repetitions: number; correct_count: number; wrong_count: number }>;
@@ -65,8 +64,6 @@ async function startLearning(ctx: BotContext): Promise<void> {
         await ctx.reply('يرجى استخدام /start أولاً.');
         return;
     }
-    if (!await ensureLifeGateOrShow(ctx, user, 'menu_learn')) return;
-
     const words = await getDueWords(ctx.db, user.user_id, 10);
 
     if (words.length === 0) {

@@ -17,7 +17,6 @@ import { registerExportWordsCommand } from '../commands/exportWords';
 import { registerPictogramCommand } from '../commands/pictograms';
 import { registerProfileCommand } from '../commands/profile';
 import { registerAdminCommand } from '../commands/admin';
-import { registerAdminModerationCommand } from '../commands/adminModeration';
 import { registerSourcesCommand } from '../commands/sources';
 import { registerSmartNotificationCommand } from '../commands/smartNotifications';
 import { registerAiCoachCommand } from '../commands/aiCoach';
@@ -29,11 +28,12 @@ import { registerDailyQuestsCommand } from '../commands/dailyQuests';
 import { registerMyBoostCommand } from '../commands/myBoost';
 import { registerUserDataDeletionCommand } from '../commands/userDataDeletion';
 import { registerGoetheCommand } from '../commands/goethe';
-import { registerLifeCommand } from '../commands/life';
+import { registerDisabledLifeCompatibility } from '../commands/disabledLife';
 import { getUserByTelegramId, isRegisteredUser, updateUserLastActive } from '../repositories/userRepository';
 import { getBotSession } from '../repositories/sessionRepository';
 import { safeAnswerCallback, showCallbackError } from './callbacks';
 import { cleanupTemporaryMessagesForUserInteraction } from '../services/temporaryMessageCleanup';
+import { START_BUTTON_TEXT } from './startKeyboard';
 
 export function createBot(token: string, env: Env, executionCtx?: ExecutionContext): Bot<BotContext> {
     const bot = new Bot<BotContext>(token);
@@ -75,7 +75,7 @@ export function createBot(token: string, env: Env, executionCtx?: ExecutionConte
             await cleanupTemporaryMessagesForUserInteraction(ctx.env, user.user_id).catch(() => {});
         }
 
-        if (text?.startsWith('/start')) return next();
+        if (text?.startsWith('/start') || text === START_BUTTON_TEXT) return next();
         if (user?.is_banned) {
             await ctx.reply('تم إيقاف حسابك من استخدام البوت.');
             return;
@@ -99,7 +99,7 @@ export function createBot(token: string, env: Env, executionCtx?: ExecutionConte
     registerUserDataDeletionCommand(bot);
     registerSupportCommand(bot);
     registerSourcesCommand(bot);
-    registerLifeCommand(bot);
+    registerDisabledLifeCompatibility(bot);
     registerSharingCollectionsCommand(bot);
     registerGameCommand(bot);
     registerAddWordCommand(bot);
@@ -115,7 +115,6 @@ export function createBot(token: string, env: Env, executionCtx?: ExecutionConte
     registerPictogramCommand(bot);
     registerProfileCommand(bot);
     registerAdminCommand(bot);
-    registerAdminModerationCommand(bot);
     registerSmartNotificationCommand(bot);
     registerAiCoachCommand(bot);
     registerTtsCommand(bot);

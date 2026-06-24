@@ -1,9 +1,10 @@
 import { Bot } from 'grammy';
 import type { BotContext } from '../bot/context';
-import { completeUserRegistration, createPendingUser, getUserByTelegramId, isRegisteredUser, renameUser } from '../repositories/userRepository';
-import { deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
+import { START_BUTTON_TEXT, persistentStartKeyboard } from '../bot/startKeyboard';
+import { completeUserRegistration, createPendingUser, getUserByTelegramId, getUserSettings, isRegisteredUser, renameUser } from '../repositories/userRepository';
+import { deleteAllBotSessionsForUser, deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { showLevelSelection, showMainMenu } from './menu';
-import { showLifeSentenceFromShareCode } from './life';
+import { showLifeDisabledPanel } from './disabledLife';
 
 interface NameSessionData {
     mode: 'register' | 'rename';
@@ -11,28 +12,18 @@ interface NameSessionData {
 
 export function registerStartCommand(bot: Bot<BotContext>): void {
     bot.command('start', async (ctx) => {
-        const user = await ensureTelegramUser(ctx);
-        if (!user) return;
-
-        if (!user.display_name?.trim()) {
-            await saveBotSession<NameSessionData>(ctx.db, user.user_id, 'register', { mode: 'register' }, 30);
-            await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:');
-            return;
-        }
-
         const payload = ctx.message?.text?.split(/\s+/, 2)[1]?.trim();
         if (payload?.startsWith('life_')) {
-            await showLifeSentenceFromShareCode(ctx, payload.slice('life_'.length));
+            await ctx.reply(`🚀 START جاهز دائماً للعودة للقائمة.`, { reply_markup: persistentStartKeyboard() });
+            await showLifeDisabledPanel(ctx);
             return;
         }
 
-        await deleteBotSession(ctx.db, user.user_id, 'word_image_search');
-        await deleteBotSession(ctx.db, user.user_id, 'word_image_results');
-        await deleteBotSession(ctx.db, user.user_id, 'awaiting_manual_word_image_upload');
-        await deleteBotSession(ctx.db, user.user_id, 'word_image_prepare_missing');
+        await handleStartEntry(ctx);
+    });
 
-        await ctx.reply(`مرحباً مجدداً ${user.display_name}! 👋`);
-        await showMainMenu(ctx);
+    bot.hears(START_BUTTON_TEXT, async (ctx) => {
+        await handleStartEntry(ctx);
     });
 
     bot.command('rename', async (ctx) => {
@@ -66,16 +57,43 @@ export function registerStartCommand(bot: Bot<BotContext>): void {
         if (session.data.mode === 'rename') {
             await renameUser(ctx.db, user.user_id, displayName);
             await deleteBotSession(ctx.db, user.user_id, 'rename');
-            await ctx.reply(`تم تغيير الاسم ✅\n${displayName}`);
+            await ctx.reply(`تم تغيير الاسم ✅\n${displayName}`, { reply_markup: persistentStartKeyboard() });
             await showMainMenu(ctx);
             return;
         }
 
         await completeUserRegistration(ctx.db, user.user_id, displayName);
         await deleteBotSession(ctx.db, user.user_id, 'register');
-        await ctx.reply(`تم تسجيلك ✅ أهلاً ${displayName}`);
+        await ctx.reply(`تم تسجيلك ✅ أهلاً ${displayName}`, { reply_markup: persistentStartKeyboard() });
         await showLevelSelection(ctx, 'حدد مستواك:');
     });
+}
+
+async function handleStartEntry(ctx: BotContext): Promise<void> {
+    const user = await ensureTelegramUser(ctx);
+    if (!user) return;
+
+    await deleteAllBotSessionsForUser(ctx.db, user.user_id);
+
+    if (user.is_banned) {
+        await ctx.reply('تم إيقاف حسابك من استخدام البوت.', { reply_markup: persistentStartKeyboard() });
+        return;
+    }
+
+    if (!user.display_name?.trim()) {
+        await saveBotSession<NameSessionData>(ctx.db, user.user_id, 'register', { mode: 'register' }, 30);
+        await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:', { reply_markup: persistentStartKeyboard() });
+        return;
+    }
+
+    const settings = await getUserSettings(ctx.db, user.user_id);
+    await ctx.reply(`🚀 START جاهز دائماً للعودة للقائمة.`, { reply_markup: persistentStartKeyboard() });
+    if (!settings?.german_level) {
+        await showLevelSelection(ctx, 'حدد مستواك حتى أضبط لك المصادر والإشعارات:');
+        return;
+    }
+
+    await showMainMenu(ctx);
 }
 
 async function ensureTelegramUser(ctx: BotContext) {
@@ -119,7 +137,7 @@ async function promptForRegistration(ctx: BotContext): Promise<void> {
     if (user) {
         await saveBotSession<NameSessionData>(ctx.db, user.user_id, 'register', { mode: 'register' }, 30);
     }
-    await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:');
+    await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:', { reply_markup: persistentStartKeyboard() });
 }
 
 function sanitizeName(value: string): string | null {

@@ -42,7 +42,6 @@ import type { NormalizedImageResult } from '../services/imageSearch/imageSearchT
 import type { WordImageProvider } from '../repositories/wordImageRepository';
 import { displayUserName, sendTelegramMessage } from '../services/notifications';
 import { replaceWithText, showWordDetailPanel } from './wordPanel';
-import { ensureLifeGateOrShow } from './life';
 
 const GAME_COLLECTION_PAGE_SIZE = 8;
 
@@ -80,7 +79,6 @@ export function registerGameCommand(bot: Bot<BotContext>): void {
     bot.command('game', async (ctx) => {
         const user = await currentUser(ctx);
         if (!user) return;
-        if (!await ensureLifeGateOrShow(ctx, user, 'game:menu')) return;
         await showGameMenu(ctx);
     });
 
@@ -148,7 +146,6 @@ export function registerGameCommand(bot: Bot<BotContext>): void {
         await ctx.answerCallbackQuery();
         const user = await currentUser(ctx);
         if (!user) return;
-        if (!await ensureLifeGateOrShow(ctx, user, 'game:menu')) return;
         await showGameMenu(ctx);
     });
 
@@ -1178,8 +1175,6 @@ export async function startGameForCollection(
     difficulty: AdventureDifficulty = 'normal'
 ): Promise<void> {
     try {
-        const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
-        if (user && !await ensureLifeGateOrShow(ctx, user, `game:launch:${collectionId}:${mode}:${limit}:${difficulty}`)) return;
         const session = await createGameSession(ctx.db, userId, collectionId, { mode, limit, difficulty, source: 'collection' });
         const url = `${publicBaseUrl(ctx)}/game?token=${encodeURIComponent(session.token)}&v=${encodeURIComponent(GAME_UI_VERSION)}`;
         await replaceWithText(
