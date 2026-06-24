@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import Database from 'better-sqlite3';
+import { persistentStartKeyboard } from '../dist/bot/startKeyboard.js';
 
 const root = new URL('../', import.meta.url);
 
@@ -166,13 +167,24 @@ test('persistent START reply keyboard is centralized and not removed', () => {
         'src/commands/game.ts',
     ].map(readProjectFile).join('\n');
 
+    assert.deepEqual(persistentStartKeyboard(), {
+        keyboard: [[{ text: '🚀 START' }]],
+        resize_keyboard: true,
+        is_persistent: true,
+        one_time_keyboard: false,
+        input_field_placeholder: 'اضغط START للعودة للقائمة',
+    });
     assert.match(keyboardSource, /START_BUTTON_TEXT = '🚀 START'/);
+    assert.match(keyboardSource, /export async function ensurePersistentStartKeyboard/);
+    assert.match(keyboardSource, /START_KEYBOARD_READY_TEXT = '🚀 زر الرجوع السريع جاهز'/);
     assert.match(keyboardSource, /keyboard: \[\[\{ text: START_BUTTON_TEXT \}\]\]/);
     assert.match(keyboardSource, /resize_keyboard: true/);
     assert.match(keyboardSource, /is_persistent: true/);
     assert.match(keyboardSource, /one_time_keyboard: false/);
+    assert.match(keyboardSource, /ctx\.reply\(START_KEYBOARD_READY_TEXT/);
     assert.match(startSource, /bot\.hears\(START_BUTTON_TEXT/);
     assert.match(startSource, /deleteAllBotSessionsForUser\(ctx\.db, user\.user_id\)/);
+    assert.match(startSource, /ensurePersistentStartKeyboard\(ctx, user\.user_id, \{ force: Boolean\(options\.forceKeyboard\) \}\)/);
     assert.match(botSource, /text === START_BUTTON_TEXT/);
     assert.doesNotMatch(allRuntimeSource, /remove_keyboard|ReplyKeyboardRemove/);
 });
@@ -195,11 +207,34 @@ test('/start and START share the same entry flow and preserve onboarding routing
 
 test('/menu and /help install the persistent START keyboard for returning users', () => {
     const menuSource = readProjectFile('src/commands/menu.ts');
+    const settingsSource = readProjectFile('src/commands/settings.ts');
+    const keyboardSource = readProjectFile('src/bot/startKeyboard.ts');
+    const sessionSource = readProjectFile('src/repositories/sessionRepository.ts');
 
     assert.match(menuSource, /bot\.command\('menu'/);
     assert.match(menuSource, /bot\.command\('help'/);
-    assert.match(menuSource, /persistentStartKeyboard\(\)/);
-    assert.match(menuSource, /START جاهز دائماً/);
+    assert.match(menuSource, /ensureStartKeyboardForCurrentUser\(ctx\)/);
+    assert.match(menuSource, /await showMainMenu\(ctx\)/);
+    assert.match(settingsSource, /level_set_\(A1\|A2\|B1\)/);
+    assert.match(settingsSource, /ensurePersistentStartKeyboard\(ctx, user\.user_id, \{ force: true \}\)/);
+    assert.match(keyboardSource, /getBotSession\(ctx\.db, userId, START_KEYBOARD_SESSION_TYPE\)/);
+    assert.match(keyboardSource, /if \(userId && !options\.force\)/);
+    assert.match(keyboardSource, /if \(existing\) return false/);
+    assert.match(sessionSource, /type <> \?/);
+    assert.match(sessionSource, /'start_keyboard'/);
+});
+
+test('main menu keeps InlineKeyboard separate from START ReplyKeyboard', () => {
+    const menuSource = readProjectFile('src/commands/menu.ts');
+    const wordPanelSource = readProjectFile('src/commands/wordPanel.ts');
+    const startSource = readProjectFile('src/commands/start.ts');
+
+    assert.match(menuSource, /export function mainMenuKeyboard\(isAdmin: boolean = false\): InlineKeyboard/);
+    assert.match(menuSource, /await replaceWithText\(ctx, await mainMenuText\(ctx\), mainMenuKeyboard\(isAdmin\), 'Markdown'\)/);
+    assert.doesNotMatch(menuSource, /persistentStartKeyboard\(\)/);
+    assert.match(wordPanelSource, /ctx\.editMessageText\(text/);
+    assert.doesNotMatch(wordPanelSource, /persistentStartKeyboard|START_BUTTON_TEXT/);
+    assert.match(startSource, /await ensurePersistentStartKeyboard\(ctx, user\.user_id, \{ force: Boolean\(options\.forceKeyboard\) \}\)[\s\S]*await showMainMenu\(ctx\)/);
 });
 
 test('regressions for image upload and game routes stay present after Life removal', () => {

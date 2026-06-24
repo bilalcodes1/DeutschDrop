@@ -8,16 +8,17 @@ import { isAdminTelegramId } from '../services/adminAccess.js';
 import { formatSupportRemaining, getUserRoleBadge } from '../services/roleUi.js';
 import { PROJECT_CODE_LINES_LABEL } from '../generated/projectStats.js';
 import { replaceWithText } from './wordPanel.js';
-import { persistentStartKeyboard } from '../bot/startKeyboard.js';
+import { ensurePersistentStartKeyboard } from '../bot/startKeyboard.js';
 
 export function registerMenuCommand(bot: Bot<BotContext>): void {
     bot.command('menu', async (ctx) => {
-        await ctx.reply('🚀 START جاهز دائماً للعودة للقائمة.', { reply_markup: persistentStartKeyboard() });
+        await ensureStartKeyboardForCurrentUser(ctx);
         await showMainMenu(ctx);
     });
 
     bot.command('help', async (ctx) => {
-        await ctx.reply(helpText(), { reply_markup: persistentStartKeyboard() });
+        await ensureStartKeyboardForCurrentUser(ctx);
+        await ctx.reply(helpText());
     });
 
     // Handle menu callbacks that are not owned by feature modules.
@@ -92,6 +93,11 @@ export function registerMenuCommand(bot: Bot<BotContext>): void {
         await clearTrainingAndEditSessions(ctx);
         await showMainMenu(ctx);
     });
+}
+
+async function ensureStartKeyboardForCurrentUser(ctx: BotContext): Promise<void> {
+    const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
+    await ensurePersistentStartKeyboard(ctx, user?.user_id, { force: true });
 }
 
 export async function showMainMenu(ctx: BotContext): Promise<void> {

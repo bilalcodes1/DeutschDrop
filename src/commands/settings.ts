@@ -5,6 +5,7 @@ import { countWordsByUser } from '../repositories/wordRepository';
 import { createDailyReviewPlan } from '../repositories/reviewPlanRepository';
 import { levelSelectionKeyboard, mainMenuKeyboard, showOnboarding } from './menu';
 import { replaceWithText } from './wordPanel';
+import { ensurePersistentStartKeyboard } from '../bot/startKeyboard';
 
 export function registerSettingsCommand(bot: Bot<BotContext>): void {
     bot.command('settings', async (ctx) => {
@@ -115,6 +116,7 @@ export function registerSettingsCommand(bot: Bot<BotContext>): void {
         const user = await getUserByTelegramId(ctx.db, ctx.from?.id ?? 0);
         if (!user) return;
         await updateUserSettings(ctx.db, user.user_id, { german_level: ctx.match[1] as 'A1' | 'A2' | 'B1' });
+        await ensurePersistentStartKeyboard(ctx, user.user_id, { force: true });
         await ctx.answerCallbackQuery('تم حفظ المستوى');
         if (!user.onboarding_seen) {
             await markOnboardingSeen(ctx.db, user.user_id);

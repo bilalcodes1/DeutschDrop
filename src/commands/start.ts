@@ -1,6 +1,6 @@
 import { Bot } from 'grammy';
 import type { BotContext } from '../bot/context';
-import { START_BUTTON_TEXT, persistentStartKeyboard } from '../bot/startKeyboard';
+import { START_BUTTON_TEXT, ensurePersistentStartKeyboard } from '../bot/startKeyboard';
 import { completeUserRegistration, createPendingUser, getUserByTelegramId, getUserSettings, isRegisteredUser, renameUser } from '../repositories/userRepository';
 import { deleteAllBotSessionsForUser, deleteBotSession, getBotSession, saveBotSession } from '../repositories/sessionRepository';
 import { showLevelSelection, showMainMenu } from './menu';
@@ -10,16 +10,26 @@ interface NameSessionData {
     mode: 'register' | 'rename';
 }
 
+interface StartEntryOptions {
+    forceKeyboard?: boolean;
+}
+
 export function registerStartCommand(bot: Bot<BotContext>): void {
     bot.command('start', async (ctx) => {
         const payload = ctx.message?.text?.split(/\s+/, 2)[1]?.trim();
         if (payload?.startsWith('life_')) {
-            await ctx.reply(`🚀 START جاهز دائماً للعودة للقائمة.`, { reply_markup: persistentStartKeyboard() });
+            const user = await ensureTelegramUser(ctx);
+            if (user) {
+                await deleteAllBotSessionsForUser(ctx.db, user.user_id);
+                await ensurePersistentStartKeyboard(ctx, user.user_id, { force: true });
+            } else {
+                await ensurePersistentStartKeyboard(ctx, undefined, { force: true });
+            }
             await showLifeDisabledPanel(ctx);
             return;
         }
 
-        await handleStartEntry(ctx);
+        await handleStartEntry(ctx, { forceKeyboard: true });
     });
 
     bot.hears(START_BUTTON_TEXT, async (ctx) => {
@@ -57,37 +67,39 @@ export function registerStartCommand(bot: Bot<BotContext>): void {
         if (session.data.mode === 'rename') {
             await renameUser(ctx.db, user.user_id, displayName);
             await deleteBotSession(ctx.db, user.user_id, 'rename');
-            await ctx.reply(`تم تغيير الاسم ✅\n${displayName}`, { reply_markup: persistentStartKeyboard() });
+            await ensurePersistentStartKeyboard(ctx, user.user_id, { force: true });
+            await ctx.reply(`تم تغيير الاسم ✅\n${displayName}`);
             await showMainMenu(ctx);
             return;
         }
 
         await completeUserRegistration(ctx.db, user.user_id, displayName);
         await deleteBotSession(ctx.db, user.user_id, 'register');
-        await ctx.reply(`تم تسجيلك ✅ أهلاً ${displayName}`, { reply_markup: persistentStartKeyboard() });
+        await ensurePersistentStartKeyboard(ctx, user.user_id, { force: true });
+        await ctx.reply(`تم تسجيلك ✅ أهلاً ${displayName}`);
         await showLevelSelection(ctx, 'حدد مستواك:');
     });
 }
 
-async function handleStartEntry(ctx: BotContext): Promise<void> {
+async function handleStartEntry(ctx: BotContext, options: StartEntryOptions = {}): Promise<void> {
     const user = await ensureTelegramUser(ctx);
     if (!user) return;
 
     await deleteAllBotSessionsForUser(ctx.db, user.user_id);
+    await ensurePersistentStartKeyboard(ctx, user.user_id, { force: Boolean(options.forceKeyboard) });
 
     if (user.is_banned) {
-        await ctx.reply('تم إيقاف حسابك من استخدام البوت.', { reply_markup: persistentStartKeyboard() });
+        await ctx.reply('تم إيقاف حسابك من استخدام البوت.');
         return;
     }
 
     if (!user.display_name?.trim()) {
         await saveBotSession<NameSessionData>(ctx.db, user.user_id, 'register', { mode: 'register' }, 30);
-        await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:', { reply_markup: persistentStartKeyboard() });
+        await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:');
         return;
     }
 
     const settings = await getUserSettings(ctx.db, user.user_id);
-    await ctx.reply(`🚀 START جاهز دائماً للعودة للقائمة.`, { reply_markup: persistentStartKeyboard() });
     if (!settings?.german_level) {
         await showLevelSelection(ctx, 'حدد مستواك حتى أضبط لك المصادر والإشعارات:');
         return;
@@ -136,8 +148,11 @@ async function promptForRegistration(ctx: BotContext): Promise<void> {
     const user = await ensureTelegramUser(ctx);
     if (user) {
         await saveBotSession<NameSessionData>(ctx.db, user.user_id, 'register', { mode: 'register' }, 30);
+        await ensurePersistentStartKeyboard(ctx, user.user_id, { force: true });
+    } else {
+        await ensurePersistentStartKeyboard(ctx, undefined, { force: true });
     }
-    await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:', { reply_markup: persistentStartKeyboard() });
+    await ctx.reply('مرحباً بك في DeutschDrop 👋\nاكتب اسمك للانضمام:');
 }
 
 function sanitizeName(value: string): string | null {

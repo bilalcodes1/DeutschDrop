@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { queryOne, run } from '../db/queries.js';
 
-export type BotSessionType = 'learn' | 'train' | 'add_word' | 'word_edit' | 'challenge' | 'register' | 'rename' | 'profile_rename' | 'support_proof' | 'admin_broadcast' | 'admin_announcement' | 'admin_source' | 'admin_source_add' | 'admin_source_edit' | 'admin_private_message' | 'admin_confirm' | 'csv_update' | 'word_selection' | 'word_search' | 'ai_word' | 'train_explain' | 'shared_word_search' | 'shared_word_selection' | 'shared_word_copy_selection' | 'collection_create' | 'collection_add_word_direct' | 'collection_csv_upload' | 'collection_add_existing_words' | 'collection_edit' | 'global_search' | 'delete_confirmation' | 'word_visual_edit' | 'word_image_search' | 'word_image_results' | 'word_image_upload' | 'awaiting_manual_word_image_upload' | 'word_image_prepare_missing' | 'game_challenge_user_search' | 'goethe_pack_upload';
+export type BotSessionType = 'learn' | 'train' | 'add_word' | 'word_edit' | 'challenge' | 'register' | 'rename' | 'profile_rename' | 'support_proof' | 'admin_broadcast' | 'admin_announcement' | 'admin_source' | 'admin_source_add' | 'admin_source_edit' | 'admin_private_message' | 'admin_confirm' | 'csv_update' | 'word_selection' | 'word_search' | 'ai_word' | 'train_explain' | 'shared_word_search' | 'shared_word_selection' | 'shared_word_copy_selection' | 'collection_create' | 'collection_add_word_direct' | 'collection_csv_upload' | 'collection_add_existing_words' | 'collection_edit' | 'global_search' | 'delete_confirmation' | 'word_visual_edit' | 'word_image_search' | 'word_image_results' | 'word_image_upload' | 'awaiting_manual_word_image_upload' | 'word_image_prepare_missing' | 'game_challenge_user_search' | 'goethe_pack_upload' | 'start_keyboard';
 
 export interface BotSession<T> {
     session_id: string;
@@ -77,7 +77,7 @@ export async function deleteBotSession(
 }
 
 export async function deleteAllBotSessionsForUser(db: D1Database, userId: number): Promise<void> {
-    await run(db, 'DELETE FROM bot_sessions WHERE user_id = ?', [userId]);
+    await run(db, 'DELETE FROM bot_sessions WHERE user_id = ? AND type <> ?', [userId, 'start_keyboard']);
 }
 
 export async function deleteExpiredBotSessions(db: D1Database): Promise<void> {

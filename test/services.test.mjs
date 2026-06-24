@@ -174,7 +174,7 @@ test('public start flow asks new users for display name and stores registration 
 test('registered start flow skips name prompt and shows main menu', () => {
     const source = fs.readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf8');
     assert.match(source, /if \(!user\.display_name\?\.trim\(\)\)/);
-    assert.match(source, /START جاهز دائماً/);
+    assert.match(source, /ensurePersistentStartKeyboard\(ctx, user\.user_id, \{ force: Boolean\(options\.forceKeyboard\) \}\)/);
     assert.match(source, /showMainMenu\(ctx\)/);
 });
 
