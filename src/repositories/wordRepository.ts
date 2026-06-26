@@ -2,10 +2,12 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { queryOne, queryAll, run, runBatch } from '../db/queries';
 import type { Word, UserUploadedList, ListWord } from '../models';
 import { buildWordSearchFields, normalizeWordSearchQuery, rankWordSearchResults } from '../services/wordSearch';
+import { buildWordImageFingerprint } from '../services/wordImageFingerprint';
+import { copyWordImageFromSource, inheritBestImageForWord } from './wordImageRepository';
 
 export const DUPLICATE_WORD_ERROR = 'duplicate_word';
 const WORD_SELECT_COLUMNS = `word_id, german, arabic, example, example_ar, pronunciation_ar,
-    pronunciation_latin, level, added_by, created_at, updated_at, german_search, arabic_search, example_search`;
+    pronunciation_latin, level, added_by, created_at, updated_at, german_search, arabic_search, example_search, image_fingerprint`;
 const WORD_SELECT_COLUMNS_SAFE = 'word_id, german, arabic, example, added_by, created_at';
 const SEARCH_CANDIDATE_LIMIT = 200;
 
@@ -172,11 +174,12 @@ export async function createWord(
     addedBy: number
 ): Promise<number> {
     const search = buildWordSearchFields(german, arabic, example);
+    const fingerprint = buildWordImageFingerprint({ german, arabic });
     const result = await run(
         db,
-        `INSERT INTO words (german, arabic, example, added_by, german_search, arabic_search, example_search)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [german, arabic, example, addedBy, search.german_search, search.arabic_search, search.example_search]
+        `INSERT INTO words (german, arabic, example, added_by, german_search, arabic_search, example_search, image_fingerprint)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [german, arabic, example, addedBy, search.german_search, search.arabic_search, search.example_search, fingerprint]
     );
     return (result.meta as { last_row_id?: number })?.last_row_id ?? 0;
 }
@@ -195,11 +198,12 @@ export async function createWordAndAssignToUser(
     }
 
     const wordId = await createWord(db, german, arabic, example, userId);
+    await inheritBestImageForWord(db, userId, wordId);
 
     // Add to user's vocabulary
     await run(
         db,
-        'INSERT OR IGNORE INTO user_words (user_id, word_id, status, next_review) VALUES (?, ?, ?, datetime("now"))',
+        "INSERT OR IGNORE INTO user_words (user_id, word_id, status, next_review) VALUES (?, ?, ?, datetime('now'))",
         [userId, wordId, 'new']
     );
 
@@ -218,20 +222,25 @@ export async function createWordAndAssignToUser(
 export async function copyWordToUser(
     db: D1Database,
     sourceWordId: number,
-    targetUserId: number
+    targetUserId: number,
+    options: { sourceCollectionId?: number | null; originType?: 'copied_word' | 'copied_collection'; shareType?: string | null; shareId?: number | null } = {}
 ): Promise<{ status: 'copied'; wordId: number } | { status: 'duplicate'; wordId: number }> {
     const source = await getWordById(db, sourceWordId);
     if (!source) throw new Error('source_word_not_found');
     const duplicate = await searchDuplicateWordForUser(db, targetUserId, source.german);
-    if (duplicate) return { status: 'duplicate', wordId: duplicate.word_id };
+    if (duplicate) {
+        await copyWordImageFromSource(db, sourceWordId, targetUserId, duplicate.word_id, options);
+        return { status: 'duplicate', wordId: duplicate.word_id };
+    }
 
     const search = buildWordSearchFields(source.german, source.arabic, source.example);
+    const fingerprint = buildWordImageFingerprint({ german: source.german, arabic: source.arabic });
     const result = await run(
         db,
         `INSERT INTO words (
             german, arabic, example, example_ar, pronunciation_ar, pronunciation_latin, level,
-            added_by, german_search, arabic_search, example_search
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            added_by, german_search, arabic_search, example_search, image_fingerprint
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             source.german,
             source.arabic,
@@ -244,12 +253,13 @@ export async function copyWordToUser(
             search.german_search,
             search.arabic_search,
             search.example_search,
+            fingerprint,
         ]
     );
     const wordId = (result.meta as { last_row_id?: number })?.last_row_id ?? 0;
     await run(
         db,
-        'INSERT OR IGNORE INTO user_words (user_id, word_id, status, next_review) VALUES (?, ?, ?, datetime("now"))',
+        "INSERT OR IGNORE INTO user_words (user_id, word_id, status, next_review) VALUES (?, ?, ?, datetime('now'))",
         [targetUserId, wordId, 'new']
     );
     await run(
@@ -261,6 +271,7 @@ export async function copyWordToUser(
          FROM word_pictograms WHERE word_id = ?`,
         [wordId, sourceWordId]
     );
+    await copyWordImageFromSource(db, sourceWordId, targetUserId, wordId, options);
     return { status: 'copied', wordId };
 }
 
@@ -289,13 +300,15 @@ export async function updateExistingWordFieldsForUser(
     if (!existing) return false;
 
     const search = buildWordSearchFields(german, arabic, example);
+    const fingerprint = buildWordImageFingerprint({ german, arabic });
     const result = await run(
         db,
         `UPDATE words
-         SET arabic = ?, example = ?, arabic_search = ?, example_search = ?
+         SET arabic = ?, example = ?, arabic_search = ?, example_search = ?, image_fingerprint = ?
          WHERE word_id = ? AND added_by = ?`,
-        [arabic, example, search.arabic_search, search.example_search, existing.word_id, userId]
+        [arabic, example, search.arabic_search, search.example_search, fingerprint, existing.word_id, userId]
     );
+    if (((result.meta as { changes?: number })?.changes ?? 0) > 0) await inheritBestImageForWord(db, userId, existing.word_id);
     return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
 }
 
@@ -340,13 +353,15 @@ export async function updateWordForUser(
     }
 
     const search = buildWordSearchFields(german, arabic, example);
+    const fingerprint = buildWordImageFingerprint({ german, arabic });
     const result = await run(
         db,
         `UPDATE words
-         SET german = ?, arabic = ?, example = ?, german_search = ?, arabic_search = ?, example_search = ?
+         SET german = ?, arabic = ?, example = ?, german_search = ?, arabic_search = ?, example_search = ?, image_fingerprint = ?
          WHERE word_id = ? AND added_by = ?`,
-        [german, arabic, example, search.german_search, search.arabic_search, search.example_search, wordId, userId]
+        [german, arabic, example, search.german_search, search.arabic_search, search.example_search, fingerprint, wordId, userId]
     );
+    if (((result.meta as { changes?: number })?.changes ?? 0) > 0) await inheritBestImageForWord(db, userId, wordId);
     return ((result.meta as { changes?: number })?.changes ?? 0) > 0;
 }
 
@@ -591,10 +606,11 @@ export async function batchCreateWords(
     // 2. Insert new words
     const insertStatements = newItems.map(item => {
         const search = buildWordSearchFields(item.german, item.arabic, item.example);
+        const fingerprint = buildWordImageFingerprint({ german: item.german, arabic: item.arabic });
         return {
-            sql: `INSERT INTO words (german, arabic, example, example_ar, added_by, german_search, arabic_search, example_search)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING word_id`,
-            params: [item.german, item.arabic, item.example, item.example_ar || null, userId, search.german_search, search.arabic_search, search.example_search]
+            sql: `INSERT INTO words (german, arabic, example, example_ar, added_by, german_search, arabic_search, example_search, image_fingerprint)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING word_id`,
+            params: [item.german, item.arabic, item.example, item.example_ar || null, userId, search.german_search, search.arabic_search, search.example_search, fingerprint]
         };
     });
 
@@ -611,9 +627,10 @@ export async function batchCreateWords(
             if (resultObj.success && rows && rows.length > 0) {
                 const wordId = rows[0].word_id;
                 results.push({ itemId: item.itemId, status: 'imported', wordId });
+                await inheritBestImageForWord(db, userId, wordId);
                 
                 userWordsStatements.push({
-                    sql: 'INSERT OR IGNORE INTO user_words (user_id, word_id, status, next_review) VALUES (?, ?, ?, datetime("now"))',
+                    sql: "INSERT OR IGNORE INTO user_words (user_id, word_id, status, next_review) VALUES (?, ?, ?, datetime('now'))",
                     params: [userId, wordId, 'new']
                 });
                 

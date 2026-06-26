@@ -90,6 +90,7 @@ function createWordImageDb() {
             (20, 201, 2, 1);
     `);
     sqlite.exec(fs.readFileSync(new URL('../src/db/migrations/0046_word_images_adventure.sql', import.meta.url), 'utf8'));
+    sqlite.exec(fs.readFileSync(new URL('../src/db/migrations/0048_image_inheritance_and_sharing.sql', import.meta.url), 'utf8'));
     return new MockD1(sqlite);
 }
 
@@ -206,7 +207,7 @@ test('word image cleanup marks orphaned R2 assets and clears storage key after d
     assert.deepEqual(await listSoftDeletedUnreferencedAssets(db, 10), []);
 });
 
-test('sharing and copy flows do not copy or expose private word images', () => {
+test('sharing and copy flows use image inheritance without exposing R2 keys in public payloads', () => {
     const wordRepoSource = fs.readFileSync(new URL('../src/repositories/wordRepository.ts', import.meta.url), 'utf8');
     const sharingSource = fs.readFileSync(new URL('../src/commands/sharingCollections.ts', import.meta.url), 'utf8');
     const copyBlock = wordRepoSource.slice(
@@ -214,7 +215,8 @@ test('sharing and copy flows do not copy or expose private word images', () => {
         wordRepoSource.indexOf('export async function deleteWord')
     );
 
-    assert.doesNotMatch(copyBlock, /user_word_images|image_assets|image_asset_id|r2_key/);
+    assert.match(copyBlock, /copyWordImageFromSource/);
+    assert.doesNotMatch(copyBlock, /r2_key|WORD_IMAGES/);
     assert.doesNotMatch(sharingSource, /r2_key|WORD_IMAGES|image_asset_id/);
     assert.match(sharingSource, /copyWordsToUser\(ctx\.db/);
 });

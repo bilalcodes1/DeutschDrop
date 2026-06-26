@@ -1528,7 +1528,12 @@ async function copyCollection(ctx: BotContext, userId: number, collectionId: num
     const collection = await getCollectionById(ctx.db, collectionId);
     if (!collection || (collection.visibility === 'private' && collection.owner_user_id !== userId)) return;
     const words = await getCollectionWords(ctx.db, collectionId, 100, 0);
-    const result = await copyWordsToUser(ctx.db, words.map(word => word.word_id), userId);
+    const result = await copyWordsToUser(ctx.db, words.map(word => word.word_id), userId, {
+        sourceCollectionId: collectionId,
+        originType: createCollectionCopy ? 'copied_collection' : 'copied_word',
+        shareType: 'collection',
+        shareId: collectionId,
+    });
     let collectionCopyText = '';
     if (createCollectionCopy) {
         const copyId = await createWordCollection(ctx.db, userId, `${collection.title} - نسخة`, collection.description, 'public');
@@ -1625,7 +1630,12 @@ async function handleOffer(ctx: BotContext, userId: number, action: 'accept' | '
     const wordIds = payload.collectionId
         ? (await getCollectionWords(ctx.db, payload.collectionId, 100, 0)).map(word => word.word_id)
         : payload.wordIds ?? [];
-    const result = await copyWordsToUser(ctx.db, wordIds, userId);
+    const result = await copyWordsToUser(ctx.db, wordIds, userId, {
+        sourceCollectionId: payload.collectionId ?? null,
+        originType: payload.collectionId ? 'copied_collection' : 'copied_word',
+        shareType: 'offer',
+        shareId: offerId,
+    });
     await updateSharedWordOfferStatus(ctx.db, offerId, 'accepted');
     await replaceWithText(ctx, `✅ تم نسخ ${result.copied} كلمة.\n⏭ تم تخطي ${result.skipped} كلمة موجودة مسبقاً.`, mainMenuKeyboard());
 }

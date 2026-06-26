@@ -41,6 +41,7 @@ import { searchWordImages } from '../services/imageSearch/imageSearchRouter';
 import type { NormalizedImageResult } from '../services/imageSearch/imageSearchTypes';
 import type { WordImageProvider } from '../repositories/wordImageRepository';
 import { displayUserName, sendTelegramMessage } from '../services/notifications';
+import { isAdminTelegramId } from '../services/adminAccess';
 import { replaceWithText, showWordDetailPanel } from './wordPanel';
 
 const GAME_COLLECTION_PAGE_SIZE = 8;
@@ -182,17 +183,17 @@ export function registerGameCommand(bot: Bot<BotContext>): void {
         await showGameModePicker(ctx, Number(ctx.match[1]));
     });
 
-    bot.callbackQuery(/^game:limit:(\d+):(speech_rocket|image_speech|arabic_speech|listen_repeat|smart_mix|hard_words|boss)$/, async (ctx) => {
+    bot.callbackQuery(/^game:limit:(\d+):(speech_rocket|image_speech|arabic_speech|smart_mix|hard_words|boss)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         await showGameLimitPicker(ctx, Number(ctx.match[1]), ctx.match[2] as CollectionGameMode);
     });
 
-    bot.callbackQuery(/^game:difficulty:(\d+):(speech_rocket|image_speech|arabic_speech|listen_repeat|smart_mix|hard_words|boss):(-?\d+)$/, async (ctx) => {
+    bot.callbackQuery(/^game:difficulty:(\d+):(speech_rocket|image_speech|arabic_speech|smart_mix|hard_words|boss):(-?\d+)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         await showGameDifficultyPicker(ctx, Number(ctx.match[1]), ctx.match[2] as CollectionGameMode, Number(ctx.match[3]));
     });
 
-    bot.callbackQuery(/^game:launch:(\d+):(speech_rocket|image_speech|arabic_speech|listen_repeat|smart_mix|hard_words|boss):(-?\d+):(easy|normal|hard)$/, async (ctx) => {
+    bot.callbackQuery(/^game:launch:(\d+):(speech_rocket|image_speech|arabic_speech|smart_mix|hard_words|boss):(-?\d+):(easy|normal|hard)$/, async (ctx) => {
         await ctx.answerCallbackQuery();
         const user = await currentUser(ctx);
         if (!user) return;
@@ -388,7 +389,9 @@ export function registerGameCommand(bot: Bot<BotContext>): void {
         if (!user) return;
         const collectionId = Number(ctx.match[1]);
         const wordId = Number(ctx.match[2]);
-        await selectWordImage(ctx.db, user.user_id, collectionId, wordId, Number(ctx.match[3]));
+        await selectWordImage(ctx.db, user.user_id, collectionId, wordId, Number(ctx.match[3]), {
+            isAdminDefault: isAdminTelegramId(ctx.env, ctx.from?.id),
+        });
         await continueAfterImageDecision(ctx, user.user_id, collectionId, 'تم استخدام صورة محفوظة ✅');
     });
 
@@ -722,7 +725,9 @@ async function selectImageSearchResult(
     let created: CreatedImageAsset | null = null;
     try {
         created = await createAssetFromSearchResult(ctx, userId, collectionId, wordId, result, query);
-        await selectWordImage(ctx.db, userId, collectionId, wordId, created.assetId);
+        await selectWordImage(ctx.db, userId, collectionId, wordId, created.assetId, {
+            isAdminDefault: isAdminTelegramId(ctx.env, ctx.from?.id),
+        });
         await deleteBotSession(ctx.db, userId, 'word_image_results');
         await continueAfterImageDecision(ctx, userId, collectionId, 'تم حفظ صورة الكلمة ✅');
     } catch (error) {
@@ -906,7 +911,9 @@ async function handleManualImageUpload(ctx: BotContext, userId: number, collecti
             telegramFileId: fileId,
             attributionText: 'User uploaded image',
         });
-        await selectWordImage(ctx.db, userId, collectionId, wordId, assetId);
+        await selectWordImage(ctx.db, userId, collectionId, wordId, assetId, {
+            isAdminDefault: isAdminTelegramId(ctx.env, ctx.from?.id),
+        });
         await deleteBotSession(ctx.db, userId, 'awaiting_manual_word_image_upload');
         await continueAfterImageDecision(ctx, userId, collectionId, 'تم حفظ الصورة المرفوعة ✅');
     } catch (error) {

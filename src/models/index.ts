@@ -107,6 +107,7 @@ export interface Word {
     german_search?: string | null;
     arabic_search?: string | null;
     example_search?: string | null;
+    image_fingerprint?: string | null;
     added_by: number;
     created_at: string;
     updated_at?: string | null;

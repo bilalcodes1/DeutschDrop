@@ -774,7 +774,7 @@ test('word creation edit CSV and AI updates maintain search columns', () => {
     const aiSource = fs.readFileSync(new URL('../src/commands/aiCoach.ts', import.meta.url), 'utf8');
 
     assert.match(repositorySource, /buildWordSearchFields\(german, arabic, example\)/);
-    assert.match(repositorySource, /INSERT INTO words \(german, arabic, example, added_by, german_search, arabic_search, example_search\)/);
+    assert.match(repositorySource, /INSERT INTO words \(german, arabic, example, added_by, german_search, arabic_search, example_search, image_fingerprint\)/);
     assert.match(repositorySource, /SET german = \?, arabic = \?, example = \?, german_search = \?, arabic_search = \?, example_search = \?/);
     assert.match(repositorySource, /example_search = \?/);
     assert.match(addWordSource, /updateWordForUser\(ctx\.db, userId, wordId, parsed\.german, parsed\.arabic, parsed\.example\)/);
@@ -3130,7 +3130,7 @@ test('collection underwater worm routes reject missing token and never trust cli
     assert.match(htmlSource, /voice-action hidden/);
     assert.match(htmlSource, /setRecoveryButton\(true\)/);
     assert.match(htmlSource, /voice-waves/);
-    assert.match(htmlSource, /يستمع بالألمانية/);
+    assert.match(htmlSource, /يستمع لإجابتك بالألمانية/);
     assert.match(htmlSource, /انطق الكلمة الألمانية/);
     assert.match(htmlSource, /meaning\(question\.arabicMeaning\)/);
     assert.doesNotMatch(htmlSource, /meaning\(question\.correctAnswer\)|escapeHtml\(question\.correctAnswer\)/);

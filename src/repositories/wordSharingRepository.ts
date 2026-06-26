@@ -2,6 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { queryAll, queryOne, run, runBatch } from '../db/queries.js';
 import type { Word } from '../models/index.js';
 import { copyWordToUser, searchWordsByUser } from './wordRepository.js';
+import { createShareImageSnapshotsForWords } from './wordImageRepository.js';
 
 export interface PublicUserWordSummary {
     user_id: number;
@@ -90,20 +91,27 @@ export async function getPublicWordOwner(db: D1Database, ownerUserId: number): P
     );
 }
 
-export async function copyWordsToUser(db: D1Database, wordIds: number[], targetUserId: number): Promise<{ copied: number; skipped: number; copiedWordIds: number[] }> {
+export async function copyWordsToUser(
+    db: D1Database,
+    wordIds: number[],
+    targetUserId: number,
+    options: { sourceCollectionId?: number | null; originType?: 'copied_word' | 'copied_collection'; shareType?: string | null; shareId?: number | null } = {}
+): Promise<{ copied: number; skipped: number; copiedWordIds: number[]; copiedPairs: Array<{ sourceWordId: number; targetWordId: number }> }> {
     let copied = 0;
     let skipped = 0;
     const copiedWordIds: number[] = [];
+    const copiedPairs: Array<{ sourceWordId: number; targetWordId: number }> = [];
     for (const wordId of wordIds.slice(0, 100)) {
-        const result = await copyWordToUser(db, wordId, targetUserId);
+        const result = await copyWordToUser(db, wordId, targetUserId, options);
         if (result.status === 'copied') {
             copied++;
             copiedWordIds.push(result.wordId);
+            copiedPairs.push({ sourceWordId: wordId, targetWordId: result.wordId });
         } else {
             skipped++;
         }
     }
-    return { copied, skipped, copiedWordIds };
+    return { copied, skipped, copiedWordIds, copiedPairs };
 }
 
 export async function createWordCollection(db: D1Database, ownerUserId: number, title: string, description: string | null, visibility: 'public' | 'private' = 'public'): Promise<number> {
@@ -245,7 +253,15 @@ export async function createSharedWordOffer(db: D1Database, senderUserId: number
          VALUES (?, ?, ?, ?, datetime('now', '+7 days'))`,
         [senderUserId, receiverUserId, offerType, payloadJson]
     );
-    return (result.meta as { last_row_id?: number })?.last_row_id ?? 0;
+    const offerId = (result.meta as { last_row_id?: number })?.last_row_id ?? 0;
+    if (offerId > 0) {
+        const data = payload as { wordIds?: number[]; collectionId?: number };
+        const wordIds = data.collectionId
+            ? (await getCollectionWords(db, data.collectionId, 200, 0)).map(word => word.word_id)
+            : data.wordIds ?? [];
+        await createShareImageSnapshotsForWords(db, 'offer', offerId, senderUserId, wordIds, data.collectionId ?? null);
+    }
+    return offerId;
 }
 
 export async function getSharedWordOffer(db: D1Database, offerId: number): Promise<SharedWordOffer | null> {

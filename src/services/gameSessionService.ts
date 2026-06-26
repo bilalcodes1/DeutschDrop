@@ -3,7 +3,7 @@ import type { Env, User, Word } from '../models';
 import { queryAll, queryOne, run } from '../db/queries';
 import { addXp, getTotalXp } from './xpLevels';
 import { getVisualForWord, getRequiredVisualForWord, type GameVisual } from './gameVisualService';
-import { getActiveWordImage, getCollectionImageReadiness, getImageModeWordsForCollection } from '../repositories/wordImageRepository';
+import { getCollectionImageReadiness, getImageModeWordsForCollection, resolveEffectiveWordImage } from '../repositories/wordImageRepository';
 import { pickWinnerByScoreAndDuration } from '../repositories/challengeRepository';
 import { displayUserName, sendTelegramMessage, sendTemporaryTelegramMessage } from './notifications';
 import {
@@ -140,7 +140,6 @@ export interface PublicGameQuestion {
     imageUrl?: string;
     imageAttribution?: string | null;
     arabicMeaning: string;
-    correctPronunciationText: string;
     attemptsLeft: number;
     timeLimit: number;
     timeLimitSeconds: number;
@@ -355,7 +354,7 @@ export async function createGameSession(
     if (!collection) throw new Error('collection_not_allowed');
     if ((collection.word_count ?? 0) <= 0) throw new Error('collection_empty');
 
-    const mode = options.mode ?? 'speech_rocket';
+    const mode = normalizeCollectionGameMode(options.mode ?? 'speech_rocket');
     const limit = normalizeGameLimit(options.limit);
     const words = mode === 'image_speech'
         ? await getImageModeWordsOrThrow(db, userId, collection, limit)
@@ -373,7 +372,7 @@ async function createGameSessionFromWords(
     challenge?: { challengeId: number; role: GameChallengeRole; opponentUserId: number; sourceType: GameChallengeSourceType },
     options: CreateGameSessionOptions = {}
 ): Promise<{ token: string; tokenHash: string; collection: PlayableCollection; totalQuestions: number }> {
-    const mode = options.mode ?? 'speech_rocket';
+    const mode = normalizeCollectionGameMode(options.mode ?? 'speech_rocket');
     const difficulty = options.difficulty ?? 'normal';
     const questions = await buildQuestions(db, collection.owner_user_id, collection.id, words, mode === 'image_speech');
     const data: GameSessionData = {
@@ -782,7 +781,7 @@ export async function getGameQuestionImageResponse(db: D1Database, env: Env, tok
     const data = parseSessionData(session);
     const question = data.questions.find(item => item.wordId === wordId);
     if (!question || question.visualType !== 'image') throw new Error('question_not_found');
-    const image = await getActiveWordImage(db, session.user_id, session.collection_id, wordId);
+    const image = await resolveEffectiveWordImage(db, session.user_id, wordId, session.collection_id);
     if (!image || image.state !== 'selected') throw new Error('image_not_found');
     if (image.storage_type === 'legacy' || image.hotlink_url?.startsWith('legacy:')) {
         throw new Error('image_not_found');
@@ -937,6 +936,10 @@ function normalizeGameLimit(limit?: number): number {
     return Math.max(1, Math.min(GAME_QUESTION_LIMIT, Math.trunc(limit ?? GAME_QUESTION_LIMIT)));
 }
 
+function normalizeCollectionGameMode(mode: CollectionGameMode | string): CollectionGameMode {
+    return mode === 'listen_repeat' ? 'arabic_speech' : mode as CollectionGameMode;
+}
+
 async function assertWordsHaveVisuals(db: D1Database, words: Word[], collectionId: number): Promise<void> {
     for (const word of words) {
         const visual = await getRequiredVisualForWord(db, word);
@@ -1049,7 +1052,7 @@ async function buildQuestions(
     const questions: GameQuestion[] = [];
     for (const [index, word] of words.entries()) {
         const visual = await getVisualForWord(db, word);
-        const image = await getActiveWordImage(db, imageUserId, collectionId, word.word_id);
+        const image = await resolveEffectiveWordImage(db, imageUserId, word.word_id, collectionId);
         const hasImage = Boolean(image && (image.storage_type === 'r2' || image.storage_type === 'hotlink' || image.storage_type === 'telegram'));
         if (requireImages && !hasImage) {
             throw new Error('image_mode_word_missing');
@@ -1132,7 +1135,6 @@ function publicQuestion(question: GameQuestion, token?: string): PublicGameQuest
         imageUrl: imageUrlForQuestion(question, token),
         imageAttribution: question.imageAttribution ?? null,
         arabicMeaning: question.arabicMeaning ?? 'المعنى',
-        correctPronunciationText: question.correctAnswer,
         attemptsLeft: Math.max(0, GAME_MAX_ATTEMPTS - (question.attemptsMade ?? 0)),
         timeLimit,
         timeLimitSeconds: timeLimit,
@@ -1149,6 +1151,9 @@ function parseSessionData(session: GameSessionRecord): GameSessionData {
 }
 
 function normalizeGameData(data: GameSessionData): void {
+    data.mode = normalizeCollectionGameMode(data.mode);
+    const legacyAdventureMode = data.adventure ? String((data.adventure as unknown as { mode?: string }).mode ?? '') : '';
+    if (legacyAdventureMode === 'listen_repeat') data.adventure!.mode = 'arabic_speech';
     data.totalWords = data.totalWords ?? data.totalQuestions;
     data.completedWords = data.completedWords ?? data.correctCount;
     data.failedAttempts = data.failedAttempts ?? data.wrongCount ?? 0;

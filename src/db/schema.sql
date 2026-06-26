@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS words (
     german_search TEXT,
     arabic_search TEXT,
     example_search TEXT,
+    image_fingerprint TEXT,
     added_by INTEGER NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME,
@@ -924,6 +925,10 @@ CREATE TABLE IF NOT EXISTS image_assets (
     file_size INTEGER,
     sha256 TEXT,
     telegram_file_id TEXT,
+    visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'shared', 'global')),
+    source_asset_id INTEGER,
+    published_at TEXT,
+    reusable INTEGER NOT NULL DEFAULT 0 CHECK (reusable IN (0, 1)),
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted', 'orphaned')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -939,6 +944,13 @@ CREATE TABLE IF NOT EXISTS user_word_images (
     image_asset_id INTEGER,
     state TEXT NOT NULL DEFAULT 'selected' CHECK (state IN ('selected', 'excluded', 'deleted')),
     excluded_reason TEXT,
+    origin_type TEXT NOT NULL DEFAULT 'user_selected'
+        CHECK (origin_type IN ('user_selected', 'copied_word', 'copied_collection', 'admin_default', 'community_shared', 'legacy_default')),
+    origin_user_id INTEGER,
+    origin_share_type TEXT,
+    origin_share_id INTEGER,
+    is_user_override INTEGER NOT NULL DEFAULT 1 CHECK (is_user_override IN (0, 1)),
+    inherited_at TEXT,
     selected_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -952,6 +964,105 @@ CREATE TABLE IF NOT EXISTS user_word_images (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_word_images_one_active
 ON user_word_images(user_id, collection_id, word_id)
 WHERE deleted_at IS NULL AND state IN ('selected', 'excluded');
+
+CREATE TABLE IF NOT EXISTS user_word_default_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    word_id INTEGER NOT NULL,
+    image_asset_id INTEGER,
+    state TEXT NOT NULL DEFAULT 'selected' CHECK (state IN ('selected', 'excluded', 'deleted')),
+    origin_type TEXT NOT NULL DEFAULT 'user_selected'
+        CHECK (origin_type IN ('user_selected', 'copied_word', 'copied_collection', 'admin_default', 'community_shared', 'legacy_default')),
+    origin_user_id INTEGER,
+    origin_share_type TEXT,
+    origin_share_id INTEGER,
+    is_user_override INTEGER NOT NULL DEFAULT 1 CHECK (is_user_override IN (0, 1)),
+    inherited_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (word_id) REFERENCES words(word_id) ON DELETE CASCADE,
+    FOREIGN KEY (image_asset_id) REFERENCES image_assets(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_word_default_images_one_active
+ON user_word_default_images(user_id, word_id)
+WHERE deleted_at IS NULL AND state IN ('selected', 'excluded');
+
+CREATE TABLE IF NOT EXISTS word_image_catalog (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fingerprint TEXT NOT NULL,
+    image_asset_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL CHECK (source_type IN ('admin', 'community_shared', 'legacy')),
+    source_user_id INTEGER,
+    source_word_id INTEGER,
+    source_collection_id INTEGER,
+    source_share_type TEXT,
+    source_share_id INTEGER,
+    priority INTEGER NOT NULL DEFAULT 0,
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TEXT,
+    FOREIGN KEY (image_asset_id) REFERENCES image_assets(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_user_id) REFERENCES users(user_id) ON DELETE SET NULL,
+    FOREIGN KEY (source_word_id) REFERENCES words(word_id) ON DELETE SET NULL,
+    FOREIGN KEY (source_collection_id) REFERENCES word_collections(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_word_image_catalog_admin_active
+ON word_image_catalog(fingerprint)
+WHERE source_type = 'admin' AND status = 'active' AND deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS shared_word_image_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    share_type TEXT NOT NULL CHECK (share_type IN ('word', 'collection', 'offer')),
+    share_id INTEGER NOT NULL,
+    source_user_id INTEGER NOT NULL,
+    source_collection_id INTEGER,
+    source_word_id INTEGER NOT NULL,
+    fingerprint TEXT,
+    image_asset_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (source_user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (source_collection_id) REFERENCES word_collections(id) ON DELETE SET NULL,
+    FOREIGN KEY (source_word_id) REFERENCES words(word_id) ON DELETE CASCADE,
+    FOREIGN KEY (image_asset_id) REFERENCES image_assets(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_word_image_snapshots_unique
+ON shared_word_image_snapshots(share_type, share_id, source_word_id);
+
+CREATE TABLE IF NOT EXISTS word_image_backfill_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    cursor_user_id INTEGER NOT NULL DEFAULT 0,
+    cursor_word_id INTEGER NOT NULL DEFAULT 0,
+    added_count INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
+    retries INTEGER NOT NULL DEFAULT 0,
+    notify_users INTEGER NOT NULL DEFAULT 1 CHECK (notify_users IN (0, 1)),
+    created_by_admin_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS word_image_backfill_user_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    added_count INTEGER NOT NULL DEFAULT 0,
+    notified_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (job_id) REFERENCES word_image_backfill_jobs(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    UNIQUE(job_id, user_id)
+);
 
 CREATE TABLE IF NOT EXISTS image_search_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -969,10 +1080,15 @@ CREATE TABLE IF NOT EXISTS image_search_cache (
 CREATE INDEX IF NOT EXISTS idx_user_word_images_collection_state ON user_word_images(user_id, collection_id, state);
 CREATE INDEX IF NOT EXISTS idx_user_word_images_word ON user_word_images(user_id, collection_id, word_id);
 CREATE INDEX IF NOT EXISTS idx_user_word_images_cleanup ON user_word_images(deleted_at, updated_at);
+CREATE INDEX IF NOT EXISTS idx_words_image_fingerprint ON words(image_fingerprint);
 CREATE INDEX IF NOT EXISTS idx_image_assets_owner ON image_assets(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_image_assets_provider_image ON image_assets(provider, provider_image_id);
 CREATE INDEX IF NOT EXISTS idx_image_assets_status ON image_assets(status);
 CREATE INDEX IF NOT EXISTS idx_image_assets_cleanup ON image_assets(status, deleted_at, updated_at);
+CREATE INDEX IF NOT EXISTS idx_image_assets_visibility ON image_assets(visibility, status);
+CREATE INDEX IF NOT EXISTS idx_word_image_catalog_lookup ON word_image_catalog(fingerprint, status, source_type, priority, updated_at);
+CREATE INDEX IF NOT EXISTS idx_shared_word_image_snapshots_share ON shared_word_image_snapshots(share_type, share_id);
+CREATE INDEX IF NOT EXISTS idx_word_image_backfill_jobs_status ON word_image_backfill_jobs(status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_image_search_cache_lookup ON image_search_cache(query_hash, provider, page);
 CREATE INDEX IF NOT EXISTS idx_image_search_cache_expires ON image_search_cache(expires_at);
 

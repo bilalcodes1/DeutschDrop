@@ -1273,12 +1273,11 @@ export function renderCollectionGameHtml(): string {
         '<div class="meaning-bubble bubble-spawn' + (question.visualType === 'image' ? ' has-image' : '') + '" id="meaningBubble" style="' + bubbleStyle + '">' + bubbleContent + '<div class="pop-particles" id="popParticles">' + Array.from({ length: 12 }, (_, i) => '<i style="--angle:' + (i * 30) + 'deg;--distance:' + (52 + i * 5) + 'px"></i>').join('') + Array.from({ length: 7 }, (_, i) => '<b class="success-sparkle" style="--x:' + ((i - 3) * 22) + 'px;--y:' + (-28 - i * 8) + 'px;--delay:' + (i * .035) + 's"></b>').join('') + '</div></div>' +
         wormMarkup('', completedWords) +
         '</div>' +
-        '<div class="controls"><div class="status" id="status">' + escapeHtml(message) + '</div><div class="bottom-actions"><button class="voice-action" id="speakNowBtn">🎙 انطق الآن</button><button class="mini-action" id="soundBtn">🔊 اسمع النطق</button><button class="mini-action" id="hintBtn">💡 تلميح</button><button class="mini-action" id="pauseBtn">⏸ إيقاف مؤقت</button><button class="mini-action" id="leaveBtn">❌ إنهاء الجولة</button><button class="voice-action hidden" id="micRecoverBtn">🎙 فعّل المايكروفون</button></div><div class="hint">يستمع بالألمانية <span id="listeningIndicator" aria-hidden="true"></span></div></div>' +
+        '<div class="controls"><div class="status" id="status">' + escapeHtml(message) + '</div><div class="bottom-actions"><button class="voice-action" id="speakNowBtn">🎙 انطق الآن</button><button class="mini-action" id="hintBtn">💡 تلميح</button><button class="mini-action" id="pauseBtn">⏸ إيقاف مؤقت</button><button class="mini-action" id="leaveBtn">❌ إنهاء الجولة</button><button class="voice-action hidden" id="micRecoverBtn">🎙 فعّل المايكروفون</button></div><div class="hint">يستمع لإجابتك بالألمانية <span id="listeningIndicator" aria-hidden="true"></span></div></div>' +
         '</section>';
       document.getElementById('micRecoverBtn').onclick = enableMicrophoneAndListen;
       document.getElementById('speakNowBtn').onclick = () => listen();
-      document.getElementById('soundBtn').onclick = () => speakGerman(question.correctPronunciationText || '');
-      document.getElementById('hintBtn').onclick = () => setStatus('💡 أول حرف: ' + escapeHtml(String(question.correctPronunciationText || '').slice(0, 1) || '؟'));
+      document.getElementById('hintBtn').onclick = () => setStatus('💡 انظر إلى الصورة أو المعنى، ثم انطق الكلمة بالألمانية.');
       document.getElementById('pauseBtn').onclick = () => { clearTimers(); stopListening(); setStatus('متوقف مؤقتاً. اضغط انطق الآن للمتابعة.'); };
       document.getElementById('leaveBtn').onclick = leaveGame;
       startQuestionTimer(question.timeLimit || 10);

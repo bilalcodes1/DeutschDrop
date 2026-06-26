@@ -1,4 +1,4 @@
-export type AdventureMode = 'image_speech' | 'arabic_speech' | 'listen_repeat' | 'smart_mix' | 'hard_words' | 'boss';
+export type AdventureMode = 'image_speech' | 'arabic_speech' | 'smart_mix' | 'hard_words' | 'boss';
 export type AdventureDifficulty = 'easy' | 'normal' | 'hard';
 export type AdventureSource = 'collection' | 'hard_words' | 'due_review' | 'smart_mix';
 export type AdventureSpeechResult = 'correct' | 'near' | 'incorrect' | 'technical_failure';
@@ -73,7 +73,6 @@ export interface ScoreResult {
 export const ADVENTURE_MODES: AdventureModeConfig[] = [
     { mode: 'image_speech', label: '🖼 صورة ← نطق ألماني', requiresImages: true },
     { mode: 'arabic_speech', label: '🇮🇶 عربي ← نطق ألماني', requiresImages: false },
-    { mode: 'listen_repeat', label: '🎧 اسمع ← كرر النطق', requiresImages: false },
     { mode: 'smart_mix', label: '🧠 خليط ذكي', requiresImages: false },
     { mode: 'hard_words', label: '🔥 مواجهة الكلمات الصعبة', requiresImages: false },
     { mode: 'boss', label: '👹 زعيم المرحلة', requiresImages: false },

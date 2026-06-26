@@ -29,7 +29,7 @@ function state(overrides = {}) {
 }
 
 test('adventure modes include all requested gameplay modes', () => {
-    assert.deepEqual(ADVENTURE_MODES.map(item => item.mode), ['image_speech', 'arabic_speech', 'listen_repeat', 'smart_mix', 'hard_words', 'boss']);
+    assert.deepEqual(ADVENTURE_MODES.map(item => item.mode), ['image_speech', 'arabic_speech', 'smart_mix', 'hard_words', 'boss']);
 });
 
 test('image speech mode requires selected images', () => {
